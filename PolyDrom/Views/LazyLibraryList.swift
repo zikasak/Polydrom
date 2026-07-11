@@ -23,6 +23,8 @@ struct LazyLibraryList<Data, Row>: View where Data: RandomAccessCollection, Data
     let rowInsets: EdgeInsets
     let row: (Data.Element) -> Row
 
+    @State private var isScrolling = false
+
     init(
         _ items: Data,
         rowInsets: EdgeInsets = EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8),
@@ -44,6 +46,10 @@ struct LazyLibraryList<Data, Row>: View where Data: RandomAccessCollection, Data
             }
             .padding(.vertical, 4)
         }
+        .onScrollPhaseChange { _, newPhase in
+            isScrolling = newPhase.isScrolling
+        }
+        .environment(\.libraryGridIsScrolling, isScrolling)
     }
 }
 

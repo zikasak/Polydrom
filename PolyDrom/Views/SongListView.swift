@@ -46,7 +46,7 @@ struct SongRowView: View {
             .buttonStyle(.borderless)
             .help("Play")
 
-            CoverArtView(resource: viewModel.coverArtResource(for: song, size: 72), size: 38)
+            CoverArtView(resource: viewModel.coverArtResource(for: song, size: 96), size: 38)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.title)
@@ -82,7 +82,6 @@ struct SongRowView: View {
 struct CoverArtView: View {
     let resource: CoverArtResource?
     let size: CGFloat
-    let fallbackSystemImage: String
 
     @Environment(\.libraryGridIsScrolling) private var libraryGridIsScrolling
     @State private var image: CGImage?
@@ -90,12 +89,10 @@ struct CoverArtView: View {
 
     init(
         resource: CoverArtResource?,
-        size: CGFloat,
-        fallbackSystemImage: String = "music.note"
+        size: CGFloat
     ) {
         self.resource = resource
         self.size = size
-        self.fallbackSystemImage = fallbackSystemImage
 
         let cachedImage = resource.flatMap { CoverArtCache.shared.cachedImage(for: $0) }
         _image = State(initialValue: cachedImage)
@@ -116,13 +113,24 @@ struct CoverArtView: View {
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .task(id: CoverArtLoadID(cacheKey: resource?.cacheKey, isPaused: shouldPauseLoading)) {
             if restoreCachedImage() { return }
-            guard !shouldPauseLoading else { return }
+            if shouldPauseLoading {
+                await restoreStoredImage()
+                return
+            }
             await loadImage()
         }
     }
 
     private var displayedImage: CGImage? {
-        image ?? resource.flatMap { CoverArtCache.shared.cachedImage(for: $0) }
+        guard let resource else { return nil }
+
+        if loadedCacheKey == resource.cacheKey {
+            return image
+        }
+
+        // A view can be reused for another row before its task gets a chance to
+        // reset state. This also lets a pre-warmed cached image render immediately.
+        return CoverArtCache.shared.cachedImage(for: resource)
     }
 
     private var shouldPauseLoading: Bool {
@@ -130,12 +138,8 @@ struct CoverArtView: View {
     }
 
     private var fallback: some View {
-        ZStack {
-            Rectangle()
-                .fill(.secondary.opacity(0.12))
-            Image(systemName: fallbackSystemImage)
-                .foregroundStyle(.secondary)
-        }
+        Rectangle()
+            .fill(.secondary.opacity(0.12))
     }
 
     @MainActor
@@ -148,6 +152,18 @@ struct CoverArtView: View {
         image = cachedImage
         loadedCacheKey = resource.cacheKey
         return true
+    }
+
+    @MainActor
+    private func restoreStoredImage() async {
+        guard let resource,
+              let storedImage = await CoverArtCache.shared.storedImage(for: resource),
+              !Task.isCancelled else {
+            return
+        }
+
+        image = storedImage
+        loadedCacheKey = resource.cacheKey
     }
 
     @MainActor
@@ -167,6 +183,7 @@ struct CoverArtView: View {
         }
 
         image = nil
+        loadedCacheKey = nil
 
         for attempt in 0..<3 {
             do {

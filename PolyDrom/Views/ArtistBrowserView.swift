@@ -65,7 +65,7 @@ private struct ArtistCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            CoverArtView(resource: coverArtResource, size: 128, fallbackSystemImage: "music.mic")
+            CoverArtView(resource: coverArtResource, size: 128)
                 .frame(maxWidth: .infinity)
 
             VStack(alignment: .leading, spacing: 3) {

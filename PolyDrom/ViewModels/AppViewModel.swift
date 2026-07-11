@@ -46,13 +46,17 @@ final class AppViewModel: ObservableObject {
     private var playbackQueueNeedsSongHydration = false
     private var lyricsSongID: String?
     private var albumCoverPrefetchTask: Task<Void, Never>?
+    private var artistCoverPrefetchTask: Task<Void, Never>?
     private var songCoverPrefetchTask: Task<Void, Never>?
     private var nowPlayingArtworkTask: Task<Void, Never>?
     private var loadedArtistAlbumsID: String?
     private var loadedAlbumSongsID: String?
     private var loadedPlaylistSongsID: String?
     private let libraryPageSize = 200
-    private let coverArtPrefetchLimit = 48
+    private let coverArtPrefetchLimit = 200
+    private let thumbnailCoverSize = 96
+    private let gridCoverSize = 220
+    private let interchangeableThumbnailSizes = [72, 80, 96]
     private var didAttemptInitialConnection = false
 
     var isConnected: Bool {
@@ -134,7 +138,7 @@ final class AppViewModel: ObservableObject {
             password = profile.password
             try store.touchServer(profile)
             loadServers()
-            try refreshLocalLists()
+            try await refreshLocalLists()
             statusMessage = "Connected to \(profile.displayName)"
             await refreshSelectedSection()
         } catch {
@@ -192,7 +196,7 @@ final class AppViewModel: ObservableObject {
             }
         case .favorites, .recent:
             do {
-                try refreshLocalLists()
+                try await refreshLocalLists()
             } catch {
                 statusMessage = error.localizedDescription
             }
@@ -216,9 +220,11 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            searchResults = try await client.searchSongs(matching: query)
-            try cache(searchResults)
-            prefetchSongCovers(searchResults)
+            let results = try await client.searchSongs(matching: query)
+            try cache(results)
+            await warmCachedSongCovers(results)
+            searchResults = results
+            prefetchSongCovers(results)
             statusMessage = searchResults.isEmpty ? "No songs found." : "\(searchResults.count) songs found"
         } catch {
             statusMessage = error.localizedDescription
@@ -231,9 +237,11 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            randomSongs = try await client.randomSongs()
-            try cache(randomSongs)
-            prefetchSongCovers(randomSongs)
+            let songs = try await client.randomSongs()
+            try cache(songs)
+            await warmCachedSongCovers(songs)
+            randomSongs = songs
+            prefetchSongCovers(songs)
             statusMessage = randomSongs.isEmpty ? "No random songs returned." : "Loaded random songs"
         } catch {
             statusMessage = error.localizedDescription
@@ -255,6 +263,7 @@ final class AppViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
 
                 let newAlbums = page.filter { seenAlbumIDs.insert($0.id).inserted }
+                await warmCachedAlbumCovers(newAlbums)
                 loadedAlbums.append(contentsOf: newAlbums)
                 albums = loadedAlbums
 
@@ -291,7 +300,12 @@ final class AppViewModel: ObservableObject {
 
                 let newArtists = page.filter { seenArtistIDs.insert($0.id).inserted }
                 loadedArtists.append(contentsOf: newArtists)
+                await warmCachedArtistCovers(newArtists)
                 artists = sortedVisibleArtists(loadedArtists)
+
+                if offset == 0 {
+                    prefetchArtistCovers(loadedArtists)
+                }
 
                 if page.count < libraryPageSize || newArtists.isEmpty {
                     statusMessage = artists.isEmpty ? "No artists returned." : "Loaded \(artists.count) artists"
@@ -336,7 +350,9 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            artistAlbums = try await client.albums(for: artist)
+            let albums = try await client.albums(for: artist)
+            await warmCachedAlbumCovers(albums)
+            artistAlbums = albums
             guard !Task.isCancelled else { return }
             loadedArtistAlbumsID = artist.id
             prefetchAlbumCovers(artistAlbums)
@@ -360,12 +376,14 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            albumSongs = try await client.songs(for: album)
+            let songs = try await client.songs(for: album)
+            try cache(songs)
+            await warmCachedSongCovers(songs)
+            albumSongs = songs
             guard !Task.isCancelled else { return }
             loadedAlbumSongsID = album.id
-            try cache(albumSongs)
-            prefetchSongCovers(albumSongs)
-            statusMessage = albumSongs.isEmpty ? "No songs for \(album.name)." : "Loaded \(album.name)"
+            prefetchSongCovers(songs)
+            statusMessage = songs.isEmpty ? "No songs for \(album.name)." : "Loaded \(album.name)"
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -385,12 +403,14 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            playlistSongs = try await client.songs(for: playlist)
+            let songs = try await client.songs(for: playlist)
+            try cache(songs)
+            await warmCachedSongCovers(songs)
+            playlistSongs = songs
             guard !Task.isCancelled else { return }
             loadedPlaylistSongsID = playlist.id
-            try cache(playlistSongs)
-            prefetchSongCovers(playlistSongs)
-            statusMessage = playlistSongs.isEmpty ? "No songs for \(playlist.name)." : "Loaded \(playlist.name)"
+            prefetchSongCovers(songs)
+            statusMessage = songs.isEmpty ? "No songs for \(playlist.name)." : "Loaded \(playlist.name)"
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -416,6 +436,7 @@ final class AppViewModel: ObservableObject {
         do {
             let songToPlay = try await resolvedSongForPlayback(song, shouldHydrateSong: shouldHydrateSong)
             let url = try client.streamURL(for: songToPlay)
+            await warmCachedSongCovers([songToPlay])
             playbackQueue = queue.isEmpty ? [song] : queue
             playbackQueueIndex = playbackQueue.firstIndex(of: song)
             playbackQueueNeedsSongHydration = shouldHydrateSong
@@ -427,8 +448,14 @@ final class AppViewModel: ObservableObject {
             updateNowPlayingQueueState()
             audioPlayer.play(song: songToPlay, url: url)
             updateNowPlayingArtwork(for: songToPlay)
+            let queueToWarm = playbackQueue
+            Task { [weak self] in
+                guard let self else { return }
+                await warmCachedSongCovers(queueToWarm)
+                prefetchSongCovers(queueToWarm)
+            }
             try store.markPlayed(songToPlay, serverKey: serverKey)
-            try refreshLocalLists()
+            try await refreshLocalLists()
             statusMessage = "Playing \(songToPlay.title)"
         } catch {
             statusMessage = error.localizedDescription
@@ -489,12 +516,12 @@ final class AppViewModel: ObservableObject {
     }
 
     func coverArtResource(for song: NavidromeSong, size: Int = 80) -> CoverArtResource? {
-        guard let coverArt = song.coverArt else { return nil }
+        guard let coverArt = song.coverArt ?? song.albumId else { return nil }
         return coverArtResource(id: coverArt, size: size)
     }
 
     func coverArtResource(for album: NavidromeAlbum, size: Int = 96) -> CoverArtResource? {
-        guard let coverArt = album.coverArt else { return nil }
+        let coverArt = album.coverArt ?? album.id
         return coverArtResource(id: coverArt, size: size)
     }
 
@@ -512,8 +539,16 @@ final class AppViewModel: ObservableObject {
         do {
             let nextValue = !favoriteIDs.contains(song.id)
             try store.setFavorite(song, serverKey: serverKey, isFavorite: nextValue)
-            try refreshLocalLists()
-            statusMessage = nextValue ? "Added to favorites" : "Removed from favorites"
+            favoriteIDs = try store.favoriteIDs(serverKey: serverKey)
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await refreshLocalLists()
+                    statusMessage = nextValue ? "Added to favorites" : "Removed from favorites"
+                } catch {
+                    statusMessage = error.localizedDescription
+                }
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -529,12 +564,17 @@ final class AppViewModel: ObservableObject {
         favoriteIDs = try store.favoriteIDs(serverKey: serverKey)
     }
 
-    private func refreshLocalLists() throws {
+    private func refreshLocalLists() async throws {
         guard let serverKey else { return }
-        favoriteIDs = try store.favoriteIDs(serverKey: serverKey)
-        favoriteSongs = try store.favoriteSongs(serverKey: serverKey)
-        recentSongs = try store.recentSongs(serverKey: serverKey)
-        prefetchSongCovers(favoriteSongs + recentSongs)
+        let loadedFavoriteIDs = try store.favoriteIDs(serverKey: serverKey)
+        let loadedFavoriteSongs = try store.favoriteSongs(serverKey: serverKey)
+        let loadedRecentSongs = try store.recentSongs(serverKey: serverKey)
+        let songs = loadedFavoriteSongs + loadedRecentSongs
+        await warmCachedSongCovers(songs)
+        favoriteIDs = loadedFavoriteIDs
+        favoriteSongs = loadedFavoriteSongs
+        recentSongs = loadedRecentSongs
+        prefetchSongCovers(songs)
     }
 
     private func configureAudioPlayer() {
@@ -604,21 +644,56 @@ final class AppViewModel: ObservableObject {
     private func coverArtResource(id: String, size: Int) -> CoverArtResource? {
         guard let client, let serverKey else { return nil }
         guard let url = try? client.coverArtURL(id: id, size: size) else { return nil }
-        return CoverArtResource(cacheKey: "\(serverKey)|\(id)|\(size)", url: url)
+        let cacheKey = "\(serverKey)|\(id)|\(size)"
+        let fallbackCacheKeys: [String]
+
+        if interchangeableThumbnailSizes.contains(size) {
+            fallbackCacheKeys = interchangeableThumbnailSizes
+                .filter { $0 != size }
+                .map { "\(serverKey)|\(id)|\($0)" }
+        } else {
+            fallbackCacheKeys = []
+        }
+
+        return CoverArtResource(
+            cacheKey: cacheKey,
+            url: url,
+            fallbackCacheKeys: fallbackCacheKeys
+        )
     }
 
-    private func prefetchAlbumCovers(_ albums: [NavidromeAlbum], size: Int = 220) {
-        let resources = albums.prefix(coverArtPrefetchLimit).compactMap { coverArtResource(for: $0, size: size) }
+    private func warmCachedAlbumCovers(_ albums: [NavidromeAlbum]) async {
+        let resources = albums.compactMap { coverArtResource(for: $0, size: gridCoverSize) }
+        await CoverArtCache.shared.warmCachedImages(resources)
+    }
+
+    private func warmCachedArtistCovers(_ artists: [NavidromeArtist]) async {
+        let resources = artists.compactMap { coverArtResource(for: $0, size: gridCoverSize) }
+        await CoverArtCache.shared.warmCachedImages(resources)
+    }
+
+    private func warmCachedSongCovers(_ songs: [NavidromeSong]) async {
+        let resources = songs.compactMap { coverArtResource(for: $0, size: thumbnailCoverSize) }
+        await CoverArtCache.shared.warmCachedImages(resources)
+    }
+
+    private func prefetchAlbumCovers(_ albums: [NavidromeAlbum]) {
+        let resources = albums.prefix(coverArtPrefetchLimit).compactMap { coverArtResource(for: $0, size: gridCoverSize) }
         albumCoverPrefetchTask?.cancel()
         albumCoverPrefetchTask = prefetchCoverArt(resources)
     }
 
-    private func prefetchSongCovers(_ songs: [NavidromeSong], size: Int = 72) {
+    private func prefetchArtistCovers(_ artists: [NavidromeArtist]) {
+        let resources = artists.prefix(coverArtPrefetchLimit).compactMap { coverArtResource(for: $0, size: gridCoverSize) }
+        artistCoverPrefetchTask?.cancel()
+        artistCoverPrefetchTask = prefetchCoverArt(resources)
+    }
+
+    private func prefetchSongCovers(_ songs: [NavidromeSong]) {
         let songsToPrefetch = songs.prefix(coverArtPrefetchLimit)
-        let rowResources = songsToPrefetch.compactMap { coverArtResource(for: $0, size: size) }
-        let playerResources = songsToPrefetch.compactMap { coverArtResource(for: $0, size: 96) }
+        let resources = songsToPrefetch.compactMap { coverArtResource(for: $0, size: thumbnailCoverSize) }
         songCoverPrefetchTask?.cancel()
-        songCoverPrefetchTask = prefetchCoverArt(rowResources + playerResources)
+        songCoverPrefetchTask = prefetchCoverArt(resources)
     }
 
     private func prefetchCoverArt(_ resources: [CoverArtResource]) -> Task<Void, Never>? {

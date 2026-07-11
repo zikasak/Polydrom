@@ -293,6 +293,7 @@ enum PlayerDetailPanel: Equatable {
 private struct PlayerQueueView: View {
     @ObservedObject var viewModel: AppViewModel
     @ObservedObject private var audioPlayer: AudioPlayer
+    @State private var isScrolling = false
 
     init(viewModel: AppViewModel) {
         self.viewModel = viewModel
@@ -314,7 +315,7 @@ private struct PlayerQueueView: View {
                                 viewModel.play(song, in: viewModel.playbackQueue)
                             } label: {
                                 HStack(spacing: 10) {
-                                    CoverArtView(resource: viewModel.coverArtResource(for: song, size: 80), size: 42)
+                                    CoverArtView(resource: viewModel.coverArtResource(for: song, size: 96), size: 42)
 
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(song.title)
@@ -350,6 +351,10 @@ private struct PlayerQueueView: View {
                     .padding(.horizontal, 12)
                     .padding(.bottom, 12)
                 }
+                .onScrollPhaseChange { _, newPhase in
+                    isScrolling = newPhase.isScrolling
+                }
+                .environment(\.libraryGridIsScrolling, isScrolling)
             }
         }
         .background(.ultraThinMaterial)
