@@ -12,7 +12,6 @@ struct ContentView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var detailPath: [LibraryRoute] = []
     @State private var isFullPlayerPresented = false
-    @State private var playerDetailPanel: PlayerDetailPanel?
 
     var body: some View {
         libraryContent
@@ -21,7 +20,7 @@ struct ContentView: View {
             .overlay {
                 ZStack {
                     if isFullPlayerPresented {
-                        FullPlayerView(viewModel: viewModel, initialDetailPanel: playerDetailPanel) {
+                        FullPlayerView(viewModel: viewModel) {
                             isFullPlayerPresented = false
                         }
                         .transition(
@@ -93,9 +92,8 @@ struct ContentView: View {
         content()
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if viewModel.isConnected || viewModel.audioPlayer.currentSong != nil {
-                    PlayerBarView(viewModel: viewModel) { detailPanel in
+                    PlayerBarView(viewModel: viewModel) {
                         NSApp.keyWindow?.makeFirstResponder(nil)
-                        playerDetailPanel = detailPanel
                         isFullPlayerPresented = true
                     }
                 }

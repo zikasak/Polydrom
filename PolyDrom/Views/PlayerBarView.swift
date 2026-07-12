@@ -10,9 +10,10 @@ import SwiftUI
 struct PlayerBarView: View {
     @ObservedObject var viewModel: AppViewModel
     @ObservedObject private var audioPlayer: AudioPlayer
-    let onOpenFullPlayer: (PlayerDetailPanel?) -> Void
+    @State private var presentedDetailPanel: PlayerDetailPanel? = nil
+    let onOpenFullPlayer: () -> Void
 
-    init(viewModel: AppViewModel, onOpenFullPlayer: @escaping (PlayerDetailPanel?) -> Void) {
+    init(viewModel: AppViewModel, onOpenFullPlayer: @escaping () -> Void) {
         self.viewModel = viewModel
         self.audioPlayer = viewModel.audioPlayer
         self.onOpenFullPlayer = onOpenFullPlayer
@@ -181,12 +182,12 @@ struct PlayerBarView: View {
     }
 
     private func openFullPlayer() {
-        onOpenFullPlayer(nil)
+        onOpenFullPlayer()
     }
 
     private func detailButton(_ panel: PlayerDetailPanel) -> some View {
         Button {
-            onOpenFullPlayer(panel)
+            presentedDetailPanel = panel
         } label: {
             Label("Open \(panel.title)", systemImage: panel.systemImage)
                 .labelStyle(.iconOnly)
@@ -196,6 +197,31 @@ struct PlayerBarView: View {
         .buttonStyle(.plain)
         .disabled(panel == .lyrics && audioPlayer.currentSong == nil)
         .help("Open \(panel.title.lowercased())")
+        .popover(isPresented: detailPanelBinding(for: panel), arrowEdge: .bottom) {
+            detailView(for: panel)
+                .frame(width: 360, height: 500)
+        }
+    }
+
+    private func detailPanelBinding(for panel: PlayerDetailPanel) -> Binding<Bool> {
+        Binding(
+            get: { presentedDetailPanel == panel },
+            set: { isPresented in
+                if !isPresented, presentedDetailPanel == panel {
+                    presentedDetailPanel = nil
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func detailView(for panel: PlayerDetailPanel) -> some View {
+        switch panel {
+        case .queue:
+            PlayerQueueView(viewModel: viewModel)
+        case .lyrics:
+            PlayerLyricsView(viewModel: viewModel)
+        }
     }
 
     private var progressUpperBound: Double {

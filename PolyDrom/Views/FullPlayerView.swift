@@ -11,17 +11,15 @@ import SwiftUI
 struct FullPlayerView: View {
     @ObservedObject var viewModel: AppViewModel
     @ObservedObject private var audioPlayer: AudioPlayer
-    @State private var detailPanel: PlayerDetailPanel?
+    @State private var detailPanel: PlayerDetailPanel? = nil
     let onClose: () -> Void
 
     init(
         viewModel: AppViewModel,
-        initialDetailPanel: PlayerDetailPanel? = nil,
         onClose: @escaping () -> Void
     ) {
         self.viewModel = viewModel
         self.audioPlayer = viewModel.audioPlayer
-        self._detailPanel = State(initialValue: initialDetailPanel)
         self.onClose = onClose
     }
 
@@ -310,7 +308,7 @@ enum PlayerDetailPanel: Equatable {
     }
 }
 
-private struct PlayerQueueView: View {
+struct PlayerQueueView: View {
     @ObservedObject var viewModel: AppViewModel
     @ObservedObject private var audioPlayer: AudioPlayer
     @State private var isScrolling = false
@@ -381,7 +379,7 @@ private struct PlayerQueueView: View {
     }
 }
 
-private struct PlayerLyricsView: View {
+struct PlayerLyricsView: View {
     @ObservedObject var viewModel: AppViewModel
     @ObservedObject private var audioPlayer: AudioPlayer
 
