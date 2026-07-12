@@ -7,98 +7,31 @@
 
 import Foundation
 
-struct PingEnvelope: Decodable {
-    let subsonicResponse: BasicSubsonicResponse
+struct SubsonicEnvelope<Response: Decodable>: Decodable {
+    let subsonicResponse: Response
 
     enum CodingKeys: String, CodingKey {
         case subsonicResponse = "subsonic-response"
     }
 }
 
-struct SearchEnvelope: Decodable {
-    let subsonicResponse: SearchResponse
+typealias PingEnvelope = SubsonicEnvelope<BasicSubsonicResponse>
+typealias SearchEnvelope = SubsonicEnvelope<SearchResponse>
+typealias RandomSongsEnvelope = SubsonicEnvelope<RandomSongsResponse>
+typealias SongEnvelope = SubsonicEnvelope<SongResponse>
+typealias AlbumListEnvelope = SubsonicEnvelope<AlbumListResponse>
+typealias ArtistEnvelope = SubsonicEnvelope<ArtistResponse>
+typealias AlbumEnvelope = SubsonicEnvelope<AlbumResponse>
+typealias PlaylistsEnvelope = SubsonicEnvelope<PlaylistsResponse>
+typealias PlaylistEnvelope = SubsonicEnvelope<PlaylistResponse>
+typealias LyricsEnvelope = SubsonicEnvelope<LyricsResponse>
 
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
+protocol SubsonicResponse: Decodable {
+    var status: String { get }
+    var error: SubsonicServerError? { get }
 }
 
-struct RandomSongsEnvelope: Decodable {
-    let subsonicResponse: RandomSongsResponse
-
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
-}
-
-struct SongEnvelope: Decodable {
-    let subsonicResponse: SongResponse
-
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
-}
-
-struct AlbumListEnvelope: Decodable {
-    let subsonicResponse: AlbumListResponse
-
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
-}
-
-struct ArtistsEnvelope: Decodable {
-    let subsonicResponse: ArtistsResponse
-
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
-}
-
-struct ArtistEnvelope: Decodable {
-    let subsonicResponse: ArtistResponse
-
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
-}
-
-struct AlbumEnvelope: Decodable {
-    let subsonicResponse: AlbumResponse
-
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
-}
-
-struct PlaylistsEnvelope: Decodable {
-    let subsonicResponse: PlaylistsResponse
-
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
-}
-
-struct PlaylistEnvelope: Decodable {
-    let subsonicResponse: PlaylistResponse
-
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
-}
-
-struct LyricsEnvelope: Decodable {
-    let subsonicResponse: LyricsResponse
-
-    enum CodingKeys: String, CodingKey {
-        case subsonicResponse = "subsonic-response"
-    }
-}
-
-struct BasicSubsonicResponse: Decodable {
-    let status: String
-    let error: SubsonicServerError?
-
+extension SubsonicResponse {
     func throwIfNeeded() throws {
         if status == "failed" {
             throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
@@ -106,124 +39,63 @@ struct BasicSubsonicResponse: Decodable {
     }
 }
 
-struct SearchResponse: Decodable {
+struct BasicSubsonicResponse: SubsonicResponse {
+    let status: String
+    let error: SubsonicServerError?
+}
+
+struct SearchResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let searchResult3: SearchResult?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
 }
 
-struct RandomSongsResponse: Decodable {
+struct RandomSongsResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let randomSongs: SongContainer?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
 }
 
-struct SongResponse: Decodable {
+struct SongResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let song: NavidromeSong?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
 }
 
-struct AlbumListResponse: Decodable {
+struct AlbumListResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let albumList2: AlbumContainer?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
 }
 
-struct ArtistsResponse: Decodable {
-    let status: String
-    let error: SubsonicServerError?
-    let artists: ArtistsContainer?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
-}
-
-struct ArtistResponse: Decodable {
+struct ArtistResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let artist: ArtistDetail?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
 }
 
-struct AlbumResponse: Decodable {
+struct AlbumResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let album: AlbumDetail?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
 }
 
-struct PlaylistsResponse: Decodable {
+struct PlaylistsResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let playlists: PlaylistContainer?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
 }
 
-struct PlaylistResponse: Decodable {
+struct PlaylistResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let playlist: PlaylistDetail?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
 }
 
-struct LyricsResponse: Decodable {
+struct LyricsResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let lyricsList: LyricsList?
-
-    func throwIfNeeded() throws {
-        if status == "failed" {
-            throw NavidromeError.server(message: error?.message ?? "The Navidrome server returned an error.")
-        }
-    }
 }
 
 struct LyricsList: Decodable {
@@ -241,19 +113,16 @@ struct LyricsList: Decodable {
 
 struct SearchResult: Decodable {
     let artists: FlexibleArray<NavidromeArtist>
-    let albums: FlexibleArray<NavidromeAlbum>
     let songs: FlexibleArray<NavidromeSong>
 
     enum CodingKeys: String, CodingKey {
         case artists = "artist"
-        case albums = "album"
         case songs = "song"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         artists = (try? container.decode(FlexibleArray<NavidromeArtist>.self, forKey: .artists)) ?? FlexibleArray(values: [])
-        albums = (try? container.decode(FlexibleArray<NavidromeAlbum>.self, forKey: .albums)) ?? FlexibleArray(values: [])
         songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
     }
 }
@@ -281,36 +150,6 @@ struct AlbumContainer: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         albums = (try? container.decode(FlexibleArray<NavidromeAlbum>.self, forKey: .albums)) ?? FlexibleArray(values: [])
-    }
-}
-
-struct ArtistsContainer: Decodable {
-    let indexes: FlexibleArray<ArtistIndex>
-
-    enum CodingKeys: String, CodingKey {
-        case indexes = "index"
-    }
-
-    var allArtists: [NavidromeArtist] {
-        indexes.values.flatMap(\.artists.values)
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        indexes = (try? container.decode(FlexibleArray<ArtistIndex>.self, forKey: .indexes)) ?? FlexibleArray(values: [])
-    }
-}
-
-struct ArtistIndex: Decodable {
-    let artists: FlexibleArray<NavidromeArtist>
-
-    enum CodingKeys: String, CodingKey {
-        case artists = "artist"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        artists = (try? container.decode(FlexibleArray<NavidromeArtist>.self, forKey: .artists)) ?? FlexibleArray(values: [])
     }
 }
 

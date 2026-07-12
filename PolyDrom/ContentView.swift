@@ -5,6 +5,7 @@
 //  Created by zikasak on 07/07/2026.
 //
 
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -14,49 +15,47 @@ struct ContentView: View {
     @State private var playerDetailPanel: PlayerDetailPanel?
 
     var body: some View {
-        ZStack {
-            libraryContent
-                .opacity(isFullPlayerPresented ? 0 : 1)
-                .scaleEffect(isFullPlayerPresented ? 0.985 : 1)
-                .allowsHitTesting(!isFullPlayerPresented)
-                .accessibilityHidden(isFullPlayerPresented)
-
-            if isFullPlayerPresented {
-                FullPlayerView(viewModel: viewModel, initialDetailPanel: playerDetailPanel) {
-                    isFullPlayerPresented = false
+        libraryContent
+            .disabled(isFullPlayerPresented)
+            .frame(minWidth: 980, minHeight: 680)
+            .overlay {
+                ZStack {
+                    if isFullPlayerPresented {
+                        FullPlayerView(viewModel: viewModel, initialDetailPanel: playerDetailPanel) {
+                            isFullPlayerPresented = false
+                        }
+                        .transition(
+                            .move(edge: .bottom)
+                                .combined(with: .opacity)
+                                .combined(with: .scale(scale: 0.98, anchor: .bottom))
+                        )
+                        .zIndex(1)
+                    }
                 }
-                .transition(
-                    .move(edge: .bottom)
-                        .combined(with: .opacity)
-                        .combined(with: .scale(scale: 0.98, anchor: .bottom))
-                )
-                .zIndex(1)
+                .animation(.snappy(duration: 0.42, extraBounce: 0.06), value: isFullPlayerPresented)
             }
-        }
-        .animation(.snappy(duration: 0.42, extraBounce: 0.06), value: isFullPlayerPresented)
-        .frame(minWidth: 980, minHeight: 680)
-        .overlayPreferenceValue(AirPlayRoutePickerAnchorPreferenceKey.self) { anchors in
-            GeometryReader { proxy in
-                let location: AirPlayRoutePickerLocation = isFullPlayerPresented
-                    ? .fullPlayer
-                    : .compactPlayer
-                let anchor = anchors[location] ?? anchors[.compactPlayer]
-                let frame = anchor.map { proxy[$0] } ?? .zero
-                let isPositioned = anchor != nil
+            .overlayPreferenceValue(AirPlayRoutePickerAnchorPreferenceKey.self) { anchors in
+                GeometryReader { proxy in
+                    let location: AirPlayRoutePickerLocation = isFullPlayerPresented
+                        ? .fullPlayer
+                        : .compactPlayer
+                    let anchor = anchors[location] ?? anchors[.compactPlayer]
+                    let frame = anchor.map { proxy[$0] } ?? .zero
+                    let isPositioned = anchor != nil
 
-                // Keep the one native picker mounted even while SwiftUI briefly
-                // drops layout preferences during navigation or transitions.
-                AirPlayRoutePicker(controller: viewModel.audioPlayer.airPlayRoutePickerController)
-                    .frame(width: frame.width, height: frame.height)
-                    .position(x: frame.midX, y: frame.midY)
-                    .opacity(isPositioned ? 1 : 0)
-                    .allowsHitTesting(isPositioned)
-                    .help("Choose AirPlay speaker")
+                    // Keep the one native picker mounted even while SwiftUI briefly
+                    // drops layout preferences during navigation or transitions.
+                    AirPlayRoutePicker(controller: viewModel.audioPlayer.airPlayRoutePickerController)
+                        .frame(width: frame.width, height: frame.height)
+                        .position(x: frame.midX, y: frame.midY)
+                        .opacity(isPositioned ? 1 : 0)
+                        .allowsHitTesting(isPositioned)
+                        .help("Choose AirPlay speaker")
+                }
             }
-        }
-        .task {
-            await viewModel.connectToLatestServer()
-        }
+            .task {
+                await viewModel.connectToLatestServer()
+            }
     }
 
     private var libraryContent: some View {
@@ -94,6 +93,7 @@ struct ContentView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if viewModel.isConnected || viewModel.audioPlayer.currentSong != nil {
                     PlayerBarView(viewModel: viewModel) { detailPanel in
+                        NSApp.keyWindow?.makeFirstResponder(nil)
                         playerDetailPanel = detailPanel
                         isFullPlayerPresented = true
                     }

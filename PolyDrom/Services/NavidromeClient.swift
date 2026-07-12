@@ -52,7 +52,7 @@ struct NavidromeClient {
             queryItems: [
                 URLQueryItem(name: "query", value: query),
                 URLQueryItem(name: "artistCount", value: "0"),
-                URLQueryItem(name: "albumCount", value: "20"),
+                URLQueryItem(name: "albumCount", value: "0"),
                 URLQueryItem(name: "songCount", value: "100")
             ]
         )
@@ -60,12 +60,8 @@ struct NavidromeClient {
         return response.subsonicResponse.searchResult3?.songs.values ?? []
     }
 
-    func albums(type: AlbumListType = .newest, pageSize: Int = 500) async throws -> [NavidromeAlbum] {
+    private func allAlbums(type: AlbumListType, pageSize: Int = 500) async throws -> [NavidromeAlbum] {
         let pageSize = max(1, pageSize)
-        guard type != .random else {
-            return try await albumPage(type: type, size: pageSize, offset: 0)
-        }
-
         var albums: [NavidromeAlbum] = []
         var seenAlbumIDs = Set<String>()
         var offset = 0
@@ -96,29 +92,6 @@ struct NavidromeClient {
         return response.subsonicResponse.albumList2?.albums.values ?? []
     }
 
-    func artists(pageSize: Int = 500) async throws -> [NavidromeArtist] {
-        let pageSize = max(1, pageSize)
-        var artists: [NavidromeArtist] = []
-        var seenArtistIDs = Set<String>()
-        var offset = 0
-
-        while true {
-            let page = try await artistPage(size: pageSize, offset: offset)
-            let newArtists = page.filter { seenArtistIDs.insert($0.id).inserted }
-            artists.append(contentsOf: newArtists)
-
-            if page.count < pageSize || newArtists.isEmpty {
-                return artists
-                    .filter { ($0.albumCount ?? 0) > 0 }
-                    .sorted {
-                        $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                    }
-            }
-
-            offset += pageSize
-        }
-    }
-
     func artistPage(size: Int, offset: Int) async throws -> [NavidromeArtist] {
         let response: SearchEnvelope = try await request(
             "search3",
@@ -145,8 +118,8 @@ struct NavidromeClient {
             return artistAlbums
         }
 
-        let allAlbums = try await albums(type: .alphabeticalByName)
-        return allAlbums
+        let libraryAlbums = try await allAlbums(type: .alphabeticalByName)
+        return libraryAlbums
             .filter { album in
                 album.artistId == artist.id || album.artist?.localizedCaseInsensitiveCompare(artist.name) == .orderedSame
             }

@@ -13,9 +13,13 @@ final class LibraryStore {
     private let context: NSManagedObjectContext
     private let keychain: KeychainStore
 
-    init(persistence: PersistenceController = .shared, keychain: KeychainStore = KeychainStore()) {
+    init(persistence: PersistenceController, keychain: KeychainStore) {
         context = persistence.container.viewContext
         self.keychain = keychain
+    }
+
+    convenience init() {
+        self.init(persistence: .shared, keychain: KeychainStore())
     }
 
     func servers() throws -> [ServerProfile] {
@@ -73,14 +77,14 @@ final class LibraryStore {
     }
 
     func favoriteSongs(serverKey: String) throws -> [NavidromeSong] {
-        let request = songFetchRequest(serverKey: serverKey)
+        let request = songFetchRequest()
         request.predicate = NSPredicate(format: "serverKey == %@ AND isFavorite == YES", serverKey)
         request.sortDescriptors = [NSSortDescriptor(key: "title", ascending: true)]
         return try context.fetch(request).map(song(from:))
     }
 
     func recentSongs(serverKey: String, limit: Int = 50) throws -> [NavidromeSong] {
-        let request = songFetchRequest(serverKey: serverKey)
+        let request = songFetchRequest()
         request.predicate = NSPredicate(format: "serverKey == %@ AND lastPlayedAt != nil", serverKey)
         request.sortDescriptors = [NSSortDescriptor(key: "lastPlayedAt", ascending: false)]
         request.fetchLimit = limit
@@ -88,7 +92,7 @@ final class LibraryStore {
     }
 
     func favoriteIDs(serverKey: String) throws -> Set<String> {
-        let request = songFetchRequest(serverKey: serverKey)
+        let request = songFetchRequest()
         request.predicate = NSPredicate(format: "serverKey == %@ AND isFavorite == YES", serverKey)
         return Set(try context.fetch(request).compactMap { $0.value(forKey: "songID") as? String })
     }
@@ -137,13 +141,13 @@ final class LibraryStore {
     }
 
     private func songObject(songID: String, serverKey: String) throws -> NSManagedObject? {
-        let request = songFetchRequest(serverKey: serverKey)
+        let request = songFetchRequest()
         request.predicate = NSPredicate(format: "serverKey == %@ AND songID == %@", serverKey, songID)
         request.fetchLimit = 1
         return try context.fetch(request).first
     }
 
-    private func songFetchRequest(serverKey: String) -> NSFetchRequest<NSManagedObject> {
+    private func songFetchRequest() -> NSFetchRequest<NSManagedObject> {
         NSFetchRequest<NSManagedObject>(entityName: "VDSong")
     }
 

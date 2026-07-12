@@ -43,7 +43,6 @@ final class AppViewModel: ObservableObject {
     private let store: LibraryStore
     private var client: NavidromeClient?
     private var playbackQueueIndex: Int?
-    private var playbackQueueNeedsSongHydration = false
     private var lyricsSongID: String?
     private var albumCoverPrefetchTask: Task<Void, Never>?
     private var artistCoverPrefetchTask: Task<Void, Never>?
@@ -416,10 +415,6 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func play(_ song: NavidromeSong) {
-        play(song, in: [song])
-    }
-
     func play(_ song: NavidromeSong, in queue: [NavidromeSong]) {
         let shouldHydrateSong = selectedSection == .random
         Task {
@@ -439,7 +434,6 @@ final class AppViewModel: ObservableObject {
             await warmCachedSongCovers([songToPlay])
             playbackQueue = queue.isEmpty ? [song] : queue
             playbackQueueIndex = playbackQueue.firstIndex(of: song)
-            playbackQueueNeedsSongHydration = shouldHydrateSong
             if lyricsSongID != songToPlay.id {
                 lyricsSongID = nil
                 currentLyrics = nil

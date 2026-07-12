@@ -58,7 +58,6 @@ struct NavidromeAlbum: Decodable, Identifiable, Hashable {
     let artist: String?
     let artistId: String?
     let songCount: Int?
-    let duration: Int?
     let year: Int?
     let coverArt: String?
 
@@ -69,7 +68,6 @@ struct NavidromeAlbum: Decodable, Identifiable, Hashable {
         case artist
         case artistId
         case songCount
-        case duration
         case year
         case coverArt
     }
@@ -83,7 +81,6 @@ struct NavidromeAlbum: Decodable, Identifiable, Hashable {
         artist = container.decodeStringIfPresent(forKey: .artist)
         artistId = container.decodeStringIfPresent(forKey: .artistId)
         songCount = container.decodeIntIfPresent(forKey: .songCount)
-        duration = container.decodeIntIfPresent(forKey: .duration)
         year = container.decodeIntIfPresent(forKey: .year)
         coverArt = container.decodeStringIfPresent(forKey: .coverArt)
     }
@@ -131,7 +128,6 @@ struct NavidromePlaylist: Decodable, Identifiable, Hashable {
     let id: String
     let name: String
     let songCount: Int?
-    let duration: Int?
     let owner: String?
 
     var subtitle: String {
@@ -237,10 +233,6 @@ private extension KeyedDecodingContainer {
 
 enum AlbumListType: String {
     case newest
-    case recent
-    case frequent
-    case starred
-    case random
     case alphabeticalByName
 }
 

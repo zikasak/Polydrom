@@ -5,8 +5,8 @@
 //  Created by zikasak on 07/07/2026.
 //
 
-import Testing
 import Foundation
+import Testing
 @testable import PolyDrom
 
 @MainActor
@@ -23,17 +23,7 @@ struct PolyDromTests {
             createdAt: Date(),
             lastConnectedAt: nil
         )
-        let song = NavidromeSong(
-            id: "song-1",
-            title: "Song",
-            artist: nil,
-            album: nil,
-            duration: nil,
-            suffix: nil,
-            coverArt: nil,
-            albumId: nil,
-            artistId: nil
-        )
+        let song = makeSong()
         let client = try #require(NavidromeClient(profile: profile))
 
         let url = try client.streamURL(for: song)
@@ -79,6 +69,61 @@ struct PolyDromTests {
         #expect(lyrics.offset == 125)
         #expect(lyrics.lines.map(\.start) == [1200, 3500])
         #expect(lyrics.lines.map(\.value) == ["First line", "Second line"])
+    }
+
+    @Test func failedSubsonicResponsePreservesServerMessage() throws {
+        let json = #"""
+        {
+          "subsonic-response": {
+            "status": "failed",
+            "error": { "message": "Bad credentials" }
+          }
+        }
+        """#
+
+        let envelope = try JSONDecoder().decode(PingEnvelope.self, from: Data(json.utf8))
+        var thrownMessage: String?
+
+        do {
+            try envelope.subsonicResponse.throwIfNeeded()
+        } catch {
+            thrownMessage = error.localizedDescription
+        }
+
+        #expect(thrownMessage == "Bad credentials")
+    }
+
+    @Test func libraryStorePersistsFavoriteAndRecentSongs() throws {
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: KeychainStore()
+        )
+        let song = makeSong()
+        let serverKey = "https://music.example.com|user"
+
+        try store.upsertSongs([song], serverKey: serverKey)
+        #expect(try store.favoriteSongs(serverKey: serverKey).isEmpty)
+
+        try store.setFavorite(song, serverKey: serverKey, isFavorite: true)
+        #expect(try store.favoriteIDs(serverKey: serverKey) == [song.id])
+        #expect(try store.favoriteSongs(serverKey: serverKey) == [song])
+
+        try store.markPlayed(song, serverKey: serverKey)
+        #expect(try store.recentSongs(serverKey: serverKey) == [song])
+    }
+
+    private func makeSong() -> NavidromeSong {
+        NavidromeSong(
+            id: "song-1",
+            title: "Song",
+            artist: nil,
+            album: nil,
+            duration: nil,
+            suffix: nil,
+            coverArt: nil,
+            albumId: nil,
+            artistId: nil
+        )
     }
 
 }
