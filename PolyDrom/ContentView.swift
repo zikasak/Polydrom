@@ -81,10 +81,11 @@ struct ContentView: View {
                         case .playlist(let playlist):
                             withPlayerBar {
                                 PlaylistDetailView(viewModel: viewModel, playlist: playlist)
-                            }
-                        }
-                    }
+                }
             }
+        }
+        .navigationTitle("PolyDrom")
+    }
         }
     }
 

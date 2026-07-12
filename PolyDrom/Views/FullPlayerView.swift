@@ -200,6 +200,22 @@ struct FullPlayerView: View {
             .buttonStyle(.plain)
             .disabled(audioPlayer.currentSong == nil)
             .help("Stop")
+
+            Button {
+                if let song = audioPlayer.currentSong {
+                    viewModel.toggleFavorite(song)
+                }
+            } label: {
+                Label(
+                    currentSongIsFavorite ? "Unfavorite" : "Favorite",
+                    systemImage: currentSongIsFavorite ? "heart.fill" : "heart"
+                )
+                .labelStyle(.iconOnly)
+                .font(.title2)
+            }
+            .buttonStyle(.plain)
+            .disabled(audioPlayer.currentSong == nil)
+            .help(currentSongIsFavorite ? "Remove from favorites" : "Add to favorites")
         }
     }
 
@@ -262,6 +278,10 @@ struct FullPlayerView: View {
         case ..<0.75: "speaker.wave.2.fill"
         default: "speaker.wave.3.fill"
         }
+    }
+
+    private var currentSongIsFavorite: Bool {
+        audioPlayer.currentSong.map(viewModel.isFavorite) ?? false
     }
 
     private func timeText(_ seconds: Double) -> String {

@@ -76,6 +76,22 @@ struct PlayerBarView: View {
                     .buttonStyle(.plain)
                     .disabled(audioPlayer.currentSong == nil)
                     .help("Stop")
+
+                    Button {
+                        if let song = audioPlayer.currentSong {
+                            viewModel.toggleFavorite(song)
+                        }
+                    } label: {
+                        Label(
+                            currentSongIsFavorite ? "Unfavorite" : "Favorite",
+                            systemImage: currentSongIsFavorite ? "heart.fill" : "heart"
+                        )
+                        .labelStyle(.iconOnly)
+                        .font(.body)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(audioPlayer.currentSong == nil)
+                    .help(currentSongIsFavorite ? "Remove from favorites" : "Add to favorites")
                 }
 
                 AirPlayRoutePickerAnchor(location: .compactPlayer)
@@ -184,6 +200,10 @@ struct PlayerBarView: View {
 
     private var progressUpperBound: Double {
         max(audioPlayer.duration, 1)
+    }
+
+    private var currentSongIsFavorite: Bool {
+        audioPlayer.currentSong.map(viewModel.isFavorite) ?? false
     }
 
     private var volumeSystemImage: String {

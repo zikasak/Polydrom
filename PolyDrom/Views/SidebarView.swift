@@ -20,7 +20,6 @@ struct SidebarView: View {
             statusLine
         }
         .padding(14)
-        .navigationTitle("PolyDrom")
     }
 
     private var connectionForm: some View {

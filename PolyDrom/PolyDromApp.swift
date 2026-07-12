@@ -15,5 +15,6 @@ struct PolyDromApp: App {
         WindowGroup {
             ContentView(viewModel: viewModel)
         }
+        .windowStyle(.hiddenTitleBar)
     }
 }
