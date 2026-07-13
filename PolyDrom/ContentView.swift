@@ -16,7 +16,7 @@ struct ContentView: View {
     var body: some View {
         libraryContent
             .disabled(isFullPlayerPresented)
-            .frame(minWidth: 980, minHeight: 680)
+            .frame(minWidth: 1120, minHeight: 720)
             .overlay {
                 ZStack {
                     if isFullPlayerPresented {
@@ -62,6 +62,7 @@ struct ContentView: View {
             SidebarView(viewModel: viewModel) {
                 detailPath = []
             }
+            .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
             NavigationStack(path: $detailPath) {
                 withPlayerBar {
