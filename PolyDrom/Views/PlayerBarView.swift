@@ -11,6 +11,7 @@ struct PlayerBarView: View {
     @ObservedObject var viewModel: AppViewModel
     @ObservedObject private var audioPlayer: AudioPlayer
     @State private var presentedDetailPanel: PlayerDetailPanel? = nil
+    @State private var isCoverArtHovered = false
     let onOpenFullPlayer: () -> Void
 
     init(viewModel: AppViewModel, onOpenFullPlayer: @escaping () -> Void) {
@@ -115,8 +116,18 @@ struct PlayerBarView: View {
 
                 Button(action: openFullPlayer) {
                     CoverArtView(resource: audioPlayer.currentSong.flatMap { viewModel.coverArtResource(for: $0, size: 96) }, size: 44)
+                        .overlay {
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(6)
+                                .background(.black.opacity(0.55), in: Circle())
+                                .opacity(isCoverArtHovered ? 1 : 0)
+                        }
                 }
                 .buttonStyle(.plain)
+                .onHover { isCoverArtHovered = $0 }
+                .animation(.easeOut(duration: 0.15), value: isCoverArtHovered)
                 .help("Open full player")
 
                 VStack(alignment: .leading, spacing: 6) {
