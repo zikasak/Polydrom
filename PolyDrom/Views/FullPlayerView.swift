@@ -30,12 +30,19 @@ struct FullPlayerView: View {
                 220,
                 min(430, proxy.size.height - 400, proxy.size.width * 0.42)
             )
+            let artworkResource = audioPlayer.currentSong.flatMap {
+                viewModel.coverArtResource(for: $0, size: 900)
+            }
 
             ZStack {
-                playerBackground
+                playerBackground(resource: artworkResource)
 
                 HStack(spacing: 0) {
-                    mainPlayer(artworkSize: artworkSize, usesCompactSpacing: usesCompactSpacing)
+                    mainPlayer(
+                        artworkResource: artworkResource,
+                        artworkSize: artworkSize,
+                        usesCompactSpacing: usesCompactSpacing
+                    )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if let detailPanel {
@@ -51,24 +58,17 @@ struct FullPlayerView: View {
         .frame(minWidth: 760, minHeight: 620)
     }
 
-    private var playerBackground: some View {
-        ZStack {
-            Color(nsColor: .windowBackgroundColor)
-
-            LinearGradient(
-                colors: [
-                    Color.accentColor.opacity(0.20),
-                    .clear,
-                    .clear
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        }
-        .ignoresSafeArea()
+    private func playerBackground(resource: CoverArtResource?) -> some View {
+        PlayerArtworkBackground(resource: resource)
+            .ignoresSafeArea()
+            .accessibilityHidden(true)
     }
 
-    private func mainPlayer(artworkSize: CGFloat, usesCompactSpacing: Bool) -> some View {
+    private func mainPlayer(
+        artworkResource: CoverArtResource?,
+        artworkSize: CGFloat,
+        usesCompactSpacing: Bool
+    ) -> some View {
         VStack(spacing: usesCompactSpacing ? 14 : 20) {
             HStack {
                 Button(action: onClose) {
@@ -95,7 +95,7 @@ struct FullPlayerView: View {
             Spacer(minLength: 0)
 
             CoverArtView(
-                resource: audioPlayer.currentSong.flatMap { viewModel.coverArtResource(for: $0, size: 900) },
+                resource: artworkResource,
                 size: artworkSize
             )
             .shadow(color: .black.opacity(0.28), radius: 28, y: 16)
@@ -286,6 +286,124 @@ struct FullPlayerView: View {
         guard seconds.isFinite, seconds > 0 else { return "0:00" }
         let totalSeconds = Int(seconds.rounded(.down))
         return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
+    }
+}
+
+private struct PlayerArtworkBackground: View {
+    private struct Artwork {
+        let cacheKey: String
+        let image: CGImage
+    }
+
+    let resource: CoverArtResource?
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var outgoingArtwork: Artwork?
+    @State private var displayedArtwork: Artwork?
+    @State private var transitionProgress = 1.0
+
+    var body: some View {
+        GeometryReader { proxy in
+            let imageSize = max(proxy.size.width, proxy.size.height)
+
+            ZStack {
+                Color(nsColor: .windowBackgroundColor)
+
+                if let outgoingArtwork {
+                    artworkLayer(outgoingArtwork.image, size: imageSize)
+                        .opacity(1 - transitionProgress)
+                }
+
+                if let displayedArtwork {
+                    artworkLayer(displayedArtwork.image, size: imageSize)
+                        .opacity(transitionProgress)
+                }
+
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+
+                LinearGradient(
+                    colors: [
+                        Color(nsColor: .windowBackgroundColor).opacity(
+                            colorScheme == .dark ? 0.16 : 0.34
+                        ),
+                        Color(nsColor: .windowBackgroundColor).opacity(
+                            colorScheme == .dark ? 0.52 : 0.68
+                        )
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+        .task(id: resource?.cacheKey) {
+            guard let resource else {
+                await transition(to: nil)
+                return
+            }
+
+            if displayedArtwork?.cacheKey == resource.cacheKey { return }
+
+            let image = await loadImage(for: resource)
+            guard !Task.isCancelled else { return }
+
+            await transition(
+                to: image.map { Artwork(cacheKey: resource.cacheKey, image: $0) }
+            )
+        }
+    }
+
+    private func artworkLayer(_ image: CGImage, size: CGFloat) -> some View {
+        Image(decorative: image, scale: 1)
+            .resizable()
+            .scaledToFill()
+            .frame(width: size, height: size)
+            .clipped()
+            .scaleEffect(1.16)
+            .blur(radius: 64, opaque: true)
+            .saturation(1.25)
+            .opacity(colorScheme == .dark ? 0.72 : 0.52)
+    }
+
+    private func loadImage(for resource: CoverArtResource) async -> CGImage? {
+        if let cachedImage = CoverArtCache.shared.cachedImage(for: resource) {
+            return cachedImage
+        }
+
+        for attempt in 0..<3 {
+            do {
+                return try await CoverArtCache.shared.image(for: resource)
+            } catch {
+                guard !Task.isCancelled, attempt < 2 else { return nil }
+
+                do {
+                    try await Task.sleep(for: .milliseconds(attempt == 0 ? 400 : 900))
+                } catch {
+                    return nil
+                }
+            }
+        }
+
+        return nil
+    }
+
+    @MainActor
+    private func transition(to artwork: Artwork?) async {
+        guard displayedArtwork?.cacheKey != artwork?.cacheKey else { return }
+
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            outgoingArtwork = displayedArtwork
+            displayedArtwork = artwork
+            transitionProgress = 0
+        }
+
+        await Task.yield()
+
+        withAnimation(.easeInOut(duration: 0.8)) {
+            transitionProgress = 1
+        }
     }
 }
 
