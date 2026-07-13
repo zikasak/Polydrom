@@ -508,7 +508,7 @@ struct PlayerLyricsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            panelHeader("Lyrics", subtitle: viewModel.currentLyrics?.language?.uppercased())
+            panelHeader("Lyrics", subtitle: viewModel.currentLyrics?.displayLanguage)
 
             if viewModel.isLoadingLyrics {
                 ProgressView("Loading lyrics...")

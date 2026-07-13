@@ -182,6 +182,16 @@ struct SongLyrics: Decodable, Identifiable, Hashable {
             .joined(separator: "|")
     }
 
+    var displayLanguage: String? {
+        guard let language = language?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !language.isEmpty,
+              language.caseInsensitiveCompare("xxx") != .orderedSame,
+              language.caseInsensitiveCompare("und") != .orderedSame else {
+            return nil
+        }
+        return language.uppercased()
+    }
+
     enum CodingKeys: String, CodingKey {
         case displayArtist
         case displayTitle

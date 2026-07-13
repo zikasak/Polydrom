@@ -66,9 +66,26 @@ struct PolyDromTests {
 
         #expect(lyrics.synced)
         #expect(lyrics.language == "eng")
+        #expect(lyrics.displayLanguage == "ENG")
         #expect(lyrics.offset == 125)
         #expect(lyrics.lines.map(\.start) == [1200, 3500])
         #expect(lyrics.lines.map(\.value) == ["First line", "Second line"])
+    }
+
+    @Test func unspecifiedLyricsLanguageHasNoDisplayLabel() throws {
+        let json = #"""
+        {
+          "displayArtist": "Test Artist",
+          "displayTitle": "Test Song",
+          "lang": "xxx",
+          "synced": false,
+          "line": [{ "value": "A lyric" }]
+        }
+        """#
+
+        let lyrics = try JSONDecoder().decode(SongLyrics.self, from: Data(json.utf8))
+
+        #expect(lyrics.displayLanguage == nil)
     }
 
     @Test func failedSubsonicResponsePreservesServerMessage() throws {
