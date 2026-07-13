@@ -170,6 +170,24 @@ struct NavidromeClient {
         return response.subsonicResponse.lyricsList?.structuredLyrics.values ?? []
     }
 
+    func starredItems() async throws -> (artists: [NavidromeArtist], albums: [NavidromeAlbum], songs: [NavidromeSong]) {
+        let response: StarredEnvelope = try await request("getStarred2")
+        try response.subsonicResponse.throwIfNeeded()
+        return (
+            artists: response.subsonicResponse.starred2?.artists.values ?? [],
+            albums: response.subsonicResponse.starred2?.albums.values ?? [],
+            songs: response.subsonicResponse.starred2?.songs.values ?? []
+        )
+    }
+
+    func setStarred(_ isStarred: Bool, itemID: String) async throws {
+        let response: PingEnvelope = try await request(
+            isStarred ? "star" : "unstar",
+            queryItems: [URLQueryItem(name: "id", value: itemID)]
+        )
+        try response.subsonicResponse.throwIfNeeded()
+    }
+
     func streamURL(for song: NavidromeSong) throws -> URL {
         try apiURL(
             "stream",

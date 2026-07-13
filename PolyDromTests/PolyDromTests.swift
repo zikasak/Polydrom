@@ -110,7 +110,34 @@ struct PolyDromTests {
         #expect(thrownMessage == "Bad credentials")
     }
 
-    @Test func libraryStorePersistsFavoriteAndRecentSongs() throws {
+    @Test func starredResponseDecodesArtistsAlbumsAndSongs() throws {
+        let json = #"""
+        {
+          "subsonic-response": {
+            "status": "ok",
+            "starred2": {
+              "artist": [{ "id": "artist-1", "name": "Favorite Artist" }],
+              "album": [{ "id": "album-1", "name": "Favorite Album" }],
+              "song": [{ "id": "song-1", "title": "Favorite Song" }]
+            }
+          }
+        }
+        """#
+
+        let envelope = try JSONDecoder().decode(StarredEnvelope.self, from: Data(json.utf8))
+        let artists = envelope.subsonicResponse.starred2?.artists.values ?? []
+        let albums = envelope.subsonicResponse.starred2?.albums.values ?? []
+        let songs = envelope.subsonicResponse.starred2?.songs.values ?? []
+
+        #expect(artists.map(\.id) == ["artist-1"])
+        #expect(artists.map(\.name) == ["Favorite Artist"])
+        #expect(albums.map(\.id) == ["album-1"])
+        #expect(albums.map(\.name) == ["Favorite Album"])
+        #expect(songs.map(\.id) == ["song-1"])
+        #expect(songs.map(\.title) == ["Favorite Song"])
+    }
+
+    @Test func libraryStorePersistsRecentSongs() throws {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),
             keychain: KeychainStore()
@@ -119,12 +146,6 @@ struct PolyDromTests {
         let serverKey = "https://music.example.com|user"
 
         try store.upsertSongs([song], serverKey: serverKey)
-        #expect(try store.favoriteSongs(serverKey: serverKey).isEmpty)
-
-        try store.setFavorite(song, serverKey: serverKey, isFavorite: true)
-        #expect(try store.favoriteIDs(serverKey: serverKey) == [song.id])
-        #expect(try store.favoriteSongs(serverKey: serverKey) == [song])
-
         try store.markPlayed(song, serverKey: serverKey)
         #expect(try store.recentSongs(serverKey: serverKey) == [song])
     }

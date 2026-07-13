@@ -80,12 +80,7 @@ struct LibraryDetailView: View {
         case .playlists:
             PlaylistBrowserView(viewModel: viewModel)
         case .favorites:
-            SongListView(
-                title: "Favorite songs",
-                songs: viewModel.favoriteSongs,
-                viewModel: viewModel,
-                emptyMessage: "No favorites yet."
-            )
+            FavoriteLibraryView(viewModel: viewModel)
         case .recent:
             SongListView(
                 title: "Recently played",
@@ -94,6 +89,66 @@ struct LibraryDetailView: View {
                 emptyMessage: "No playback history yet."
             )
         }
+    }
+}
+
+private struct FavoriteLibraryView: View {
+    @ObservedObject var viewModel: AppViewModel
+    @State private var selection: FavoriteContent = .songs
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Picker("Favorite content", selection: $selection) {
+                Label("Artists", systemImage: "music.mic")
+                    .tag(FavoriteContent.artists)
+                Label("Albums", systemImage: "rectangle.stack")
+                    .tag(FavoriteContent.albums)
+                Label("Songs", systemImage: "music.note")
+                    .tag(FavoriteContent.songs)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+
+            switch selection {
+            case .artists:
+                if viewModel.favoriteArtists.isEmpty {
+                    ContentUnavailableView("No favorite artists yet.", systemImage: "music.mic")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    FavoriteArtistBrowserView(viewModel: viewModel)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            case .albums:
+                if viewModel.favoriteAlbums.isEmpty {
+                    ContentUnavailableView("No favorite albums yet.", systemImage: "rectangle.stack")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    AlbumBrowserView(viewModel: viewModel, albums: viewModel.favoriteAlbums)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            case .songs:
+                if viewModel.favoriteSongs.isEmpty {
+                    ContentUnavailableView("No favorite songs yet.", systemImage: "music.note")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    SongListView(
+                        title: "Favorite songs",
+                        songs: viewModel.favoriteSongs,
+                        viewModel: viewModel,
+                        emptyMessage: "No favorite songs yet."
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private enum FavoriteContent: Hashable {
+        case artists
+        case albums
+        case songs
     }
 }
 

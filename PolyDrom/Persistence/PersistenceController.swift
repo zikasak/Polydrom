@@ -75,7 +75,6 @@ final class PersistenceController {
             attribute("coverArt", .stringAttributeType),
             attribute("albumId", .stringAttributeType),
             attribute("artistId", .stringAttributeType),
-            attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false),
             attribute("playCount", .integer64AttributeType, isOptional: false, defaultValue: 0),
             attribute("cachedAt", .dateAttributeType, isOptional: false),
             attribute("lastPlayedAt", .dateAttributeType)

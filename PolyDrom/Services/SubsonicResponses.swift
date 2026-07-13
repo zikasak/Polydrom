@@ -25,6 +25,7 @@ typealias AlbumEnvelope = SubsonicEnvelope<AlbumResponse>
 typealias PlaylistsEnvelope = SubsonicEnvelope<PlaylistsResponse>
 typealias PlaylistEnvelope = SubsonicEnvelope<PlaylistResponse>
 typealias LyricsEnvelope = SubsonicEnvelope<LyricsResponse>
+typealias StarredEnvelope = SubsonicEnvelope<StarredResponse>
 
 protocol SubsonicResponse: Decodable {
     var status: String { get }
@@ -96,6 +97,31 @@ struct LyricsResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let lyricsList: LyricsList?
+}
+
+struct StarredResponse: SubsonicResponse {
+    let status: String
+    let error: SubsonicServerError?
+    let starred2: StarredContainer?
+}
+
+struct StarredContainer: Decodable {
+    let artists: FlexibleArray<NavidromeArtist>
+    let albums: FlexibleArray<NavidromeAlbum>
+    let songs: FlexibleArray<NavidromeSong>
+
+    enum CodingKeys: String, CodingKey {
+        case artists = "artist"
+        case albums = "album"
+        case songs = "song"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        artists = (try? container.decode(FlexibleArray<NavidromeArtist>.self, forKey: .artists)) ?? FlexibleArray(values: [])
+        albums = (try? container.decode(FlexibleArray<NavidromeAlbum>.self, forKey: .albums)) ?? FlexibleArray(values: [])
+        songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
+    }
 }
 
 struct LyricsList: Decodable {

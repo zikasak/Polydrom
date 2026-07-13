@@ -15,13 +15,15 @@ struct AlbumBrowserView: View {
         AlbumBrowserGrid(
             albums: albums,
             selectedAlbumID: viewModel.selectedAlbum?.id,
+            favoriteAlbumIDs: viewModel.favoriteAlbumIDs,
             serverKey: viewModel.serverKey,
             coverArtResource: { album in
                 viewModel.coverArtResource(for: album, size: 220)
             },
             play: viewModel.play,
             playNext: viewModel.playNext,
-            addToQueue: viewModel.addToQueue
+            addToQueue: viewModel.addToQueue,
+            toggleFavorite: viewModel.toggleFavorite
         )
         .equatable()
     }
@@ -30,29 +32,49 @@ struct AlbumBrowserView: View {
 private struct AlbumBrowserGrid: View, Equatable {
     let albums: [NavidromeAlbum]
     let selectedAlbumID: String?
+    let favoriteAlbumIDs: Set<String>
     let serverKey: String?
     let coverArtResource: (NavidromeAlbum) -> CoverArtResource?
     let play: (NavidromeAlbum) -> Void
     let playNext: (NavidromeAlbum) -> Void
     let addToQueue: (NavidromeAlbum) -> Void
+    let toggleFavorite: (NavidromeAlbum) -> Void
     @Environment(\.openLibraryRoute) private var openLibraryRoute
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.albums == rhs.albums
             && lhs.selectedAlbumID == rhs.selectedAlbumID
+            && lhs.favoriteAlbumIDs == rhs.favoriteAlbumIDs
             && lhs.serverKey == rhs.serverKey
     }
 
     var body: some View {
         LazyLibraryCardGrid(albums, minimumCardWidth: 150) { album in
-            NavigationLink(value: LibraryRoute.album(album)) {
-                AlbumCardView(
-                    album: album,
-                    coverArtResource: coverArtResource(album),
-                    isSelected: selectedAlbumID == album.id
-                )
+            ZStack(alignment: .topTrailing) {
+                NavigationLink(value: LibraryRoute.album(album)) {
+                    AlbumCardView(
+                        album: album,
+                        coverArtResource: coverArtResource(album),
+                        isSelected: selectedAlbumID == album.id
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    toggleFavorite(album)
+                } label: {
+                    Label(
+                        favoriteAlbumIDs.contains(album.id) ? "Unfavorite" : "Favorite",
+                        systemImage: favoriteAlbumIDs.contains(album.id) ? "heart.fill" : "heart"
+                    )
+                    .labelStyle(.iconOnly)
+                    .padding(7)
+                    .background(.regularMaterial, in: Circle())
+                }
+                .buttonStyle(.borderless)
+                .padding(15)
+                .help(favoriteAlbumIDs.contains(album.id) ? "Remove album from favorites" : "Add album to favorites")
             }
-            .buttonStyle(.plain)
             .contextMenu {
                 Button {
                     play(album)
@@ -70,6 +92,15 @@ private struct AlbumBrowserGrid: View, Equatable {
                     addToQueue(album)
                 } label: {
                     Label("Add to Queue", systemImage: "text.badge.plus")
+                }
+
+                Button {
+                    toggleFavorite(album)
+                } label: {
+                    Label(
+                        favoriteAlbumIDs.contains(album.id) ? "Remove from Favorites" : "Add to Favorites",
+                        systemImage: favoriteAlbumIDs.contains(album.id) ? "heart.slash" : "heart"
+                    )
                 }
 
                 Divider()
@@ -90,14 +121,28 @@ struct AlbumDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(album.name)
-                    .font(.title2)
-                    .fontWeight(.semibold)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(album.name)
+                        .font(.title2)
+                        .fontWeight(.semibold)
 
-                Text(album.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    Text(album.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    viewModel.toggleFavorite(album)
+                } label: {
+                    Label(
+                        viewModel.isFavorite(album) ? "Unfavorite" : "Favorite",
+                        systemImage: viewModel.isFavorite(album) ? "heart.fill" : "heart"
+                    )
+                }
+                .help(viewModel.isFavorite(album) ? "Remove album from favorites" : "Add album to favorites")
             }
 
             SongListView(

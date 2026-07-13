@@ -30,8 +30,12 @@ final class AppViewModel: ObservableObject {
     @Published var playlists: [NavidromePlaylist] = []
     @Published var selectedPlaylist: NavidromePlaylist?
     @Published var playlistSongs: [NavidromeSong] = []
+    @Published var favoriteArtists: [NavidromeArtist] = []
+    @Published var favoriteAlbums: [NavidromeAlbum] = []
     @Published var favoriteSongs: [NavidromeSong] = []
     @Published var recentSongs: [NavidromeSong] = []
+    @Published var favoriteArtistIDs: Set<String> = []
+    @Published var favoriteAlbumIDs: Set<String> = []
     @Published var favoriteIDs: Set<String> = []
     @Published var playbackQueue: [NavidromeSong] = []
     @Published var currentLyrics: SongLyrics?
@@ -57,6 +61,9 @@ final class AppViewModel: ObservableObject {
     private let gridCoverSize = 220
     private let interchangeableThumbnailSizes = [72, 80, 96]
     private var didAttemptInitialConnection = false
+    private var artistFavoriteUpdatesInFlight = Set<String>()
+    private var albumFavoriteUpdatesInFlight = Set<String>()
+    private var songFavoriteUpdatesInFlight = Set<String>()
 
     var isConnected: Bool {
         activeServer != nil && client != nil
@@ -137,8 +144,12 @@ final class AppViewModel: ObservableObject {
             password = profile.password
             try store.touchServer(profile)
             loadServers()
-            try await refreshLocalLists()
-            statusMessage = "Connected to \(profile.displayName)"
+            do {
+                try await refreshLibraryLists()
+                statusMessage = "Connected to \(profile.displayName)"
+            } catch {
+                statusMessage = "Connected to \(profile.displayName), but favorites could not sync: \(error.localizedDescription)"
+            }
             await refreshSelectedSection()
         } catch {
             client = nil
@@ -193,9 +204,15 @@ final class AppViewModel: ObservableObject {
             if force || playlists.isEmpty {
                 await loadPlaylists()
             }
-        case .favorites, .recent:
+        case .favorites:
             do {
-                try await refreshLocalLists()
+                try await refreshFavorites()
+            } catch {
+                statusMessage = error.localizedDescription
+            }
+        case .recent:
+            do {
+                try await refreshRecentSongs()
             } catch {
                 statusMessage = error.localizedDescription
             }
@@ -505,7 +522,7 @@ final class AppViewModel: ObservableObject {
                 prefetchSongCovers(queueToWarm)
             }
             try store.markPlayed(songToPlay, serverKey: serverKey)
-            try await refreshLocalLists()
+            try await refreshRecentSongs()
             statusMessage = "Playing \(songToPlay.title)"
         } catch {
             statusMessage = error.localizedDescription
@@ -643,23 +660,31 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleFavorite(_ song: NavidromeSong) {
-        guard let serverKey else { return }
+        guard let client, let serverKey, songFavoriteUpdatesInFlight.insert(song.id).inserted else { return }
 
-        do {
-            let nextValue = !favoriteIDs.contains(song.id)
-            try store.setFavorite(song, serverKey: serverKey, isFavorite: nextValue)
-            favoriteIDs = try store.favoriteIDs(serverKey: serverKey)
-            Task { [weak self] in
-                guard let self else { return }
-                do {
-                    try await refreshLocalLists()
-                    statusMessage = nextValue ? "Added to favorites" : "Removed from favorites"
-                } catch {
-                    statusMessage = error.localizedDescription
-                }
+        let wasFavorite = favoriteIDs.contains(song.id)
+        let nextValue = !wasFavorite
+        setFavoriteState(nextValue, for: song)
+
+        Task { [weak self] in
+            do {
+                try await client.setStarred(nextValue, itemID: song.id)
+            } catch {
+                guard let self, self.serverKey == serverKey else { return }
+                self.songFavoriteUpdatesInFlight.remove(song.id)
+                self.setFavoriteState(wasFavorite, for: song)
+                self.statusMessage = error.localizedDescription
+                return
             }
-        } catch {
-            statusMessage = error.localizedDescription
+
+            guard let self, self.serverKey == serverKey else { return }
+            do {
+                try await self.refreshFavorites()
+                self.statusMessage = nextValue ? "Added to favorites" : "Removed from favorites"
+            } catch {
+                self.statusMessage = "Favorite updated in Navidrome, but could not refresh: \(error.localizedDescription)"
+            }
+            self.songFavoriteUpdatesInFlight.remove(song.id)
         }
     }
 
@@ -667,23 +692,153 @@ final class AppViewModel: ObservableObject {
         favoriteIDs.contains(song.id)
     }
 
+    func toggleFavorite(_ album: NavidromeAlbum) {
+        guard let client, let serverKey, albumFavoriteUpdatesInFlight.insert(album.id).inserted else { return }
+
+        let wasFavorite = favoriteAlbumIDs.contains(album.id)
+        let nextValue = !wasFavorite
+        setFavoriteState(nextValue, for: album)
+
+        Task { [weak self] in
+            do {
+                try await client.setStarred(nextValue, itemID: album.id)
+            } catch {
+                guard let self, self.serverKey == serverKey else { return }
+                self.albumFavoriteUpdatesInFlight.remove(album.id)
+                self.setFavoriteState(wasFavorite, for: album)
+                self.statusMessage = error.localizedDescription
+                return
+            }
+
+            guard let self, self.serverKey == serverKey else { return }
+            do {
+                try await self.refreshFavorites()
+                self.statusMessage = nextValue ? "Added album to favorites" : "Removed album from favorites"
+            } catch {
+                self.statusMessage = "Favorite updated in Navidrome, but could not refresh: \(error.localizedDescription)"
+            }
+            self.albumFavoriteUpdatesInFlight.remove(album.id)
+        }
+    }
+
+    func isFavorite(_ album: NavidromeAlbum) -> Bool {
+        favoriteAlbumIDs.contains(album.id)
+    }
+
+    func toggleFavorite(_ artist: NavidromeArtist) {
+        guard let client, let serverKey, artistFavoriteUpdatesInFlight.insert(artist.id).inserted else { return }
+
+        let wasFavorite = favoriteArtistIDs.contains(artist.id)
+        let nextValue = !wasFavorite
+        setFavoriteState(nextValue, for: artist)
+
+        Task { [weak self] in
+            do {
+                try await client.setStarred(nextValue, itemID: artist.id)
+            } catch {
+                guard let self, self.serverKey == serverKey else { return }
+                self.artistFavoriteUpdatesInFlight.remove(artist.id)
+                self.setFavoriteState(wasFavorite, for: artist)
+                self.statusMessage = error.localizedDescription
+                return
+            }
+
+            guard let self, self.serverKey == serverKey else { return }
+            do {
+                try await self.refreshFavorites()
+                self.statusMessage = nextValue ? "Added artist to favorites" : "Removed artist from favorites"
+            } catch {
+                self.statusMessage = "Favorite updated in Navidrome, but could not refresh: \(error.localizedDescription)"
+            }
+            self.artistFavoriteUpdatesInFlight.remove(artist.id)
+        }
+    }
+
+    func isFavorite(_ artist: NavidromeArtist) -> Bool {
+        favoriteArtistIDs.contains(artist.id)
+    }
+
     private func cache(_ songs: [NavidromeSong]) throws {
         guard let serverKey else { return }
         try store.upsertSongs(songs, serverKey: serverKey)
-        favoriteIDs = try store.favoriteIDs(serverKey: serverKey)
     }
 
-    private func refreshLocalLists() async throws {
-        guard let serverKey else { return }
-        let loadedFavoriteIDs = try store.favoriteIDs(serverKey: serverKey)
-        let loadedFavoriteSongs = try store.favoriteSongs(serverKey: serverKey)
-        let loadedRecentSongs = try store.recentSongs(serverKey: serverKey)
-        let songs = loadedFavoriteSongs + loadedRecentSongs
-        await warmCachedSongCovers(songs)
-        favoriteIDs = loadedFavoriteIDs
+    private func refreshLibraryLists() async throws {
+        try await refreshFavorites()
+        try await refreshRecentSongs()
+    }
+
+    private func refreshFavorites() async throws {
+        guard let client, let serverKey else { return }
+        let starredItems = try await client.starredItems()
+        let loadedFavoriteArtists = starredItems.artists
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let loadedFavoriteAlbums = starredItems.albums
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let loadedFavoriteSongs = starredItems.songs
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        try store.upsertSongs(loadedFavoriteSongs, serverKey: serverKey)
+        await warmCachedArtistCovers(loadedFavoriteArtists)
+        await warmCachedAlbumCovers(loadedFavoriteAlbums)
+        await warmCachedSongCovers(loadedFavoriteSongs)
+        guard self.serverKey == serverKey else { return }
+        favoriteArtistIDs = Set(loadedFavoriteArtists.map(\.id))
+        favoriteArtists = loadedFavoriteArtists
+        favoriteAlbumIDs = Set(loadedFavoriteAlbums.map(\.id))
+        favoriteAlbums = loadedFavoriteAlbums
+        favoriteIDs = Set(loadedFavoriteSongs.map(\.id))
         favoriteSongs = loadedFavoriteSongs
+        prefetchArtistCovers(loadedFavoriteArtists)
+        prefetchAlbumCovers(loadedFavoriteAlbums)
+        prefetchSongCovers(loadedFavoriteSongs)
+    }
+
+    private func refreshRecentSongs() async throws {
+        guard let serverKey else { return }
+        let loadedRecentSongs = try store.recentSongs(serverKey: serverKey)
+        await warmCachedSongCovers(loadedRecentSongs)
+        guard self.serverKey == serverKey else { return }
         recentSongs = loadedRecentSongs
-        prefetchSongCovers(songs)
+        prefetchSongCovers(loadedRecentSongs)
+    }
+
+    private func setFavoriteState(_ isFavorite: Bool, for song: NavidromeSong) {
+        if isFavorite {
+            favoriteIDs.insert(song.id)
+            if !favoriteSongs.contains(where: { $0.id == song.id }) {
+                favoriteSongs.append(song)
+                favoriteSongs.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            }
+        } else {
+            favoriteIDs.remove(song.id)
+            favoriteSongs.removeAll { $0.id == song.id }
+        }
+    }
+
+    private func setFavoriteState(_ isFavorite: Bool, for album: NavidromeAlbum) {
+        if isFavorite {
+            favoriteAlbumIDs.insert(album.id)
+            if !favoriteAlbums.contains(where: { $0.id == album.id }) {
+                favoriteAlbums.append(album)
+                favoriteAlbums.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            }
+        } else {
+            favoriteAlbumIDs.remove(album.id)
+            favoriteAlbums.removeAll { $0.id == album.id }
+        }
+    }
+
+    private func setFavoriteState(_ isFavorite: Bool, for artist: NavidromeArtist) {
+        if isFavorite {
+            favoriteArtistIDs.insert(artist.id)
+            if !favoriteArtists.contains(where: { $0.id == artist.id }) {
+                favoriteArtists.append(artist)
+                favoriteArtists.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            }
+        } else {
+            favoriteArtistIDs.remove(artist.id)
+            favoriteArtists.removeAll { $0.id == artist.id }
+        }
     }
 
     private func configureAudioPlayer() {
@@ -734,9 +889,16 @@ final class AppViewModel: ObservableObject {
         playlists = []
         selectedPlaylist = nil
         playlistSongs = []
+        favoriteArtists = []
+        favoriteAlbums = []
         favoriteSongs = []
         recentSongs = []
+        favoriteArtistIDs = []
+        favoriteAlbumIDs = []
         favoriteIDs = []
+        artistFavoriteUpdatesInFlight = []
+        albumFavoriteUpdatesInFlight = []
+        songFavoriteUpdatesInFlight = []
         loadedArtistAlbumsID = nil
         loadedAlbumSongsID = nil
         loadedPlaylistSongsID = nil

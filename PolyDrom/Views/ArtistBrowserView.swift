@@ -11,32 +11,112 @@ struct ArtistBrowserView: View {
     @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
-        LazyLibraryCardGrid(viewModel.artists, minimumCardWidth: 140) { artist in
-            NavigationLink(value: LibraryRoute.artist(artist)) {
-                ArtistCardView(
-                    artist: artist,
-                    coverArtResource: viewModel.coverArtResource(for: artist, size: 220),
-                    isSelected: viewModel.selectedArtist == artist
-                )
+        ArtistBrowserGrid(
+            artists: viewModel.artists,
+            selectedArtistID: viewModel.selectedArtist?.id,
+            favoriteArtistIDs: viewModel.favoriteArtistIDs,
+            serverKey: viewModel.serverKey,
+            coverArtResource: { viewModel.coverArtResource(for: $0, size: 220) },
+            play: viewModel.play,
+            playNext: viewModel.playNext,
+            addToQueue: viewModel.addToQueue,
+            toggleFavorite: viewModel.toggleFavorite
+        )
+        .equatable()
+    }
+}
+
+struct FavoriteArtistBrowserView: View {
+    @ObservedObject var viewModel: AppViewModel
+
+    var body: some View {
+        ArtistBrowserGrid(
+            artists: viewModel.favoriteArtists,
+            selectedArtistID: viewModel.selectedArtist?.id,
+            favoriteArtistIDs: viewModel.favoriteArtistIDs,
+            serverKey: viewModel.serverKey,
+            coverArtResource: { viewModel.coverArtResource(for: $0, size: 220) },
+            play: viewModel.play,
+            playNext: viewModel.playNext,
+            addToQueue: viewModel.addToQueue,
+            toggleFavorite: viewModel.toggleFavorite
+        )
+        .equatable()
+    }
+}
+
+private struct ArtistBrowserGrid: View, Equatable {
+    let artists: [NavidromeArtist]
+    let selectedArtistID: String?
+    let favoriteArtistIDs: Set<String>
+    let serverKey: String?
+    let coverArtResource: (NavidromeArtist) -> CoverArtResource?
+    let play: (NavidromeArtist) -> Void
+    let playNext: (NavidromeArtist) -> Void
+    let addToQueue: (NavidromeArtist) -> Void
+    let toggleFavorite: (NavidromeArtist) -> Void
+    @Environment(\.openLibraryRoute) private var openLibraryRoute
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.artists == rhs.artists
+            && lhs.selectedArtistID == rhs.selectedArtistID
+            && lhs.favoriteArtistIDs == rhs.favoriteArtistIDs
+            && lhs.serverKey == rhs.serverKey
+    }
+
+    var body: some View {
+        LazyLibraryCardGrid(artists, minimumCardWidth: 140) { artist in
+            ZStack(alignment: .topTrailing) {
+                NavigationLink(value: LibraryRoute.artist(artist)) {
+                    ArtistCardView(
+                        artist: artist,
+                        coverArtResource: coverArtResource(artist),
+                        isSelected: selectedArtistID == artist.id
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    toggleFavorite(artist)
+                } label: {
+                    Label(
+                        favoriteArtistIDs.contains(artist.id) ? "Unfavorite" : "Favorite",
+                        systemImage: favoriteArtistIDs.contains(artist.id) ? "heart.fill" : "heart"
+                    )
+                    .labelStyle(.iconOnly)
+                    .padding(7)
+                    .background(.regularMaterial, in: Circle())
+                }
+                .buttonStyle(.borderless)
+                .padding(15)
+                .help(favoriteArtistIDs.contains(artist.id) ? "Remove artist from favorites" : "Add artist to favorites")
             }
-            .buttonStyle(.plain)
             .contextMenu {
                 Button {
-                    viewModel.play(artist)
+                    play(artist)
                 } label: {
                     Label("Play", systemImage: "play.fill")
                 }
 
                 Button {
-                    viewModel.playNext(artist)
+                    playNext(artist)
                 } label: {
                     Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
                 }
 
                 Button {
-                    viewModel.addToQueue(artist)
+                    addToQueue(artist)
                 } label: {
                     Label("Add to Queue", systemImage: "text.badge.plus")
+                }
+
+                Button {
+                    toggleFavorite(artist)
+                } label: {
+                    Label(
+                        favoriteArtistIDs.contains(artist.id) ? "Remove from Favorites" : "Add to Favorites",
+                        systemImage: favoriteArtistIDs.contains(artist.id) ? "heart.slash" : "heart"
+                    )
                 }
 
                 Divider()
@@ -49,8 +129,6 @@ struct ArtistBrowserView: View {
             }
         }
     }
-
-    @Environment(\.openLibraryRoute) private var openLibraryRoute
 }
 
 struct ArtistDetailView: View {
@@ -59,14 +137,28 @@ struct ArtistDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(artist.name)
-                    .font(.title2)
-                    .fontWeight(.semibold)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(artist.name)
+                        .font(.title2)
+                        .fontWeight(.semibold)
 
-                Text(artist.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    Text(artist.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    viewModel.toggleFavorite(artist)
+                } label: {
+                    Label(
+                        viewModel.isFavorite(artist) ? "Unfavorite" : "Favorite",
+                        systemImage: viewModel.isFavorite(artist) ? "heart.fill" : "heart"
+                    )
+                }
+                .help(viewModel.isFavorite(artist) ? "Remove artist from favorites" : "Add artist to favorites")
             }
 
             if viewModel.selectedArtist == artist && !viewModel.artistAlbums.isEmpty {

@@ -76,13 +76,6 @@ final class LibraryStore {
         try save()
     }
 
-    func favoriteSongs(serverKey: String) throws -> [NavidromeSong] {
-        let request = songFetchRequest()
-        request.predicate = NSPredicate(format: "serverKey == %@ AND isFavorite == YES", serverKey)
-        request.sortDescriptors = [NSSortDescriptor(key: "title", ascending: true)]
-        return try context.fetch(request).map(song(from:))
-    }
-
     func recentSongs(serverKey: String, limit: Int = 50) throws -> [NavidromeSong] {
         let request = songFetchRequest()
         request.predicate = NSPredicate(format: "serverKey == %@ AND lastPlayedAt != nil", serverKey)
@@ -91,23 +84,11 @@ final class LibraryStore {
         return try context.fetch(request).map(song(from:))
     }
 
-    func favoriteIDs(serverKey: String) throws -> Set<String> {
-        let request = songFetchRequest()
-        request.predicate = NSPredicate(format: "serverKey == %@ AND isFavorite == YES", serverKey)
-        return Set(try context.fetch(request).compactMap { $0.value(forKey: "songID") as? String })
-    }
-
     func markPlayed(_ song: NavidromeSong, serverKey: String) throws {
         let object = try upsertSong(song, serverKey: serverKey)
         object.setValue(Date(), forKey: "lastPlayedAt")
         let playCount = object.value(forKey: "playCount") as? Int64 ?? 0
         object.setValue(playCount + 1, forKey: "playCount")
-        try save()
-    }
-
-    func setFavorite(_ song: NavidromeSong, serverKey: String, isFavorite: Bool) throws {
-        let object = try upsertSong(song, serverKey: serverKey)
-        object.setValue(isFavorite, forKey: "isFavorite")
         try save()
     }
 
