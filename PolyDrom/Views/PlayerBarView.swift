@@ -31,8 +31,11 @@ struct PlayerBarView: View {
                         Label("Previous", systemImage: "backward.fill")
                             .labelStyle(.iconOnly)
                             .font(.body)
+                            .padding(8)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .padding(-8)
                     .disabled(!viewModel.canPlayPreviousTrack())
                     .help("Previous")
 
@@ -51,8 +54,11 @@ struct PlayerBarView: View {
                                 Circle()
                                     .fill(Color(nsColor: .labelColor))
                             }
+                            .padding(8)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .padding(-8)
                     .disabled(audioPlayer.currentSong == nil)
                     .help(audioPlayer.isPlaying ? "Pause" : "Play")
 
@@ -62,8 +68,11 @@ struct PlayerBarView: View {
                         Label("Next", systemImage: "forward.fill")
                             .labelStyle(.iconOnly)
                             .font(.body)
+                            .padding(8)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .padding(-8)
                     .disabled(!viewModel.canPlayNextTrack())
                     .help("Next")
 
@@ -73,8 +82,11 @@ struct PlayerBarView: View {
                         Label("Stop", systemImage: "stop.fill")
                             .labelStyle(.iconOnly)
                             .font(.body)
+                            .padding(8)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .padding(-8)
                     .disabled(audioPlayer.currentSong == nil)
                     .help("Stop")
 
@@ -89,8 +101,11 @@ struct PlayerBarView: View {
                         )
                         .labelStyle(.iconOnly)
                         .font(.body)
+                        .padding(8)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .padding(-8)
                     .disabled(audioPlayer.currentSong == nil)
                     .help(currentSongIsFavorite ? "Remove from favorites" : "Add to favorites")
                 }
