@@ -99,12 +99,12 @@ private struct FavoriteLibraryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("Favorite content", selection: $selection) {
-                Label("Artists", systemImage: "music.mic")
-                    .tag(FavoriteContent.artists)
-                Label("Albums", systemImage: "rectangle.stack")
-                    .tag(FavoriteContent.albums)
                 Label("Songs", systemImage: "music.note")
                     .tag(FavoriteContent.songs)
+                Label("Albums", systemImage: "rectangle.stack")
+                    .tag(FavoriteContent.albums)
+                Label("Artists", systemImage: "music.mic")
+                    .tag(FavoriteContent.artists)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -143,6 +143,9 @@ private struct FavoriteLibraryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            selection = .songs
+        }
     }
 
     private enum FavoriteContent: Hashable {
