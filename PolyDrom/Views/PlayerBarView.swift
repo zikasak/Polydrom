@@ -98,9 +98,11 @@ struct PlayerBarView: View {
                 AirPlayRoutePickerAnchor(location: .compactPlayer)
                     .frame(width: 32, height: 40)
 
-                CoverArtView(resource: audioPlayer.currentSong.flatMap { viewModel.coverArtResource(for: $0, size: 96) }, size: 44)
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: openFullPlayer)
+                Button(action: openFullPlayer) {
+                    CoverArtView(resource: audioPlayer.currentSong.flatMap { viewModel.coverArtResource(for: $0, size: 96) }, size: 44)
+                }
+                .buttonStyle(.plain)
+                .help("Open full player")
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(audioPlayer.currentSong?.title ?? "Nothing playing")
@@ -152,8 +154,6 @@ struct PlayerBarView: View {
                     }
                 }
                 .layoutPriority(1)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: openFullPlayer)
 
                 if viewModel.isBusy {
                     ProgressView()
@@ -163,22 +163,20 @@ struct PlayerBarView: View {
                 HStack(spacing: 8) {
                     detailButton(.lyrics)
                     detailButton(.queue)
+
+                    Button(action: openFullPlayer) {
+                        Label("Open full player", systemImage: "arrow.up.left.and.arrow.down.right")
+                            .labelStyle(.iconOnly)
+                            .font(.body)
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open full player")
                 }
             }
             .padding(12)
         }
-        .background {
-            Button {
-                openFullPlayer()
-            } label: {
-                Rectangle()
-                    .fill(.bar)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open full player")
-            .help("Open full player")
-        }
+        .background(.bar)
     }
 
     private func openFullPlayer() {
