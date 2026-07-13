@@ -33,6 +33,7 @@ struct PlaylistBrowserView: View {
 struct PlaylistDetailView: View {
     @ObservedObject var viewModel: AppViewModel
     let playlist: NavidromePlaylist
+    let openRoute: (LibraryRoute) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -48,9 +49,10 @@ struct PlaylistDetailView: View {
 
             SongListView(
                 title: "Songs",
-                songs: viewModel.selectedPlaylist == playlist ? viewModel.playlistSongs : [],
+                songs: viewModel.selectedPlaylist?.id == playlist.id ? viewModel.playlistSongs : [],
                 viewModel: viewModel,
-                emptyMessage: viewModel.isBusy ? "Loading songs..." : "No songs for this playlist."
+                emptyMessage: viewModel.isBusy ? "Loading songs..." : "No songs for this playlist.",
+                openRoute: openRoute
             )
         }
         .padding(18)

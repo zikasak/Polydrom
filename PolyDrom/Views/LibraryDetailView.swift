@@ -9,6 +9,7 @@ import SwiftUI
 
 struct LibraryDetailView: View {
     @ObservedObject var viewModel: AppViewModel
+    let openRoute: (LibraryRoute) -> Void
 
     var body: some View {
         if !viewModel.isConnected {
@@ -65,13 +66,14 @@ struct LibraryDetailView: View {
     private var content: some View {
         switch viewModel.selectedSection {
         case .search:
-            SearchView(viewModel: viewModel)
+            SearchView(viewModel: viewModel, openRoute: openRoute)
         case .random:
             SongListView(
                 title: "Random songs",
                 songs: viewModel.randomSongs,
                 viewModel: viewModel,
-                emptyMessage: "No random songs loaded."
+                emptyMessage: "No random songs loaded.",
+                openRoute: openRoute
             )
         case .albums:
             AlbumBrowserView(viewModel: viewModel, albums: viewModel.albums)
@@ -80,13 +82,14 @@ struct LibraryDetailView: View {
         case .playlists:
             PlaylistBrowserView(viewModel: viewModel)
         case .favorites:
-            FavoriteLibraryView(viewModel: viewModel)
+            FavoriteLibraryView(viewModel: viewModel, openRoute: openRoute)
         case .recent:
             SongListView(
                 title: "Recently played",
                 songs: viewModel.recentSongs,
                 viewModel: viewModel,
-                emptyMessage: "No playback history yet."
+                emptyMessage: "No playback history yet.",
+                openRoute: openRoute
             )
         }
     }
@@ -94,6 +97,7 @@ struct LibraryDetailView: View {
 
 private struct FavoriteLibraryView: View {
     @ObservedObject var viewModel: AppViewModel
+    let openRoute: (LibraryRoute) -> Void
     @State private var selection: FavoriteContent = .songs
 
     var body: some View {
@@ -136,7 +140,8 @@ private struct FavoriteLibraryView: View {
                         title: "Favorite songs",
                         songs: viewModel.favoriteSongs,
                         viewModel: viewModel,
-                        emptyMessage: "No favorite songs yet."
+                        emptyMessage: "No favorite songs yet.",
+                        openRoute: openRoute
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }

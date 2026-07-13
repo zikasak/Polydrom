@@ -66,29 +66,54 @@ struct ContentView: View {
         } detail: {
             NavigationStack(path: $detailPath) {
                 withPlayerBar {
-                    LibraryDetailView(viewModel: viewModel)
+                    LibraryDetailView(
+                        viewModel: viewModel,
+                        openRoute: openLibraryRoute
+                    )
                 }
                 .navigationDestination(for: LibraryRoute.self) { route in
                     switch route {
                     case .album(let album):
                         withPlayerBar {
-                            AlbumDetailView(viewModel: viewModel, album: album)
+                            AlbumDetailView(
+                                viewModel: viewModel,
+                                album: album,
+                                openRoute: openLibraryRoute
+                            )
                         }
                     case .artist(let artist):
                         withPlayerBar {
-                            ArtistDetailView(viewModel: viewModel, artist: artist)
+                            ArtistDetailView(
+                                viewModel: viewModel,
+                                artist: artist,
+                                openAlbum: { album in
+                                    openLibraryRoute(.album(album))
+                                }
+                            )
                         }
                     case .playlist(let playlist):
                         withPlayerBar {
-                            PlaylistDetailView(viewModel: viewModel, playlist: playlist)
+                            PlaylistDetailView(
+                                viewModel: viewModel,
+                                playlist: playlist,
+                                openRoute: openLibraryRoute
+                            )
                         }
                     }
                 }
             }
-            .environment(\.openLibraryRoute) { route in
-                detailPath.append(route)
-            }
+            .environment(\.openLibraryRoute, openLibraryRoute)
             .navigationTitle("PolyDrom")
+        }
+    }
+
+    private func openLibraryRoute(_ route: LibraryRoute) {
+        guard detailPath.last?.identifiesSameDestination(as: route) != true else { return }
+
+        // A macOS context menu is still being dismissed when its button action
+        // runs, so update the path after its presentation transaction completes.
+        DispatchQueue.main.async {
+            detailPath.append(route)
         }
     }
 
@@ -102,6 +127,21 @@ struct ContentView: View {
                     }
                 }
             }
+    }
+}
+
+private extension LibraryRoute {
+    func identifiesSameDestination(as other: LibraryRoute) -> Bool {
+        switch (self, other) {
+        case (.album(let lhs), .album(let rhs)):
+            return lhs.id == rhs.id
+        case (.artist(let lhs), .artist(let rhs)):
+            return lhs.id == rhs.id
+        case (.playlist(let lhs), .playlist(let rhs)):
+            return lhs.id == rhs.id
+        default:
+            return false
+        }
     }
 }
 

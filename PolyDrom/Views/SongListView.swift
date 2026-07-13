@@ -12,6 +12,8 @@ struct SongListView: View {
     let songs: [NavidromeSong]
     @ObservedObject var viewModel: AppViewModel
     let emptyMessage: String
+    let openRoute: (LibraryRoute) -> Void
+    var currentAlbumID: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -23,7 +25,13 @@ struct SongListView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 LazyLibraryList(songs) { song in
-                    SongRowView(song: song, queue: songs, viewModel: viewModel)
+                    SongRowView(
+                        song: song,
+                        queue: songs,
+                        viewModel: viewModel,
+                        openRoute: openRoute,
+                        currentAlbumID: currentAlbumID
+                    )
                 }
             }
         }
@@ -34,7 +42,8 @@ struct SongRowView: View {
     let song: NavidromeSong
     let queue: [NavidromeSong]
     @ObservedObject var viewModel: AppViewModel
-    @Environment(\.openLibraryRoute) private var openLibraryRoute
+    let openRoute: (LibraryRoute) -> Void
+    let currentAlbumID: String?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -108,26 +117,38 @@ struct SongRowView: View {
                 )
             }
 
-            if NavidromeAlbum(song: song) != nil || NavidromeArtist(song: song) != nil {
+            if navigationAlbum != nil || navigationArtist != nil {
                 Divider()
             }
 
-            if let album = NavidromeAlbum(song: song) {
+            if let album = navigationAlbum {
                 Button {
-                    openLibraryRoute(.album(album))
+                    openRoute(.album(album))
                 } label: {
                     Label("Open Album", systemImage: "rectangle.stack")
                 }
             }
 
-            if let artist = NavidromeArtist(song: song) {
+            if let artist = navigationArtist {
                 Button {
-                    openLibraryRoute(.artist(artist))
+                    openRoute(.artist(artist))
                 } label: {
                     Label("Open Artist", systemImage: "music.mic")
                 }
             }
         }
+    }
+
+    private var navigationAlbum: NavidromeAlbum? {
+        guard let album = viewModel.albumForNavigation(from: song),
+              album.id != currentAlbumID else {
+            return nil
+        }
+        return album
+    }
+
+    private var navigationArtist: NavidromeArtist? {
+        viewModel.artistForNavigation(from: song)
     }
 }
 

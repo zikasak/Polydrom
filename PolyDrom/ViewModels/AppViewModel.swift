@@ -352,7 +352,9 @@ final class AppViewModel: ObservableObject {
     func loadAlbums(for artist: NavidromeArtist, force: Bool = false) async {
         guard let client else { return }
         if !force, loadedArtistAlbumsID == artist.id {
-            selectedArtist = artist
+            if selectedArtist?.id != artist.id {
+                selectedArtist = artist
+            }
             return
         }
 
@@ -381,7 +383,9 @@ final class AppViewModel: ObservableObject {
     func loadSongs(for album: NavidromeAlbum, force: Bool = false) async {
         guard let client else { return }
         if !force, loadedAlbumSongsID == album.id {
-            selectedAlbum = album
+            if selectedAlbum?.id != album.id {
+                selectedAlbum = album
+            }
             return
         }
 
@@ -756,6 +760,31 @@ final class AppViewModel: ObservableObject {
 
     func isFavorite(_ artist: NavidromeArtist) -> Bool {
         favoriteArtistIDs.contains(artist.id)
+    }
+
+    func albumForNavigation(from song: NavidromeSong) -> NavidromeAlbum? {
+        guard let fallback = NavidromeAlbum(song: song) else { return nil }
+
+        if let selectedAlbum, selectedAlbum.id == fallback.id {
+            return selectedAlbum
+        }
+
+        return artistAlbums.first { $0.id == fallback.id }
+            ?? albums.first { $0.id == fallback.id }
+            ?? favoriteAlbums.first { $0.id == fallback.id }
+            ?? fallback
+    }
+
+    func artistForNavigation(from song: NavidromeSong) -> NavidromeArtist? {
+        guard let fallback = NavidromeArtist(song: song) else { return nil }
+
+        if let selectedArtist, selectedArtist.id == fallback.id {
+            return selectedArtist
+        }
+
+        return artists.first { $0.id == fallback.id }
+            ?? favoriteArtists.first { $0.id == fallback.id }
+            ?? fallback
     }
 
     private func cache(_ songs: [NavidromeSong]) throws {

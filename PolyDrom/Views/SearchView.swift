@@ -9,6 +9,7 @@ import SwiftUI
 
 struct SearchView: View {
     @ObservedObject var viewModel: AppViewModel
+    let openRoute: (LibraryRoute) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -31,7 +32,8 @@ struct SearchView: View {
                 title: viewModel.searchResults.isEmpty ? "Try a title, artist, or album" : "Search results",
                 songs: viewModel.searchResults,
                 viewModel: viewModel,
-                emptyMessage: "No search results."
+                emptyMessage: "No search results.",
+                openRoute: openRoute
             )
         }
     }

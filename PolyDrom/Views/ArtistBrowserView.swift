@@ -134,6 +134,7 @@ private struct ArtistBrowserGrid: View, Equatable {
 struct ArtistDetailView: View {
     @ObservedObject var viewModel: AppViewModel
     let artist: NavidromeArtist
+    let openAlbum: (NavidromeAlbum) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -161,8 +162,12 @@ struct ArtistDetailView: View {
                 .help(viewModel.isFavorite(artist) ? "Remove artist from favorites" : "Add artist to favorites")
             }
 
-            if viewModel.selectedArtist == artist && !viewModel.artistAlbums.isEmpty {
-                AlbumBrowserView(viewModel: viewModel, albums: viewModel.artistAlbums)
+            if viewModel.selectedArtist?.id == artist.id && !viewModel.artistAlbums.isEmpty {
+                AlbumBrowserView(
+                    viewModel: viewModel,
+                    albums: viewModel.artistAlbums,
+                    openAlbum: openAlbum
+                )
             } else {
                 ContentUnavailableView(
                     viewModel.isBusy ? "Loading albums..." : "No albums for this artist.",

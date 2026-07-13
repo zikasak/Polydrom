@@ -9,7 +9,19 @@ import SwiftUI
 
 struct AlbumBrowserView: View {
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.openLibraryRoute) private var openLibraryRoute
     let albums: [NavidromeAlbum]
+    var openAlbum: ((NavidromeAlbum) -> Void)?
+
+    init(
+        viewModel: AppViewModel,
+        albums: [NavidromeAlbum],
+        openAlbum: ((NavidromeAlbum) -> Void)? = nil
+    ) {
+        self.viewModel = viewModel
+        self.albums = albums
+        self.openAlbum = openAlbum
+    }
 
     var body: some View {
         AlbumBrowserGrid(
@@ -23,7 +35,14 @@ struct AlbumBrowserView: View {
             play: viewModel.play,
             playNext: viewModel.playNext,
             addToQueue: viewModel.addToQueue,
-            toggleFavorite: viewModel.toggleFavorite
+            toggleFavorite: viewModel.toggleFavorite,
+            openAlbum: { album in
+                if let openAlbum {
+                    openAlbum(album)
+                } else {
+                    openLibraryRoute(.album(album))
+                }
+            }
         )
         .equatable()
     }
@@ -39,7 +58,7 @@ private struct AlbumBrowserGrid: View, Equatable {
     let playNext: (NavidromeAlbum) -> Void
     let addToQueue: (NavidromeAlbum) -> Void
     let toggleFavorite: (NavidromeAlbum) -> Void
-    @Environment(\.openLibraryRoute) private var openLibraryRoute
+    let openAlbum: (NavidromeAlbum) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.albums == rhs.albums
@@ -106,7 +125,7 @@ private struct AlbumBrowserGrid: View, Equatable {
                 Divider()
 
                 Button {
-                    openLibraryRoute(.album(album))
+                    openAlbum(album)
                 } label: {
                     Label("Open Album", systemImage: "rectangle.stack")
                 }
@@ -118,6 +137,7 @@ private struct AlbumBrowserGrid: View, Equatable {
 struct AlbumDetailView: View {
     @ObservedObject var viewModel: AppViewModel
     let album: NavidromeAlbum
+    let openRoute: (LibraryRoute) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -147,9 +167,11 @@ struct AlbumDetailView: View {
 
             SongListView(
                 title: "Songs",
-                songs: viewModel.selectedAlbum == album ? viewModel.albumSongs : [],
+                songs: viewModel.selectedAlbum?.id == album.id ? viewModel.albumSongs : [],
                 viewModel: viewModel,
-                emptyMessage: viewModel.isBusy ? "Loading songs..." : "No songs for this album."
+                emptyMessage: viewModel.isBusy ? "Loading songs..." : "No songs for this album.",
+                openRoute: openRoute,
+                currentAlbumID: album.id
             )
         }
         .padding(18)

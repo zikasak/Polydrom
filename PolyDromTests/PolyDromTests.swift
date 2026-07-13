@@ -187,6 +187,36 @@ struct PolyDromTests {
         #expect(artist.name == "Artist")
     }
 
+    @Test func songNavigationReusesLoadedAlbumAndArtistMetadata() throws {
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: KeychainStore()
+        )
+        let viewModel = AppViewModel(store: store, audioPlayer: AudioPlayer())
+        let song = makeSong(
+            artist: "Artist",
+            album: "Album",
+            albumId: "album-1",
+            artistId: "artist-1"
+        )
+        let album = try JSONDecoder().decode(
+            NavidromeAlbum.self,
+            from: Data(#"{"id":"album-1","name":"Album","artist":"Artist","artistId":"artist-1","songCount":42,"year":2026}"#.utf8)
+        )
+        let artist = try JSONDecoder().decode(
+            NavidromeArtist.self,
+            from: Data(#"{"id":"artist-1","name":"Artist","albumCount":7}"#.utf8)
+        )
+
+        viewModel.selectedAlbum = album
+        viewModel.selectedArtist = artist
+
+        #expect(viewModel.albumForNavigation(from: song) == album)
+        #expect(viewModel.artistForNavigation(from: song) == artist)
+        #expect(viewModel.albumForNavigation(from: song)?.songCount == 42)
+        #expect(viewModel.artistForNavigation(from: song)?.albumCount == 7)
+    }
+
     private func makeSong(
         id: String = "song-1",
         title: String = "Song",
