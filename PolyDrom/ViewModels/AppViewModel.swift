@@ -422,6 +422,62 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func play(_ album: NavidromeAlbum) {
+        performQueueAction(.play) { client in
+            try await client.songs(for: album)
+        }
+    }
+
+    func play(_ artist: NavidromeArtist) {
+        performQueueAction(.play) { client in
+            try await self.songs(for: artist, using: client)
+        }
+    }
+
+    func playNext(_ songs: [NavidromeSong]) {
+        guard !songs.isEmpty else { return }
+
+        guard let currentIndex = currentPlaybackQueueIndex else {
+            play(songs[0], in: songs)
+            return
+        }
+
+        playbackQueue.insert(contentsOf: songs, at: currentIndex + 1)
+        updateNowPlayingQueueState()
+        statusMessage = songs.count == 1 ? "Playing next" : "Playing next: \(songs.count) songs"
+    }
+
+    func playNext(_ album: NavidromeAlbum) {
+        performQueueAction(.next) { client in
+            try await client.songs(for: album)
+        }
+    }
+
+    func playNext(_ artist: NavidromeArtist) {
+        performQueueAction(.next) { client in
+            try await self.songs(for: artist, using: client)
+        }
+    }
+
+    func addToQueue(_ songs: [NavidromeSong]) {
+        guard !songs.isEmpty else { return }
+        playbackQueue.append(contentsOf: songs)
+        updateNowPlayingQueueState()
+        statusMessage = songs.count == 1 ? "Added to queue" : "Added \(songs.count) songs to queue"
+    }
+
+    func addToQueue(_ album: NavidromeAlbum) {
+        performQueueAction(.end) { client in
+            try await client.songs(for: album)
+        }
+    }
+
+    func addToQueue(_ artist: NavidromeArtist) {
+        performQueueAction(.end) { client in
+            try await self.songs(for: artist, using: client)
+        }
+    }
+
     private func play(_ song: NavidromeSong, in queue: [NavidromeSong], shouldHydrateSong: Bool) async {
         guard let client, let serverKey else {
             statusMessage = "Connect first."
@@ -454,6 +510,65 @@ final class AppViewModel: ObservableObject {
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    private var currentPlaybackQueueIndex: Int? {
+        guard let currentSong = audioPlayer.currentSong else { return nil }
+
+        if let playbackQueueIndex,
+           playbackQueue.indices.contains(playbackQueueIndex),
+           playbackQueue[playbackQueueIndex].id == currentSong.id {
+            return playbackQueueIndex
+        }
+
+        return playbackQueue.firstIndex { $0.id == currentSong.id }
+    }
+
+    private func performQueueAction(
+        _ action: QueueAction,
+        loadSongs: @escaping (NavidromeClient) async throws -> [NavidromeSong]
+    ) {
+        guard let client else {
+            statusMessage = "Connect first."
+            return
+        }
+
+        Task {
+            isBusy = true
+            defer { isBusy = false }
+
+            do {
+                let songs = try await loadSongs(client)
+                guard !songs.isEmpty else {
+                    statusMessage = "No songs found."
+                    return
+                }
+
+                try cache(songs)
+                await warmCachedSongCovers(songs)
+                prefetchSongCovers(songs)
+
+                switch action {
+                case .play:
+                    play(songs[0], in: songs)
+                case .next:
+                    playNext(songs)
+                case .end:
+                    addToQueue(songs)
+                }
+            } catch {
+                statusMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func songs(for artist: NavidromeArtist, using client: NavidromeClient) async throws -> [NavidromeSong] {
+        var songs: [NavidromeSong] = []
+        for album in try await client.albums(for: artist) {
+            try Task.checkCancellation()
+            songs.append(contentsOf: try await client.songs(for: album))
+        }
+        return songs
     }
 
     func playPreviousTrack() {
@@ -719,4 +834,10 @@ final class AppViewModel: ObservableObject {
             }
         }
     }
+}
+
+private enum QueueAction {
+    case play
+    case next
+    case end
 }

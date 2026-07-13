@@ -34,6 +34,7 @@ struct SongRowView: View {
     let song: NavidromeSong
     let queue: [NavidromeSong]
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.openLibraryRoute) private var openLibraryRoute
 
     var body: some View {
         HStack(spacing: 12) {
@@ -76,6 +77,57 @@ struct SongRowView: View {
             .help(viewModel.isFavorite(song) ? "Remove from favorites" : "Add to favorites")
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button {
+                viewModel.play(song, in: queue)
+            } label: {
+                Label("Play", systemImage: "play.fill")
+            }
+
+            Button {
+                viewModel.playNext([song])
+            } label: {
+                Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
+
+            Button {
+                viewModel.addToQueue([song])
+            } label: {
+                Label("Add to Queue", systemImage: "text.badge.plus")
+            }
+
+            Divider()
+
+            Button {
+                viewModel.toggleFavorite(song)
+            } label: {
+                Label(
+                    viewModel.isFavorite(song) ? "Remove from Favorites" : "Add to Favorites",
+                    systemImage: viewModel.isFavorite(song) ? "heart.slash" : "heart"
+                )
+            }
+
+            if NavidromeAlbum(song: song) != nil || NavidromeArtist(song: song) != nil {
+                Divider()
+            }
+
+            if let album = NavidromeAlbum(song: song) {
+                Button {
+                    openLibraryRoute(.album(album))
+                } label: {
+                    Label("Open Album", systemImage: "rectangle.stack")
+                }
+            }
+
+            if let artist = NavidromeArtist(song: song) {
+                Button {
+                    openLibraryRoute(.artist(artist))
+                } label: {
+                    Label("Open Artist", systemImage: "music.mic")
+                }
+            }
+        }
     }
 }
 

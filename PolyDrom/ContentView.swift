@@ -67,24 +67,27 @@ struct ContentView: View {
                 withPlayerBar {
                     LibraryDetailView(viewModel: viewModel)
                 }
-                    .navigationDestination(for: LibraryRoute.self) { route in
-                        switch route {
-                        case .album(let album):
-                            withPlayerBar {
-                                AlbumDetailView(viewModel: viewModel, album: album)
-                            }
-                        case .artist(let artist):
-                            withPlayerBar {
-                                ArtistDetailView(viewModel: viewModel, artist: artist)
-                            }
-                        case .playlist(let playlist):
-                            withPlayerBar {
-                                PlaylistDetailView(viewModel: viewModel, playlist: playlist)
+                .navigationDestination(for: LibraryRoute.self) { route in
+                    switch route {
+                    case .album(let album):
+                        withPlayerBar {
+                            AlbumDetailView(viewModel: viewModel, album: album)
+                        }
+                    case .artist(let artist):
+                        withPlayerBar {
+                            ArtistDetailView(viewModel: viewModel, artist: artist)
+                        }
+                    case .playlist(let playlist):
+                        withPlayerBar {
+                            PlaylistDetailView(viewModel: viewModel, playlist: playlist)
+                        }
+                    }
                 }
             }
-        }
-        .navigationTitle("PolyDrom")
-    }
+            .environment(\.openLibraryRoute) { route in
+                detailPath.append(route)
+            }
+            .navigationTitle("PolyDrom")
         }
     }
 
@@ -98,5 +101,16 @@ struct ContentView: View {
                     }
                 }
             }
+    }
+}
+
+private struct OpenLibraryRouteKey: EnvironmentKey {
+    static let defaultValue: (LibraryRoute) -> Void = { _ in }
+}
+
+extension EnvironmentValues {
+    var openLibraryRoute: (LibraryRoute) -> Void {
+        get { self[OpenLibraryRouteKey.self] }
+        set { self[OpenLibraryRouteKey.self] = newValue }
     }
 }

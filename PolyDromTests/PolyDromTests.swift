@@ -112,17 +112,61 @@ struct PolyDromTests {
         #expect(try store.recentSongs(serverKey: serverKey) == [song])
     }
 
-    private func makeSong() -> NavidromeSong {
+    @Test func playNextInsertsAfterCurrentSongAndQueueAppends() {
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: KeychainStore()
+        )
+        let audioPlayer = AudioPlayer()
+        let viewModel = AppViewModel(store: store, audioPlayer: audioPlayer)
+        let current = makeSong(id: "current", title: "Current")
+        let later = makeSong(id: "later", title: "Later")
+        let next = makeSong(id: "next", title: "Next")
+        let end = makeSong(id: "end", title: "End")
+
+        viewModel.playbackQueue = [current, later]
+        audioPlayer.currentSong = current
+        viewModel.playNext([next])
+        viewModel.addToQueue([end])
+
+        #expect(viewModel.playbackQueue.map(\.id) == ["current", "next", "later", "end"])
+    }
+
+    @Test func songMetadataCreatesNavigableAlbumAndArtist() throws {
+        let song = makeSong(
+            artist: "Artist",
+            album: "Album",
+            albumId: "album-1",
+            artistId: "artist-1"
+        )
+        let album = try #require(NavidromeAlbum(song: song))
+        let artist = try #require(NavidromeArtist(song: song))
+
+        #expect(album.id == "album-1")
+        #expect(album.name == "Album")
+        #expect(album.artistId == "artist-1")
+        #expect(artist.id == "artist-1")
+        #expect(artist.name == "Artist")
+    }
+
+    private func makeSong(
+        id: String = "song-1",
+        title: String = "Song",
+        artist: String? = nil,
+        album: String? = nil,
+        albumId: String? = nil,
+        artistId: String? = nil
+    ) -> NavidromeSong {
         NavidromeSong(
-            id: "song-1",
-            title: "Song",
-            artist: nil,
-            album: nil,
+            id: id,
+            title: title,
+            artist: artist,
+            album: album,
             duration: nil,
             suffix: nil,
             coverArt: nil,
-            albumId: nil,
-            artistId: nil
+            albumId: albumId,
+            artistId: artistId
         )
     }
 

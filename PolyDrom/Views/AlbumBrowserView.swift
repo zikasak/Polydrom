@@ -18,7 +18,10 @@ struct AlbumBrowserView: View {
             serverKey: viewModel.serverKey,
             coverArtResource: { album in
                 viewModel.coverArtResource(for: album, size: 220)
-            }
+            },
+            play: viewModel.play,
+            playNext: viewModel.playNext,
+            addToQueue: viewModel.addToQueue
         )
         .equatable()
     }
@@ -29,6 +32,10 @@ private struct AlbumBrowserGrid: View, Equatable {
     let selectedAlbumID: String?
     let serverKey: String?
     let coverArtResource: (NavidromeAlbum) -> CoverArtResource?
+    let play: (NavidromeAlbum) -> Void
+    let playNext: (NavidromeAlbum) -> Void
+    let addToQueue: (NavidromeAlbum) -> Void
+    @Environment(\.openLibraryRoute) private var openLibraryRoute
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.albums == rhs.albums
@@ -46,6 +53,33 @@ private struct AlbumBrowserGrid: View, Equatable {
                 )
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                Button {
+                    play(album)
+                } label: {
+                    Label("Play", systemImage: "play.fill")
+                }
+
+                Button {
+                    playNext(album)
+                } label: {
+                    Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+
+                Button {
+                    addToQueue(album)
+                } label: {
+                    Label("Add to Queue", systemImage: "text.badge.plus")
+                }
+
+                Divider()
+
+                Button {
+                    openLibraryRoute(.album(album))
+                } label: {
+                    Label("Open Album", systemImage: "rectangle.stack")
+                }
+            }
         }
     }
 }

@@ -20,8 +20,37 @@ struct ArtistBrowserView: View {
                 )
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                Button {
+                    viewModel.play(artist)
+                } label: {
+                    Label("Play", systemImage: "play.fill")
+                }
+
+                Button {
+                    viewModel.playNext(artist)
+                } label: {
+                    Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+
+                Button {
+                    viewModel.addToQueue(artist)
+                } label: {
+                    Label("Add to Queue", systemImage: "text.badge.plus")
+                }
+
+                Divider()
+
+                Button {
+                    openLibraryRoute(.artist(artist))
+                } label: {
+                    Label("Open Artist", systemImage: "music.mic")
+                }
+            }
         }
     }
+
+    @Environment(\.openLibraryRoute) private var openLibraryRoute
 }
 
 struct ArtistDetailView: View {

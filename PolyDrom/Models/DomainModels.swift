@@ -61,6 +61,22 @@ struct NavidromeAlbum: Decodable, Identifiable, Hashable {
     let year: Int?
     let coverArt: String?
 
+    init?(song: NavidromeSong) {
+        guard let id = song.albumId,
+              let name = song.album,
+              !name.isEmpty else {
+            return nil
+        }
+
+        self.id = id
+        self.name = name
+        self.artist = song.artist
+        self.artistId = song.artistId
+        self.songCount = nil
+        self.year = nil
+        self.coverArt = song.coverArt
+    }
+
     enum CodingKeys: String, CodingKey {
         case id
         case name
@@ -100,6 +116,20 @@ struct NavidromeArtist: Decodable, Identifiable, Hashable {
     let albumCount: Int?
     let coverArt: String?
     let artistImageURL: String?
+
+    init?(song: NavidromeSong) {
+        guard let id = song.artistId,
+              let name = song.artist,
+              !name.isEmpty else {
+            return nil
+        }
+
+        self.id = id
+        self.name = name
+        self.albumCount = nil
+        self.coverArt = nil
+        self.artistImageURL = nil
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
