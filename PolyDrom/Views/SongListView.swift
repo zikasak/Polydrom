@@ -30,6 +30,7 @@ struct SongListView: View {
                         queue: songs,
                         queueIndex: item.index,
                         viewModel: viewModel,
+                        audioPlayer: viewModel.audioPlayer,
                         openRoute: openRoute,
                         currentAlbumID: currentAlbumID
                     )
@@ -48,6 +49,7 @@ struct SongRowView: View {
     let queue: [NavidromeSong]
     let queueIndex: Int
     @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var audioPlayer: AudioPlayer
     let openRoute: (LibraryRoute) -> Void
     let currentAlbumID: String?
 
@@ -67,6 +69,7 @@ struct SongRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.title)
                     .font(.headline)
+                    .fontWeight(isCurrentSong ? .semibold : .regular)
                     .lineLimit(1)
 
                 Text(song.subtitle)
@@ -92,6 +95,11 @@ struct SongRowView: View {
             .help(viewModel.isFavorite(song) ? "Remove from favorites" : "Add to favorites")
         }
         .padding(.vertical, 4)
+        .background {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isCurrentSong ? Color.accentColor.opacity(0.13) : .clear)
+                .padding(.horizontal, -40)
+        }
         .contentShape(Rectangle())
         .contextMenu {
             Button {
@@ -155,6 +163,10 @@ struct SongRowView: View {
 
     private var navigationArtist: NavidromeArtist? {
         viewModel.artistForNavigation(from: song)
+    }
+
+    private var isCurrentSong: Bool {
+        audioPlayer.currentSong?.id == song.id
     }
 }
 

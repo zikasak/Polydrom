@@ -27,7 +27,9 @@ struct ViewRenderingTests {
 
         await render(SongListView(title: "Empty", songs: [], viewModel: viewModel, emptyMessage: "Empty", openRoute: { _ in }))
         await render(SongListView(title: "Songs", songs: [song], viewModel: viewModel, emptyMessage: "Empty", openRoute: { _ in }))
-        await render(SongRowView(song: song, queue: [song], queueIndex: 0, viewModel: viewModel, openRoute: { _ in }, currentAlbumID: nil))
+        await render(SongRowView(song: song, queue: [song], queueIndex: 0, viewModel: viewModel, audioPlayer: viewModel.audioPlayer, openRoute: { _ in }, currentAlbumID: nil))
+        viewModel.audioPlayer.currentSong = song
+        await render(SongRowView(song: song, queue: [song], queueIndex: 0, viewModel: viewModel, audioPlayer: viewModel.audioPlayer, openRoute: { _ in }, currentAlbumID: nil))
         await render(SearchView(viewModel: viewModel, openRoute: { _ in }))
         await render(AlbumBrowserView(viewModel: viewModel, albums: [album]))
         await render(ArtistBrowserView(viewModel: viewModel))
