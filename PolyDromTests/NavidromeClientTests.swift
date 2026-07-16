@@ -1,0 +1,162 @@
+import Foundation
+import Testing
+@testable import PolyDrom
+
+@Suite(.serialized)
+@MainActor
+struct NavidromeClientTests {
+    @Test func initializerNormalizesAddressesAndRejectsWhitespace() throws {
+        #expect(NavidromeClient(profile: makeProfile(address: " \n ")) == nil)
+
+        let client = try #require(NavidromeClient(profile: makeProfile(address: " music.example.com/path ")))
+        let url = try client.streamURL(for: makeSong())
+        #expect(url.scheme == "http")
+        #expect(url.host == "music.example.com")
+        #expect(url.path == "/path/rest/stream.view")
+    }
+
+    @Test func generatedURLsContainValidAuthenticationAndEndpointParameters() throws {
+        let client = try #require(NavidromeClient(profile: makeProfile(username: "alice", password: "secret")))
+        let stream = try client.streamURL(for: makeSong(id: "s"))
+        let cover = try client.coverArtURL(id: "art", size: 320)
+
+        for url in [stream, cover] {
+            let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+            let items = components.queryItems ?? []
+            #expect(items.first(where: { $0.name == "u" })?.value == "alice")
+            #expect(items.first(where: { $0.name == "v" })?.value == "1.16.1")
+            #expect(items.first(where: { $0.name == "c" })?.value == "PolyDrom")
+            #expect(items.first(where: { $0.name == "s" })?.value?.count == 32)
+            #expect(items.first(where: { $0.name == "t" })?.value?.count == 32)
+            #expect(!items.contains(where: { $0.name == "f" }))
+        }
+        #expect(queryValue("id", in: URLRequest(url: stream)) == "s")
+        #expect(queryValue("format", in: URLRequest(url: stream)) == "mp3")
+        #expect(queryValue("id", in: URLRequest(url: cover)) == "art")
+        #expect(queryValue("size", in: URLRequest(url: cover)) == "320")
+    }
+
+    @Test func allAPIEndpointsDecodeSuccessEmptyAndFallbackBranches() async throws {
+        let session = StubURLProtocol.session()
+        StubURLProtocol.handler = { request in
+            switch apiMethod(in: request) {
+            case "ping":
+                return envelope(#"{"status":"ok"}"#)
+            case "getRandomSongs":
+                return envelope(#"{"status":"ok","randomSongs":{"song":{"id":"random","title":"Random"}}}"#)
+            case "getSong":
+                return envelope(#"{"status":"ok","song":{"id":"hydrated","title":"Hydrated"}}"#)
+            case "search3":
+                if queryValue("artistCount", in: request) == "0" {
+                    return envelope(#"{"status":"ok","searchResult3":{"song":[{"id":"search","title":"Found"}]}}"#)
+                }
+                return envelope(#"{"status":"ok","searchResult3":{"artist":[{"id":"artist","name":"Artist"}]}}"#)
+            case "getAlbumList2":
+                return envelope(#"{"status":"ok","albumList2":{"album":[{"id":"late","name":"Late","artistId":"fallback","year":2022},{"id":"early","name":"Early","artist":"Fallback","year":2020},{"id":"none","name":"None","artistId":"fallback"},{"id":"other","name":"Other","artistId":"other"}]}}"#)
+            case "getArtist":
+                if queryValue("id", in: request) == "direct" {
+                    return envelope(#"{"status":"ok","artist":{"album":{"id":"direct-album","name":"Direct"}}}"#)
+                }
+                return envelope(#"{"status":"ok","artist":{"album":[]}}"#)
+            case "getAlbum":
+                return envelope(#"{"status":"ok","album":{"song":{"id":"album-song","title":"Album Song"}}}"#)
+            case "getPlaylists":
+                return envelope(#"{"status":"ok","playlists":{"playlist":{"id":"playlist","name":"Mix"}}}"#)
+            case "getPlaylist":
+                return envelope(#"{"status":"ok","playlist":{"entry":{"id":"playlist-song","title":"Playlist Song"}}}"#)
+            case "getLyricsBySongId":
+                return envelope(#"{"status":"ok","lyricsList":{"structuredLyrics":{"lang":"en","synced":true,"line":{"value":"Line"}}}}"#)
+            case "getStarred2":
+                return envelope(#"{"status":"ok","starred2":{"artist":{"id":"star-a","name":"Star Artist"},"album":{"id":"star-b","name":"Star Album"},"song":{"id":"star-s","title":"Star Song"}}}"#)
+            case "star", "unstar":
+                return envelope(#"{"status":"ok"}"#)
+            default:
+                return StubURLProtocol.Response(statusCode: 404, json: "{}")
+            }
+        }
+
+        let client = try #require(NavidromeClient(profile: makeProfile(), session: session))
+        try await client.ping()
+        #expect(try await client.randomSongs(size: 1).map(\.id) == ["random"])
+        #expect(try await client.song(id: "partial")?.id == "hydrated")
+        #expect(try await client.searchSongs(matching: "find").map(\.id) == ["search"])
+        #expect(try await client.albumPage(type: .newest, size: 20, offset: 10).count == 4)
+        #expect(try await client.artistPage(size: 20, offset: 10).map(\.id) == ["artist"])
+
+        let directArtist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"direct","name":"Direct"}"#.utf8))
+        #expect(try await client.albums(for: directArtist).map(\.id) == ["direct-album"])
+        let fallbackArtist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"fallback","name":"Fallback"}"#.utf8))
+        #expect(try await client.albums(for: fallbackArtist).map(\.id) == ["early", "late", "none"])
+
+        let album = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"album","name":"Album"}"#.utf8))
+        #expect(try await client.songs(for: album).map(\.id) == ["album-song"])
+        let playlists = try await client.playlists()
+        #expect(playlists.map(\.id) == ["playlist"])
+        #expect(try await client.songs(for: playlists[0]).map(\.id) == ["playlist-song"])
+        #expect(try await client.lyrics(for: makeSong()).first?.lines.first?.value == "Line")
+
+        let starred = try await client.starredItems()
+        #expect(starred.artists.map(\.id) == ["star-a"])
+        #expect(starred.albums.map(\.id) == ["star-b"])
+        #expect(starred.songs.map(\.id) == ["star-s"])
+        try await client.setStarred(true, itemID: "star-s")
+        try await client.setStarred(false, itemID: "star-s")
+    }
+
+    @Test func optionalContainersReturnEmptyCollectionsAndNilSong() async throws {
+        StubURLProtocol.handler = { request in
+            let extra: String
+            switch apiMethod(in: request) {
+            case "getRandomSongs": extra = ""
+            case "getSong": extra = ""
+            case "search3": extra = ""
+            case "getAlbumList2": extra = ""
+            case "getArtist": extra = ""
+            case "getAlbum": extra = ""
+            case "getPlaylists": extra = ""
+            case "getPlaylist": extra = ""
+            case "getLyricsBySongId": extra = ""
+            case "getStarred2": extra = ""
+            default: extra = ""
+            }
+            _ = extra
+            return envelope(#"{"status":"ok"}"#)
+        }
+        let client = try #require(NavidromeClient(profile: makeProfile(), session: StubURLProtocol.session()))
+        #expect(try await client.randomSongs().isEmpty)
+        #expect(try await client.song(id: "missing") == nil)
+        #expect(try await client.searchSongs(matching: "none").isEmpty)
+        #expect(try await client.albumPage(type: .alphabeticalByName, size: 1, offset: 0).isEmpty)
+        #expect(try await client.artistPage(size: 1, offset: 0).isEmpty)
+        #expect(try await client.songs(for: JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"a","name":"A"}"#.utf8))).isEmpty)
+        #expect(try await client.playlists().isEmpty)
+        #expect(try await client.songs(for: JSONDecoder().decode(NavidromePlaylist.self, from: Data(#"{"id":"p","name":"P"}"#.utf8))).isEmpty)
+        #expect(try await client.lyrics(for: makeSong()).isEmpty)
+        let starred = try await client.starredItems()
+        #expect(starred.artists.isEmpty && starred.albums.isEmpty && starred.songs.isEmpty)
+    }
+
+    @Test func HTTPServerAndDecodeErrorsPropagate() async throws {
+        let session = StubURLProtocol.session()
+        let client = try #require(NavidromeClient(profile: makeProfile(), session: session))
+
+        StubURLProtocol.handler = { _ in StubURLProtocol.Response(statusCode: 503, json: "{}") }
+        do {
+            try await client.ping()
+            Issue.record("Expected HTTP failure")
+        } catch {
+            #expect(error.localizedDescription == "HTTP 503")
+        }
+
+        StubURLProtocol.handler = { _ in StubURLProtocol.Response(data: Data("not-json".utf8)) }
+        await #expect(throws: DecodingError.self) { try await client.ping() }
+
+        StubURLProtocol.handler = { _ in envelope(#"{"status":"failed","error":{"message":"Denied"}}"#) }
+        do {
+            try await client.ping()
+            Issue.record("Expected server failure")
+        } catch {
+            #expect(error.localizedDescription == "Denied")
+        }
+    }
+}

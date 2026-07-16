@@ -28,6 +28,7 @@ final class AudioPlayer: ObservableObject {
     private var songFailedObserver: Any?
     private var playbackStalledObserver: Any?
     private var itemStatusObservation: NSKeyValueObservation?
+    private var timeControlStatusObservation: NSKeyValueObservation?
     private var stallCheckTimer: Timer?
     private var hasFinishedCurrentSong = false
     private var playbackGeneration = 0
@@ -43,6 +44,7 @@ final class AudioPlayer: ObservableObject {
         self.airPlayRoutePickerController = AirPlayRoutePickerController(player: player)
         player.allowsExternalPlayback = true
         player.volume = Float(volume)
+        observeTimeControlStatus()
     }
 
     deinit {
@@ -59,6 +61,7 @@ final class AudioPlayer: ObservableObject {
             NotificationCenter.default.removeObserver(playbackStalledObserver)
         }
         itemStatusObservation?.invalidate()
+        timeControlStatusObservation?.invalidate()
         stallCheckTimer?.invalidate()
     }
 
@@ -95,8 +98,10 @@ final class AudioPlayer: ObservableObject {
     func playCurrentSong() {
         guard currentSong != nil else { return }
 
-        player.play()
+        resetStallTracking(at: currentTime)
+        startStallCheckTimer()
         isPlaying = true
+        player.play()
         statusMessage = "Playing through the selected audio route."
         updateNowPlayingInfo()
     }
@@ -105,6 +110,7 @@ final class AudioPlayer: ObservableObject {
         guard currentSong != nil else { return }
 
         player.pause()
+        removeStallCheckTimer()
         isPlaying = false
         statusMessage = "Paused"
         updateNowPlayingInfo()
@@ -206,6 +212,10 @@ final class AudioPlayer: ObservableObject {
 
     private func checkForPlaybackStall() {
         guard isPlaying, currentSong != nil, !hasFinishedCurrentSong else { return }
+        guard player.timeControlStatus != .paused else {
+            synchronizePlaybackStateWithPlayer()
+            return
+        }
 
         if shouldFinishCurrentSong(at: currentTime) {
             finishCurrentSong()
@@ -282,6 +292,36 @@ final class AudioPlayer: ObservableObject {
         }
     }
 
+    private func observeTimeControlStatus() {
+        timeControlStatusObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.synchronizePlaybackStateWithPlayer()
+            }
+        }
+    }
+
+    private func synchronizePlaybackStateWithPlayer() {
+        guard currentSong != nil, !hasFinishedCurrentSong else { return }
+
+        switch player.timeControlStatus {
+        case .paused:
+            guard isPlaying else { return }
+            removeStallCheckTimer()
+            isPlaying = false
+            statusMessage = "Paused"
+            updateNowPlayingInfo()
+        case .waitingToPlayAtSpecifiedRate, .playing:
+            guard !isPlaying else { return }
+            resetStallTracking(at: currentTime)
+            startStallCheckTimer()
+            isPlaying = true
+            statusMessage = "Playing through the selected audio route."
+            updateNowPlayingInfo()
+        @unknown default:
+            break
+        }
+    }
+
     private func removeSongFinishedObserver() {
         if let songFinishedObserver {
             NotificationCenter.default.removeObserver(songFinishedObserver)
@@ -313,6 +353,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func startStallCheckTimer() {
+        removeStallCheckTimer()
         stallCheckTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { [weak self] in
                 await self?.checkForPlaybackStall()
@@ -325,8 +366,8 @@ final class AudioPlayer: ObservableObject {
         stallCheckTimer = nil
     }
 
-    private func resetStallTracking() {
-        lastObservedPlaybackTime = 0
+    private func resetStallTracking(at playbackTime: Double = 0) {
+        lastObservedPlaybackTime = playbackTime
         lastPlaybackProgressAt = Date()
         didAttemptStallRecovery = false
     }

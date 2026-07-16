@@ -191,6 +191,14 @@ actor CoverArtCache {
         try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
     }
 
+    init(session: URLSession, diskDirectory: URL) {
+        memoryCache.countLimit = 4_000
+        memoryCache.totalCostLimit = 100 * 1024 * 1024
+        self.session = session
+        self.diskDirectory = diskDirectory
+        try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
+    }
+
     func data(for resource: CoverArtResource) async throws -> Data {
         try Task.checkCancellation()
 

@@ -8,7 +8,13 @@
 import Foundation
 import Security
 
-struct KeychainStore {
+protocol CredentialStoring {
+    func password(for credentialID: String) throws -> String?
+    func save(password: String, credentialID: String) throws
+    func delete(credentialID: String) throws
+}
+
+struct KeychainStore: CredentialStoring {
     private let service = "uk.zikasak.PolyDrom.Navidrome"
 
     func password(for credentialID: String) throws -> String? {

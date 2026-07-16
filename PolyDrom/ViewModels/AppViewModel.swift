@@ -45,6 +45,8 @@ final class AppViewModel: ObservableObject {
     let audioPlayer: AudioPlayer
 
     private let store: LibraryStore
+    private let clientFactory: @MainActor (ServerProfile) -> NavidromeClient?
+    private let coverArtCache: CoverArtCache
     private var client: NavidromeClient?
     private var playbackQueueIndex: Int?
     private var lyricsSongID: String?
@@ -76,13 +78,22 @@ final class AppViewModel: ObservableObject {
     init() {
         self.store = LibraryStore()
         self.audioPlayer = AudioPlayer()
+        self.clientFactory = { NavidromeClient(profile: $0) }
+        self.coverArtCache = .shared
         configureAudioPlayer()
         loadServers()
     }
 
-    init(store: LibraryStore, audioPlayer: AudioPlayer) {
+    init(
+        store: LibraryStore,
+        audioPlayer: AudioPlayer,
+        clientFactory: @escaping @MainActor (ServerProfile) -> NavidromeClient? = { NavidromeClient(profile: $0) },
+        coverArtCache: CoverArtCache = .shared
+    ) {
         self.store = store
         self.audioPlayer = audioPlayer
+        self.clientFactory = clientFactory
+        self.coverArtCache = coverArtCache
         configureAudioPlayer()
         loadServers()
     }
@@ -123,7 +134,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func connect(_ profile: ServerProfile) async {
-        guard let nextClient = NavidromeClient(profile: profile) else {
+        guard let nextClient = clientFactory(profile) else {
             statusMessage = "Enter a valid server address."
             return
         }
@@ -964,17 +975,17 @@ final class AppViewModel: ObservableObject {
 
     private func warmCachedAlbumCovers(_ albums: [NavidromeAlbum]) async {
         let resources = albums.compactMap { coverArtResource(for: $0, size: gridCoverSize) }
-        await CoverArtCache.shared.warmCachedImages(resources)
+        await coverArtCache.warmCachedImages(resources)
     }
 
     private func warmCachedArtistCovers(_ artists: [NavidromeArtist]) async {
         let resources = artists.compactMap { coverArtResource(for: $0, size: gridCoverSize) }
-        await CoverArtCache.shared.warmCachedImages(resources)
+        await coverArtCache.warmCachedImages(resources)
     }
 
     private func warmCachedSongCovers(_ songs: [NavidromeSong]) async {
         let resources = songs.compactMap { coverArtResource(for: $0, size: thumbnailCoverSize) }
-        await CoverArtCache.shared.warmCachedImages(resources)
+        await coverArtCache.warmCachedImages(resources)
     }
 
     private func prefetchAlbumCovers(_ albums: [NavidromeAlbum]) {
@@ -999,7 +1010,7 @@ final class AppViewModel: ObservableObject {
     private func prefetchCoverArt(_ resources: [CoverArtResource]) -> Task<Void, Never>? {
         guard !resources.isEmpty else { return nil }
         return Task {
-            await CoverArtCache.shared.prefetch(resources)
+            await coverArtCache.prefetch(resources)
         }
     }
 
@@ -1018,7 +1029,7 @@ final class AppViewModel: ObservableObject {
         }
 
         nowPlayingArtworkTask = Task { [weak audioPlayer] in
-            let data = try? await CoverArtCache.shared.data(for: resource)
+            let data = try? await coverArtCache.data(for: resource)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 audioPlayer?.setNowPlayingArtworkData(data, for: song.id)

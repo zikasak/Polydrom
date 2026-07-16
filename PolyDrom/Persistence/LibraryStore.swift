@@ -11,9 +11,9 @@ import Foundation
 @MainActor
 final class LibraryStore {
     private let context: NSManagedObjectContext
-    private let keychain: KeychainStore
+    private let keychain: any CredentialStoring
 
-    init(persistence: PersistenceController, keychain: KeychainStore) {
+    init(persistence: PersistenceController, keychain: any CredentialStoring) {
         context = persistence.container.viewContext
         self.keychain = keychain
     }

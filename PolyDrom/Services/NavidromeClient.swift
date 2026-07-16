@@ -12,14 +12,16 @@ struct NavidromeClient {
     let profile: ServerProfile
 
     private let baseURL: URL
+    private let session: URLSession
 
-    init?(profile: ServerProfile) {
+    init?(profile: ServerProfile, session: URLSession = .shared) {
         guard let baseURL = Self.normalizedServerURL(from: profile.address) else {
             return nil
         }
 
         self.profile = profile
         self.baseURL = baseURL
+        self.session = session
     }
 
     func ping() async throws {
@@ -222,9 +224,9 @@ struct NavidromeClient {
         if let timeoutInterval {
             var request = URLRequest(url: url)
             request.timeoutInterval = timeoutInterval
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await session.data(for: request)
         } else {
-            (data, response) = try await URLSession.shared.data(from: url)
+            (data, response) = try await session.data(from: url)
         }
 
         if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
