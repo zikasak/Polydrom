@@ -24,10 +24,11 @@ struct SongListView: View {
                 ContentUnavailableView(emptyMessage, systemImage: "music.note")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                LazyLibraryList(songs) { song in
+                LazyLibraryList(indexedSongs) { item in
                     SongRowView(
-                        song: song,
+                        song: item.song,
                         queue: songs,
+                        queueIndex: item.index,
                         viewModel: viewModel,
                         openRoute: openRoute,
                         currentAlbumID: currentAlbumID
@@ -36,11 +37,16 @@ struct SongListView: View {
             }
         }
     }
+
+    private var indexedSongs: [IndexedSong] {
+        songs.indices.map { IndexedSong(index: $0, song: songs[$0]) }
+    }
 }
 
 struct SongRowView: View {
     let song: NavidromeSong
     let queue: [NavidromeSong]
+    let queueIndex: Int
     @ObservedObject var viewModel: AppViewModel
     let openRoute: (LibraryRoute) -> Void
     let currentAlbumID: String?
@@ -48,7 +54,7 @@ struct SongRowView: View {
     var body: some View {
         HStack(spacing: 12) {
             Button {
-                viewModel.play(song, in: queue)
+                viewModel.play(queue, startingAt: queueIndex)
             } label: {
                 Label("Play", systemImage: "play.fill")
                     .labelStyle(.iconOnly)
@@ -89,7 +95,7 @@ struct SongRowView: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button {
-                viewModel.play(song, in: queue)
+                viewModel.play(queue, startingAt: queueIndex)
             } label: {
                 Label("Play", systemImage: "play.fill")
             }
@@ -150,6 +156,13 @@ struct SongRowView: View {
     private var navigationArtist: NavidromeArtist? {
         viewModel.artistForNavigation(from: song)
     }
+}
+
+private struct IndexedSong: Identifiable {
+    let index: Int
+    let song: NavidromeSong
+
+    var id: Int { index }
 }
 
 struct CoverArtView: View {

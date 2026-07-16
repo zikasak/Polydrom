@@ -192,11 +192,13 @@ struct AppViewModelTests {
         viewModel.toggleFavorite(newArtist)
         #expect(await eventually { viewModel.statusMessage == "Removed artist from favorites" })
 
-        viewModel.playbackQueue = [song]
+        let currentEntry = PlaybackQueueEntry(song: song)
+        viewModel.playbackQueue = [currentEntry]
+        viewModel.currentPlaybackQueueEntryID = currentEntry.id
         viewModel.audioPlayer.currentSong = song
         viewModel.playNext([makeSong(id: "next"), makeSong(id: "later")])
         viewModel.addToQueue([makeSong(id: "end")])
-        #expect(viewModel.playbackQueue.map(\.id) == ["album-song", "next", "later", "end"])
+        #expect(viewModel.playbackQueue.map(\.song.id) == ["album-song", "next", "later", "end"])
         #expect(viewModel.statusMessage == "Added to queue")
 
         viewModel.deleteServer(profile)

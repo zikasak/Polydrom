@@ -37,7 +37,8 @@ final class AppViewModel: ObservableObject {
     @Published var favoriteArtistIDs: Set<String> = []
     @Published var favoriteAlbumIDs: Set<String> = []
     @Published var favoriteIDs: Set<String> = []
-    @Published var playbackQueue: [NavidromeSong] = []
+    @Published var playbackQueue: [PlaybackQueueEntry] = []
+    @Published var currentPlaybackQueueEntryID: UUID?
     @Published var currentLyrics: SongLyrics?
     @Published var lyricsMessage = "No lyrics loaded."
     @Published var isLoadingLyrics = false
@@ -48,7 +49,6 @@ final class AppViewModel: ObservableObject {
     private let clientFactory: @MainActor (ServerProfile) -> NavidromeClient?
     private let coverArtCache: CoverArtCache
     private var client: NavidromeClient?
-    private var playbackQueueIndex: Int?
     private var lyricsSongID: String?
     private var albumCoverPrefetchTask: Task<Void, Never>?
     private var artistCoverPrefetchTask: Task<Void, Never>?
@@ -447,10 +447,20 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func play(_ song: NavidromeSong, in queue: [NavidromeSong]) {
+    func play(_ songs: [NavidromeSong], startingAt index: Int) {
+        guard songs.indices.contains(index) else { return }
+
+        let queue = songs.map { PlaybackQueueEntry(song: $0) }
         let shouldHydrateSong = selectedSection == .random
         Task {
-            await play(song, in: queue, shouldHydrateSong: shouldHydrateSong)
+            await play(queue[index], replacingQueueWith: queue, shouldHydrateSong: shouldHydrateSong)
+        }
+    }
+
+    func play(_ entry: PlaybackQueueEntry) {
+        let shouldHydrateSong = selectedSection == .random
+        Task {
+            await play(entry, shouldHydrateSong: shouldHydrateSong)
         }
     }
 
@@ -470,11 +480,11 @@ final class AppViewModel: ObservableObject {
         guard !songs.isEmpty else { return }
 
         guard let currentIndex = currentPlaybackQueueIndex else {
-            play(songs[0], in: songs)
+            play(songs, startingAt: 0)
             return
         }
 
-        playbackQueue.insert(contentsOf: songs, at: currentIndex + 1)
+        playbackQueue.insert(contentsOf: songs.map { PlaybackQueueEntry(song: $0) }, at: currentIndex + 1)
         updateNowPlayingQueueState()
         statusMessage = songs.count == 1 ? "Playing next" : "Playing next: \(songs.count) songs"
     }
@@ -493,7 +503,7 @@ final class AppViewModel: ObservableObject {
 
     func addToQueue(_ songs: [NavidromeSong]) {
         guard !songs.isEmpty else { return }
-        playbackQueue.append(contentsOf: songs)
+        playbackQueue.append(contentsOf: songs.map { PlaybackQueueEntry(song: $0) })
         updateNowPlayingQueueState()
         statusMessage = songs.count == 1 ? "Added to queue" : "Added \(songs.count) songs to queue"
     }
@@ -510,18 +520,30 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func play(_ song: NavidromeSong, in queue: [NavidromeSong], shouldHydrateSong: Bool) async {
+    private func play(
+        _ entry: PlaybackQueueEntry,
+        replacingQueueWith queue: [PlaybackQueueEntry]? = nil,
+        shouldHydrateSong: Bool
+    ) async {
         guard let client, let serverKey else {
             statusMessage = "Connect first."
             return
         }
 
         do {
-            let songToPlay = try await resolvedSongForPlayback(song, shouldHydrateSong: shouldHydrateSong)
+            let songToPlay = try await resolvedSongForPlayback(entry.song, shouldHydrateSong: shouldHydrateSong)
             let url = try client.streamURL(for: songToPlay)
             await warmCachedSongCovers([songToPlay])
-            playbackQueue = queue.isEmpty ? [song] : queue
-            playbackQueueIndex = playbackQueue.firstIndex(of: song)
+
+            if var queue {
+                guard let index = queue.firstIndex(where: { $0.id == entry.id }) else { return }
+                queue[index].song = songToPlay
+                playbackQueue = queue
+            } else {
+                guard let index = playbackQueue.firstIndex(where: { $0.id == entry.id }) else { return }
+                playbackQueue[index].song = songToPlay
+            }
+            currentPlaybackQueueEntryID = entry.id
             if lyricsSongID != songToPlay.id {
                 lyricsSongID = nil
                 currentLyrics = nil
@@ -530,7 +552,7 @@ final class AppViewModel: ObservableObject {
             updateNowPlayingQueueState()
             audioPlayer.play(song: songToPlay, url: url)
             updateNowPlayingArtwork(for: songToPlay)
-            let queueToWarm = playbackQueue
+            let queueToWarm = playbackQueue.map(\.song)
             Task { [weak self] in
                 guard let self else { return }
                 await warmCachedSongCovers(queueToWarm)
@@ -545,15 +567,8 @@ final class AppViewModel: ObservableObject {
     }
 
     private var currentPlaybackQueueIndex: Int? {
-        guard let currentSong = audioPlayer.currentSong else { return nil }
-
-        if let playbackQueueIndex,
-           playbackQueue.indices.contains(playbackQueueIndex),
-           playbackQueue[playbackQueueIndex].id == currentSong.id {
-            return playbackQueueIndex
-        }
-
-        return playbackQueue.firstIndex { $0.id == currentSong.id }
+        guard audioPlayer.currentSong != nil, let currentPlaybackQueueEntryID else { return nil }
+        return playbackQueue.firstIndex { $0.id == currentPlaybackQueueEntryID }
     }
 
     private func performQueueAction(
@@ -582,7 +597,7 @@ final class AppViewModel: ObservableObject {
 
                 switch action {
                 case .play:
-                    play(songs[0], in: songs)
+                    play(songs, startingAt: 0)
                 case .next:
                     playNext(songs)
                 case .end:
@@ -604,27 +619,31 @@ final class AppViewModel: ObservableObject {
     }
 
     func playPreviousTrack() {
-        guard let playbackQueueIndex, playbackQueue.indices.contains(playbackQueueIndex - 1) else { return }
+        guard let currentIndex = currentPlaybackQueueIndex,
+              playbackQueue.indices.contains(currentIndex - 1) else { return }
+        let entry = playbackQueue[currentIndex - 1]
         Task {
-            await play(playbackQueue[playbackQueueIndex - 1], in: playbackQueue, shouldHydrateSong: false)
+            await play(entry, shouldHydrateSong: false)
         }
     }
 
     func playNextTrack() {
-        guard let playbackQueueIndex, playbackQueue.indices.contains(playbackQueueIndex + 1) else { return }
+        guard let currentIndex = currentPlaybackQueueIndex,
+              playbackQueue.indices.contains(currentIndex + 1) else { return }
+        let entry = playbackQueue[currentIndex + 1]
         Task {
-            await play(playbackQueue[playbackQueueIndex + 1], in: playbackQueue, shouldHydrateSong: false)
+            await play(entry, shouldHydrateSong: false)
         }
     }
 
     func canPlayPreviousTrack() -> Bool {
-        guard let playbackQueueIndex else { return false }
-        return playbackQueue.indices.contains(playbackQueueIndex - 1)
+        guard let currentIndex = currentPlaybackQueueIndex else { return false }
+        return playbackQueue.indices.contains(currentIndex - 1)
     }
 
     func canPlayNextTrack() -> Bool {
-        guard let playbackQueueIndex else { return false }
-        return playbackQueue.indices.contains(playbackQueueIndex + 1)
+        guard let currentIndex = currentPlaybackQueueIndex else { return false }
+        return playbackQueue.indices.contains(currentIndex + 1)
     }
 
     func loadLyrics(for song: NavidromeSong, force: Bool = false) async {

@@ -446,16 +446,19 @@ struct PlayerQueueView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 4) {
-                        ForEach(Array(viewModel.playbackQueue.enumerated()), id: \.offset) { _, song in
+                        ForEach(viewModel.playbackQueue) { entry in
+                            let song = entry.song
+                            let isCurrent = audioPlayer.currentSong != nil
+                                && viewModel.currentPlaybackQueueEntryID == entry.id
                             Button {
-                                viewModel.play(song, in: viewModel.playbackQueue)
+                                viewModel.play(entry)
                             } label: {
                                 HStack(spacing: 10) {
                                     CoverArtView(resource: viewModel.coverArtResource(for: song, size: 96), size: 42)
 
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(song.title)
-                                            .fontWeight(audioPlayer.currentSong?.id == song.id ? .semibold : .regular)
+                                            .fontWeight(isCurrent ? .semibold : .regular)
                                             .lineLimit(1)
                                         Text(song.artist ?? song.album ?? "Unknown artist")
                                             .font(.caption)
@@ -465,7 +468,7 @@ struct PlayerQueueView: View {
 
                                     Spacer()
 
-                                    if audioPlayer.currentSong?.id == song.id {
+                                    if isCurrent {
                                         Image(systemName: audioPlayer.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
                                             .foregroundStyle(.tint)
                                     } else {
@@ -476,7 +479,7 @@ struct PlayerQueueView: View {
                                 }
                                 .padding(8)
                                 .background(
-                                    audioPlayer.currentSong?.id == song.id ? Color.accentColor.opacity(0.13) : .clear,
+                                    isCurrent ? Color.accentColor.opacity(0.13) : .clear,
                                     in: RoundedRectangle(cornerRadius: 8)
                                 )
                                 .contentShape(Rectangle())

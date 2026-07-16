@@ -27,7 +27,7 @@ struct ViewRenderingTests {
 
         await render(SongListView(title: "Empty", songs: [], viewModel: viewModel, emptyMessage: "Empty", openRoute: { _ in }))
         await render(SongListView(title: "Songs", songs: [song], viewModel: viewModel, emptyMessage: "Empty", openRoute: { _ in }))
-        await render(SongRowView(song: song, queue: [song], viewModel: viewModel, openRoute: { _ in }, currentAlbumID: nil))
+        await render(SongRowView(song: song, queue: [song], queueIndex: 0, viewModel: viewModel, openRoute: { _ in }, currentAlbumID: nil))
         await render(SearchView(viewModel: viewModel, openRoute: { _ in }))
         await render(AlbumBrowserView(viewModel: viewModel, albums: [album]))
         await render(ArtistBrowserView(viewModel: viewModel))
@@ -76,7 +76,12 @@ struct ViewRenderingTests {
     @Test func playerViewsRenderPlaybackQueueAndEveryLyricsState() async throws {
         let (viewModel, _, _) = makeViewModel()
         let song = makeSong(albumId: nil, artistId: nil)
-        viewModel.playbackQueue = [song, makeSong(id: "second", artist: nil, album: nil, albumId: nil, artistId: nil)]
+        let currentEntry = PlaybackQueueEntry(song: song)
+        viewModel.playbackQueue = [
+            currentEntry,
+            PlaybackQueueEntry(song: makeSong(id: "second", artist: nil, album: nil, albumId: nil, artistId: nil))
+        ]
+        viewModel.currentPlaybackQueueEntryID = currentEntry.id
         viewModel.audioPlayer.currentSong = song
         viewModel.audioPlayer.currentTime = 2
         viewModel.audioPlayer.duration = 10

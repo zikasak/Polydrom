@@ -161,13 +161,52 @@ struct PolyDromTests {
         let later = makeSong(id: "later", title: "Later")
         let next = makeSong(id: "next", title: "Next")
         let end = makeSong(id: "end", title: "End")
+        let currentEntry = PlaybackQueueEntry(song: current)
 
-        viewModel.playbackQueue = [current, later]
+        viewModel.playbackQueue = [currentEntry, PlaybackQueueEntry(song: later)]
+        viewModel.currentPlaybackQueueEntryID = currentEntry.id
         audioPlayer.currentSong = current
         viewModel.playNext([next])
         viewModel.addToQueue([end])
 
-        #expect(viewModel.playbackQueue.map(\.id) == ["current", "next", "later", "end"])
+        #expect(viewModel.playbackQueue.map(\.song.id) == ["current", "next", "later", "end"])
+    }
+
+    @Test func duplicateQueueEntriesKeepIndependentIdentity() {
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: KeychainStore()
+        )
+        let audioPlayer = AudioPlayer()
+        let viewModel = AppViewModel(store: store, audioPlayer: audioPlayer)
+        let duplicate = makeSong(id: "duplicate", title: "Duplicate")
+        let later = makeSong(id: "later", title: "Later")
+        let first = PlaybackQueueEntry(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, song: duplicate)
+        let second = PlaybackQueueEntry(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, song: duplicate)
+        let laterEntry = PlaybackQueueEntry(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, song: later)
+
+        viewModel.playbackQueue = [first, second, laterEntry]
+        viewModel.currentPlaybackQueueEntryID = second.id
+        audioPlayer.currentSong = duplicate
+
+        #expect(first.id != second.id)
+        #expect(viewModel.currentPlaybackQueueEntryID != first.id)
+        #expect(viewModel.currentPlaybackQueueEntryID == second.id)
+        #expect(viewModel.canPlayPreviousTrack())
+        #expect(viewModel.canPlayNextTrack())
+
+        viewModel.playNext([duplicate])
+        viewModel.addToQueue([duplicate])
+
+        #expect(viewModel.playbackQueue.map(\.song.id) == ["duplicate", "duplicate", "duplicate", "later", "duplicate"])
+        #expect(viewModel.playbackQueue[0].id == first.id)
+        #expect(viewModel.playbackQueue[1].id == second.id)
+        #expect(viewModel.playbackQueue[3].id == laterEntry.id)
+        #expect(Set(viewModel.playbackQueue.map(\.id)).count == viewModel.playbackQueue.count)
+
+        audioPlayer.stop()
+        #expect(!viewModel.canPlayPreviousTrack())
+        #expect(!viewModel.canPlayNextTrack())
     }
 
     @Test func songMetadataCreatesNavigableAlbumAndArtist() throws {

@@ -52,6 +52,16 @@ struct NavidromeSong: Decodable, Identifiable, Hashable {
     }
 }
 
+struct PlaybackQueueEntry: Identifiable, Hashable {
+    let id: UUID
+    var song: NavidromeSong
+
+    init(id: UUID = UUID(), song: NavidromeSong) {
+        self.id = id
+        self.song = song
+    }
+}
+
 struct NavidromeAlbum: Decodable, Identifiable, Hashable {
     let id: String
     let name: String
