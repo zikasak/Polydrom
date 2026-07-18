@@ -8,6 +8,7 @@ struct AppViewModelTests {
     @Test func disconnectedActionsReturnUsefulMessagesAndIgnoreUnavailableWork() async {
         let (viewModel, _, _) = makeViewModel()
         #expect(!viewModel.isConnected)
+        #expect(viewModel.selectedSection == .home)
         #expect(viewModel.serverKey == nil)
 
         await viewModel.search()
@@ -18,6 +19,8 @@ struct AppViewModelTests {
 
         await viewModel.refreshSelectedSection(force: true)
         await viewModel.loadRandomSongs()
+        await viewModel.loadHome()
+        await viewModel.playRandomSongs(count: 10)
         await viewModel.loadAlbums()
         await viewModel.loadArtists()
         await viewModel.loadPlaylists()
@@ -118,9 +121,16 @@ struct AppViewModelTests {
         await viewModel.connectToLatestServer()
         #expect(viewModel.isConnected)
         #expect(viewModel.activeServer?.id == profile.id)
-        #expect(viewModel.randomSongs.map(\.id) == ["random"])
+        #expect(viewModel.recentlyAddedAlbums.map(\.id) == ["album"])
+        #expect(viewModel.recentlyPlayedAlbums.map(\.id) == ["album"])
+        #expect(viewModel.homeRandomAlbums.map(\.id) == ["album"])
+        #expect(viewModel.featuredAlbums.map(\.id) == ["album"])
         #expect(viewModel.favoriteSongs.map(\.id) == ["favorite-song"])
         await viewModel.connectToLatestServer()
+
+        await viewModel.playRandomSongs(count: 10)
+        #expect(await eventually { viewModel.audioPlayer.currentSong?.id == "random" })
+        #expect(viewModel.playbackQueue.map(\.song.id) == ["random"])
 
         viewModel.searchText = "  "
         await viewModel.search()

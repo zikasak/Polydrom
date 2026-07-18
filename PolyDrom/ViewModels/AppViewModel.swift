@@ -15,12 +15,16 @@ final class AppViewModel: ObservableObject {
     @Published var password = ""
     @Published var servers: [ServerProfile] = []
     @Published var activeServer: ServerProfile?
-    @Published var selectedSection: LibrarySection = .search
+    @Published var selectedSection: LibrarySection = .home
     @Published var statusMessage = "Disconnected"
     @Published var isBusy = false
     @Published var searchText = ""
     @Published var searchResults: [NavidromeSong] = []
     @Published var randomSongs: [NavidromeSong] = []
+    @Published var recentlyAddedAlbums: [NavidromeAlbum] = []
+    @Published var recentlyPlayedAlbums: [NavidromeAlbum] = []
+    @Published var homeRandomAlbums: [NavidromeAlbum] = []
+    @Published var featuredAlbums: [NavidromeAlbum] = []
     @Published var albums: [NavidromeAlbum] = []
     @Published var artists: [NavidromeArtist] = []
     @Published var artistAlbums: [NavidromeAlbum] = []
@@ -63,6 +67,7 @@ final class AppViewModel: ObservableObject {
     private let gridCoverSize = 220
     private let interchangeableThumbnailSizes = [72, 80, 96]
     private var didAttemptInitialConnection = false
+    private var hasLoadedHome = false
     private var artistFavoriteUpdatesInFlight = Set<String>()
     private var albumFavoriteUpdatesInFlight = Set<String>()
     private var songFavoriteUpdatesInFlight = Set<String>()
@@ -192,6 +197,10 @@ final class AppViewModel: ObservableObject {
         guard isConnected else { return }
 
         switch selectedSection {
+        case .home:
+            if force || !hasLoadedHome {
+                await loadHome()
+            }
         case .search:
             let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
             if !query.isEmpty, force || searchResults.isEmpty {
@@ -227,6 +236,64 @@ final class AppViewModel: ObservableObject {
             } catch {
                 statusMessage = error.localizedDescription
             }
+        }
+    }
+
+    func loadHome() async {
+        guard let client else { return }
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            async let addedRequest = client.albumPage(type: .newest, size: 12, offset: 0)
+            async let playedRequest = client.albumPage(type: .recent, size: 12, offset: 0)
+            async let randomRequest = client.albumPage(type: .random, size: 12, offset: 0)
+            async let featuredRequest = client.albumPage(type: .random, size: 5, offset: 0)
+
+            let (added, played, random, featured) = try await (
+                addedRequest,
+                playedRequest,
+                randomRequest,
+                featuredRequest
+            )
+            let allAlbums = added + played + random + featured
+            await warmCachedAlbumCovers(allAlbums)
+            guard !Task.isCancelled else { return }
+
+            recentlyAddedAlbums = added
+            recentlyPlayedAlbums = played
+            homeRandomAlbums = random
+            featuredAlbums = featured
+            hasLoadedHome = true
+            prefetchAlbumCovers(allAlbums)
+            statusMessage = allAlbums.isEmpty ? "No albums returned for Home." : "Home updated"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func playRandomSongs(count: Int) async {
+        guard let client else {
+            statusMessage = "Connect first."
+            return
+        }
+
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            let songs = try await client.randomSongs(size: count)
+            guard !songs.isEmpty else {
+                statusMessage = "No random songs returned."
+                return
+            }
+
+            try cache(songs)
+            await warmCachedSongCovers(songs)
+            prefetchSongCovers(songs)
+            play(songs, startingAt: 0)
+        } catch {
+            statusMessage = error.localizedDescription
         }
     }
 
@@ -801,6 +868,10 @@ final class AppViewModel: ObservableObject {
 
         return artistAlbums.first { $0.id == fallback.id }
             ?? albums.first { $0.id == fallback.id }
+            ?? recentlyAddedAlbums.first { $0.id == fallback.id }
+            ?? recentlyPlayedAlbums.first { $0.id == fallback.id }
+            ?? homeRandomAlbums.first { $0.id == fallback.id }
+            ?? featuredAlbums.first { $0.id == fallback.id }
             ?? favoriteAlbums.first { $0.id == fallback.id }
             ?? fallback
     }
@@ -939,6 +1010,11 @@ final class AppViewModel: ObservableObject {
     private func clearRemoteLibraryState() {
         searchResults = []
         randomSongs = []
+        recentlyAddedAlbums = []
+        recentlyPlayedAlbums = []
+        homeRandomAlbums = []
+        featuredAlbums = []
+        hasLoadedHome = false
         albums = []
         artists = []
         artistAlbums = []

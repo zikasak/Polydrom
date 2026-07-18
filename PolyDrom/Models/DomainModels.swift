@@ -283,10 +283,13 @@ private extension KeyedDecodingContainer {
 
 enum AlbumListType: String {
     case newest
+    case recent
+    case random
     case alphabeticalByName
 }
 
 enum LibrarySection: String, CaseIterable, Identifiable {
+    case home = "Home"
     case search = "Search"
     case random = "Random"
     case albums = "Albums"
@@ -299,6 +302,7 @@ enum LibrarySection: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .home: "house"
         case .search: "magnifyingglass"
         case .random: "shuffle"
         case .albums: "rectangle.stack"

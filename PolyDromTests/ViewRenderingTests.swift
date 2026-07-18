@@ -16,6 +16,10 @@ struct ViewRenderingTests {
         viewModel.randomSongs = [song]
         viewModel.recentSongs = [song]
         viewModel.albums = [album]
+        viewModel.recentlyAddedAlbums = [album]
+        viewModel.recentlyPlayedAlbums = [album]
+        viewModel.homeRandomAlbums = [album]
+        viewModel.featuredAlbums = [album]
         viewModel.artists = [artist]
         viewModel.playlists = [playlist]
         viewModel.favoriteSongs = [song]
@@ -31,6 +35,7 @@ struct ViewRenderingTests {
         viewModel.audioPlayer.currentSong = song
         await render(SongRowView(song: song, queue: [song], queueIndex: 0, viewModel: viewModel, audioPlayer: viewModel.audioPlayer, openRoute: { _ in }, currentAlbumID: nil))
         await render(SearchView(viewModel: viewModel, openRoute: { _ in }))
+        await render(HomeView(viewModel: viewModel, openAlbum: { _ in }))
         await render(AlbumBrowserView(viewModel: viewModel, albums: [album]))
         await render(ArtistBrowserView(viewModel: viewModel))
         await render(FavoriteArtistBrowserView(viewModel: viewModel))

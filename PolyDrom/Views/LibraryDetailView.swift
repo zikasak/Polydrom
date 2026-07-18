@@ -65,6 +65,10 @@ struct LibraryDetailView: View {
     @ViewBuilder
     private var content: some View {
         switch viewModel.selectedSection {
+        case .home:
+            HomeView(viewModel: viewModel, openAlbum: { album in
+                openRoute(.album(album))
+            })
         case .search:
             SearchView(viewModel: viewModel, openRoute: openRoute)
         case .random:

@@ -86,7 +86,7 @@ struct DomainModelTests {
 
     @Test func librarySectionsExposeStableSymbols() {
         let expected: [LibrarySection: String] = [
-            .search: "magnifyingglass", .random: "shuffle", .albums: "rectangle.stack",
+            .home: "house", .search: "magnifyingglass", .random: "shuffle", .albums: "rectangle.stack",
             .artists: "music.mic", .playlists: "music.note.list", .favorites: "heart",
             .recent: "clock"
         ]
@@ -95,5 +95,8 @@ struct DomainModelTests {
             #expect(section.id == section.rawValue)
             #expect(section.systemImage == expected[section])
         }
+        #expect(AlbumListType.newest.rawValue == "newest")
+        #expect(AlbumListType.recent.rawValue == "recent")
+        #expect(AlbumListType.random.rawValue == "random")
     }
 }
