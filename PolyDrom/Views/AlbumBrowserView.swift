@@ -26,7 +26,6 @@ struct AlbumBrowserView: View {
     var body: some View {
         AlbumBrowserGrid(
             albums: albums,
-            selectedAlbumID: viewModel.selectedAlbum?.id,
             favoriteAlbumIDs: viewModel.favoriteAlbumIDs,
             serverKey: viewModel.serverKey,
             coverArtResource: { album in
@@ -50,7 +49,6 @@ struct AlbumBrowserView: View {
 
 private struct AlbumBrowserGrid: View, Equatable {
     let albums: [NavidromeAlbum]
-    let selectedAlbumID: String?
     let favoriteAlbumIDs: Set<String>
     let serverKey: String?
     let coverArtResource: (NavidromeAlbum) -> CoverArtResource?
@@ -62,7 +60,6 @@ private struct AlbumBrowserGrid: View, Equatable {
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.albums == rhs.albums
-            && lhs.selectedAlbumID == rhs.selectedAlbumID
             && lhs.favoriteAlbumIDs == rhs.favoriteAlbumIDs
             && lhs.serverKey == rhs.serverKey
     }
@@ -73,8 +70,7 @@ private struct AlbumBrowserGrid: View, Equatable {
                 NavigationLink(value: LibraryRoute.album(album)) {
                     AlbumCardView(
                         album: album,
-                        coverArtResource: coverArtResource(album),
-                        isSelected: selectedAlbumID == album.id
+                        coverArtResource: coverArtResource(album)
                     )
                 }
                 .buttonStyle(.plain)
@@ -129,6 +125,8 @@ private struct AlbumBrowserGrid: View, Equatable {
                 } label: {
                     Label("Open Album", systemImage: "rectangle.stack")
                 }
+
+                OpenInSpotifyLink(album: album)
             }
         }
     }
@@ -154,15 +152,19 @@ struct AlbumDetailView: View {
 
                 Spacer()
 
-                Button {
-                    viewModel.toggleFavorite(album)
-                } label: {
-                    Label(
-                        viewModel.isFavorite(album) ? "Unfavorite" : "Favorite",
-                        systemImage: viewModel.isFavorite(album) ? "heart.fill" : "heart"
-                    )
+                HStack(alignment: .center, spacing: 8) {
+                    OpenInSpotifyLink(album: album, presentation: .iconOnly)
+
+                    Button {
+                        viewModel.toggleFavorite(album)
+                    } label: {
+                        Label(
+                            viewModel.isFavorite(album) ? "Unfavorite" : "Favorite",
+                            systemImage: viewModel.isFavorite(album) ? "heart.fill" : "heart"
+                        )
+                    }
+                    .help(viewModel.isFavorite(album) ? "Remove album from favorites" : "Add album to favorites")
                 }
-                .help(viewModel.isFavorite(album) ? "Remove album from favorites" : "Add album to favorites")
             }
 
             SongListView(
@@ -185,7 +187,6 @@ struct AlbumDetailView: View {
 private struct AlbumCardView: View {
     let album: NavidromeAlbum
     let coverArtResource: CoverArtResource?
-    let isSelected: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -209,11 +210,11 @@ private struct AlbumCardView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background {
             RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08))
+                .fill(Color.secondary.opacity(0.08))
         }
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color.accentColor.opacity(0.65) : Color.secondary.opacity(0.14), lineWidth: 1)
+                .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: 8))
     }

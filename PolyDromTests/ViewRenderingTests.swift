@@ -42,6 +42,9 @@ struct ViewRenderingTests {
         await render(PlaylistBrowserView(viewModel: viewModel))
         await render(AlbumDetailView(viewModel: viewModel, album: album, openRoute: { _ in }))
         await render(ArtistDetailView(viewModel: viewModel, artist: artist, openAlbum: { _ in }))
+        await render(OpenInSpotifyLink(album: album))
+        await render(OpenInSpotifyLink(album: album, presentation: .iconOnly))
+        await render(OpenInSpotifyLink(artist: artist))
         await render(PlaylistDetailView(viewModel: viewModel, playlist: playlist, openRoute: { _ in }))
         await render(CoverArtView(resource: nil, size: 48))
     }

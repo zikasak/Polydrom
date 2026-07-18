@@ -126,6 +126,8 @@ private struct ArtistBrowserGrid: View, Equatable {
                 } label: {
                     Label("Open Artist", systemImage: "music.mic")
                 }
+
+                OpenInSpotifyLink(artist: artist)
             }
         }
     }
@@ -150,6 +152,8 @@ struct ArtistDetailView: View {
                 }
 
                 Spacer()
+
+                OpenInSpotifyLink(artist: artist)
 
                 Button {
                     viewModel.toggleFavorite(artist)

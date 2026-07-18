@@ -314,5 +314,6 @@ private struct AlbumContextMenu: View {
         Button { openAlbum(album) } label: {
             Label("Open Album", systemImage: "rectangle.stack")
         }
+        OpenInSpotifyLink(album: album)
     }
 }
