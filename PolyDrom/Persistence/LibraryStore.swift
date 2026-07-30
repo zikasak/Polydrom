@@ -29,7 +29,7 @@ final class LibraryStore {
             NSSortDescriptor(key: "lastConnectedAt", ascending: false),
             NSSortDescriptor(key: "createdAt", ascending: false)
         ]
-        return try context.fetch(request).map(serverProfile(from:))
+        return try context.fetch(request).map { try serverProfile(from: $0) }
     }
 
     func saveServer(address: String, username: String, password: String, name: String = "") throws -> ServerProfile {
@@ -53,7 +53,7 @@ final class LibraryStore {
         object.setValue(nil, forKey: "password")
         object.setValue(now, forKey: "lastConnectedAt")
         try save()
-        return serverProfile(from: object)
+        return try serverProfile(from: object)
     }
 
     func deleteServer(_ profile: ServerProfile) throws {
@@ -856,10 +856,9 @@ final class LibraryStore {
         NSFetchRequest<NSManagedObject>(entityName: "VDSong")
     }
 
-    private func serverProfile(from object: NSManagedObject) -> ServerProfile {
+    private func serverProfile(from object: NSManagedObject) throws -> ServerProfile {
         let credentialID = object.value(forKey: "credentialID") as? String ?? UUID().uuidString
-        let legacyPassword = object.value(forKey: "password") as? String ?? ""
-        let password = (try? keychain.password(for: credentialID)) ?? legacyPassword
+        let password = try keychain.password(for: credentialID) ?? ""
 
         return ServerProfile(
             id: object.value(forKey: "uuid") as? UUID ?? UUID(),

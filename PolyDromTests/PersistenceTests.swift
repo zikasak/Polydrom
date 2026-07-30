@@ -49,6 +49,17 @@ struct PersistenceTests {
         }
     }
 
+    @Test func credentialFailuresPropagateFromLoad() throws {
+        let credentials = MemoryCredentialStore()
+        let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: credentials)
+        _ = try store.saveServer(address: "host", username: "user", password: "secret")
+        credentials.error = TestFailure.intentional
+
+        #expect(throws: TestFailure.self) {
+            try store.servers()
+        }
+    }
+
     @Test func songsUpsertUpdateRemainServerScopedAndRespectLimit() async throws {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),
@@ -300,6 +311,7 @@ struct PersistenceTests {
         server.setValue("https://legacy.example", forKey: "address")
         server.setValue("user", forKey: "username")
         server.setValue("credential", forKey: "credentialID")
+        server.setValue("legacy-plaintext-secret", forKey: "password")
         server.setValue(Date(timeIntervalSince1970: 10), forKey: "createdAt")
 
         let song = NSEntityDescription.insertNewObject(
@@ -318,16 +330,14 @@ struct PersistenceTests {
             try legacyContainer.persistentStoreCoordinator.remove(persistentStore)
         }
 
-        let credentials = MemoryCredentialStore()
-        credentials.passwords["credential"] = "secret"
         let migratedStore = LibraryStore(
             persistence: PersistenceController(storeURL: storeURL),
-            keychain: credentials
+            keychain: MemoryCredentialStore()
         )
 
         let profiles = try migratedStore.servers()
         #expect(profiles.map(\.id) == [serverID])
-        #expect(profiles.first?.password == "secret")
+        #expect(profiles.first?.password == "")
         #expect(
             try migratedStore.recentSongs(serverKey: "https://legacy.example|user").map(\.id)
                 == ["legacy-song"]
