@@ -29,6 +29,17 @@ struct NavidromeClient {
         try response.subsonicResponse.throwIfNeeded()
     }
 
+    func catalogChangeState() async throws -> CatalogChangeState {
+        let response: ScanStatusEnvelope = try await request("getScanStatus")
+        try response.subsonicResponse.throwIfNeeded()
+        let status = response.subsonicResponse.scanStatus
+        return CatalogChangeState(
+            isScanning: status?.scanning ?? false,
+            itemCount: status?.count,
+            token: status?.lastScan
+        )
+    }
+
     func randomSongs(size: Int = 50) async throws -> [NavidromeSong] {
         let response: RandomSongsEnvelope = try await request(
             "getRandomSongs",
@@ -107,6 +118,36 @@ struct NavidromeClient {
         )
         try response.subsonicResponse.throwIfNeeded()
         return response.subsonicResponse.searchResult3?.artists.values ?? []
+    }
+
+    func albumMetadataPage(size: Int, offset: Int) async throws -> [NavidromeAlbum] {
+        let response: SearchEnvelope = try await request(
+            "search3",
+            queryItems: [
+                URLQueryItem(name: "query", value: ""),
+                URLQueryItem(name: "artistCount", value: "0"),
+                URLQueryItem(name: "albumCount", value: String(size)),
+                URLQueryItem(name: "albumOffset", value: String(offset)),
+                URLQueryItem(name: "songCount", value: "0")
+            ]
+        )
+        try response.subsonicResponse.throwIfNeeded()
+        return response.subsonicResponse.searchResult3?.albums.values ?? []
+    }
+
+    func songMetadataPage(size: Int, offset: Int) async throws -> [NavidromeSong] {
+        let response: SearchEnvelope = try await request(
+            "search3",
+            queryItems: [
+                URLQueryItem(name: "query", value: ""),
+                URLQueryItem(name: "artistCount", value: "0"),
+                URLQueryItem(name: "albumCount", value: "0"),
+                URLQueryItem(name: "songCount", value: String(size)),
+                URLQueryItem(name: "songOffset", value: String(offset))
+            ]
+        )
+        try response.subsonicResponse.throwIfNeeded()
+        return response.subsonicResponse.searchResult3?.songs.values ?? []
     }
 
     func albums(for artist: NavidromeArtist) async throws -> [NavidromeAlbum] {

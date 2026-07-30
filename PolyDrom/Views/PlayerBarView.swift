@@ -113,7 +113,7 @@ struct PlayerBarView: View {
                     }
                     .buttonStyle(.plain)
                     .padding(-8)
-                    .disabled(audioPlayer.currentSong == nil)
+                    .disabled(audioPlayer.currentSong == nil || !viewModel.isOnline)
                     .help(currentSongIsFavorite ? "Remove from favorites" : "Add to favorites")
                 }
 
@@ -401,6 +401,7 @@ struct PlayerSongContextMenu: View {
                 systemImage: viewModel.isFavorite(song) ? "heart.slash" : "heart"
             )
         }
+        .disabled(!viewModel.isOnline)
     }
 }
 
@@ -415,6 +416,7 @@ struct PlayerAlbumContextMenu: View {
         } label: {
             Label("Play", systemImage: "play.fill")
         }
+        .disabled(!viewModel.isOnline)
 
         Button {
             viewModel.playNext(album)
@@ -436,6 +438,7 @@ struct PlayerAlbumContextMenu: View {
                 systemImage: viewModel.isFavorite(album) ? "heart.slash" : "heart"
             )
         }
+        .disabled(!viewModel.isOnline)
 
         Divider()
 
@@ -460,6 +463,7 @@ struct PlayerArtistContextMenu: View {
         } label: {
             Label("Play", systemImage: "play.fill")
         }
+        .disabled(!viewModel.isOnline)
 
         Button {
             viewModel.playNext(artist)
@@ -481,6 +485,7 @@ struct PlayerArtistContextMenu: View {
                 systemImage: viewModel.isFavorite(artist) ? "heart.slash" : "heart"
             )
         }
+        .disabled(!viewModel.isOnline)
 
         Divider()
 

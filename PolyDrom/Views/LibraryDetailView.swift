@@ -12,7 +12,7 @@ struct LibraryDetailView: View {
     let openRoute: (LibraryRoute) -> Void
 
     var body: some View {
-        if !viewModel.isConnected {
+        if !viewModel.canBrowseLibrary {
             disconnectedContent
         } else {
             connectedContent
@@ -52,13 +52,13 @@ struct LibraryDetailView: View {
             Spacer()
 
             Button {
-                Task { await viewModel.refreshSelectedSection(force: true) }
+                Task { await viewModel.refreshMetadata() }
             } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
+                Label("Refresh Library", systemImage: "arrow.clockwise")
                     .labelStyle(.iconOnly)
             }
-            .disabled(!viewModel.isConnected || viewModel.isBusy)
-            .help("Refresh")
+            .disabled(viewModel.activeServer == nil || viewModel.isRefreshingMetadata)
+            .help("Refresh library metadata")
         }
     }
 

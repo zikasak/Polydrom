@@ -12,7 +12,7 @@ struct AppViewModelTests {
         #expect(viewModel.serverKey == nil)
 
         await viewModel.search()
-        #expect(viewModel.statusMessage == "Connect first.")
+        #expect(viewModel.statusMessage == "Select a library first.")
         await viewModel.loadLyrics(for: makeSong())
         #expect(viewModel.currentLyrics == nil)
         #expect(viewModel.lyricsMessage == "Connect to a server to load lyrics.")
@@ -42,8 +42,10 @@ struct AppViewModelTests {
         await invalid.connect(makeProfile())
         #expect(invalid.statusMessage == "Enter a valid server address.")
 
-        StubURLProtocol.handler = { _ in envelope(#"{"status":"failed","error":{"message":"Bad login"}}"#) }
-        let (failed, _, _) = makeViewModel()
+        let failedSession = StubURLProtocol.session { _ in
+            envelope(#"{"status":"failed","error":{"message":"Bad login"}}"#)
+        }
+        let (failed, _, _) = makeViewModel(session: failedSession)
         await failed.connect(makeProfile())
         #expect(!failed.isConnected)
         #expect(failed.statusMessage == "Bad login")
@@ -55,7 +57,7 @@ struct AppViewModelTests {
         nonisolated(unsafe) var starredSongIDs: Set<String> = ["favorite-song"]
         nonisolated(unsafe) var starredAlbumIDs: Set<String> = ["favorite-album"]
         nonisolated(unsafe) var starredArtistIDs: Set<String> = ["favorite-artist"]
-        StubURLProtocol.handler = { request in
+        let handler: StubURLProtocol.Handler = { request in
             let method = apiMethod(in: request)
             if method == "getCoverArt" {
                 return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
@@ -85,17 +87,22 @@ struct AppViewModelTests {
             switch method {
             case "ping":
                 return envelope(#"{"status":"ok"}"#)
+            case "getScanStatus":
+                return envelope(#"{"status":"ok","scanStatus":{"scanning":false,"lastScan":"scan-1"}}"#)
             case "getRandomSongs":
                 return envelope(#"{"status":"ok","randomSongs":{"song":[{"id":"random","title":"Random","albumId":"album"}]}}"#)
             case "search3":
-                if queryValue("artistCount", in: request) == "0" {
-                    return envelope(#"{"status":"ok","searchResult3":{"song":[{"id":"search","title":"Search","albumId":"album"}]}}"#)
+                if queryValue("artistCount", in: request) != "0" {
+                    return envelope(#"{"status":"ok","searchResult3":{"artist":[{"id":"hidden","name":"Hidden","albumCount":0},{"id":"artist","name":"Artist","albumCount":2}]}}"#)
                 }
-                return envelope(#"{"status":"ok","searchResult3":{"artist":[{"id":"hidden","name":"Hidden","albumCount":0},{"id":"artist","name":"Artist","albumCount":2}]}}"#)
+                if queryValue("albumCount", in: request) != "0" {
+                    return envelope(#"{"status":"ok","searchResult3":{"album":[{"id":"album","name":"Album","artist":"Artist","artistId":"artist","songCount":2,"created":"2026-07-30T10:00:00Z","played":"2026-07-30T11:00:00Z"}]}}"#)
+                }
+                return envelope(#"{"status":"ok","searchResult3":{"song":[{"id":"random","title":"Random"},{"id":"search","title":"Search query"},{"id":"album-song","title":"Album Song","albumId":"album","artistId":"artist"}]}}"#)
             case "getAlbumList2":
                 return envelope(#"{"status":"ok","albumList2":{"album":[{"id":"album","name":"Album","artist":"Artist","artistId":"artist","songCount":1}]}}"#)
             case "getPlaylists":
-                return envelope(#"{"status":"ok","playlists":{"playlist":[{"id":"playlist","name":"Playlist","songCount":1}]}}"#)
+                return envelope(#"{"status":"ok","playlists":{"playlist":[{"id":"playlist","name":"Playlist","songCount":1,"changed":"2026-07-30T12:00:00Z"}]}}"#)
             case "getArtist":
                 return envelope(#"{"status":"ok","artist":{"album":[{"id":"album","name":"Album","artistId":"artist"}]}}"#)
             case "getAlbum":
@@ -111,7 +118,9 @@ struct AppViewModelTests {
             }
         }
 
-        let (viewModel, store, _) = makeViewModel()
+        let (viewModel, store, _) = makeViewModel(
+            session: StubURLProtocol.session(handler: handler)
+        )
         let profile = try store.saveServer(address: "https://music.example.com", username: "user", password: "pw")
         viewModel.loadServers()
         #expect(viewModel.serverAddress == profile.address)
@@ -123,14 +132,15 @@ struct AppViewModelTests {
         #expect(viewModel.activeServer?.id == profile.id)
         #expect(viewModel.recentlyAddedAlbums.map(\.id) == ["album"])
         #expect(viewModel.recentlyPlayedAlbums.map(\.id) == ["album"])
-        #expect(viewModel.homeRandomAlbums.map(\.id) == ["album"])
-        #expect(viewModel.featuredAlbums.map(\.id) == ["album"])
+        #expect(Set(viewModel.homeRandomAlbums.map(\.id)) == ["album", "favorite-album"])
+        #expect(Set(viewModel.featuredAlbums.map(\.id)) == ["album", "favorite-album"])
         #expect(viewModel.favoriteSongs.map(\.id) == ["favorite-song"])
         await viewModel.connectToLatestServer()
 
         await viewModel.playRandomSongs(count: 10)
-        #expect(await eventually { viewModel.audioPlayer.currentSong?.id == "random" })
-        #expect(viewModel.playbackQueue.map(\.song.id) == ["random"])
+        #expect(await eventually { viewModel.audioPlayer.currentSong != nil })
+        #expect(!viewModel.playbackQueue.isEmpty)
+        #expect(viewModel.audioPlayer.currentSong?.id == viewModel.playbackQueue.first?.song.id)
 
         viewModel.searchText = "  "
         await viewModel.search()
@@ -152,8 +162,8 @@ struct AppViewModelTests {
         await viewModel.refreshSelectedSection(force: true)
         viewModel.selectedSection = .random
         await viewModel.refreshSelectedSection(force: true)
-        #expect(viewModel.albums.map(\.id) == ["album"])
-        #expect(viewModel.artists.map(\.id) == ["artist"])
+        #expect(viewModel.albums.map(\.id) == ["album", "favorite-album"])
+        #expect(viewModel.artists.map(\.id) == ["artist", "favorite-artist"])
         #expect(viewModel.playlists.map(\.id) == ["playlist"])
 
         let artist = try #require(viewModel.artists.first)
@@ -180,26 +190,23 @@ struct AppViewModelTests {
         let remoteArtist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"remote-artist","name":"Remote","artistImageUrl":"https://images.example/artist.jpg"}"#.utf8))
         #expect(viewModel.coverArtResource(for: remoteArtist)?.url.host == "images.example")
 
-        let newSong = makeSong(id: "new-song", title: "New")
-        viewModel.toggleFavorite(newSong)
+        viewModel.toggleFavorite(song)
         #expect(await eventually { viewModel.statusMessage == "Added to favorites" })
-        #expect(viewModel.isFavorite(newSong))
-        viewModel.toggleFavorite(newSong)
+        #expect(viewModel.isFavorite(song))
+        viewModel.toggleFavorite(song)
         #expect(await eventually { viewModel.statusMessage == "Removed from favorites" })
-        #expect(!viewModel.isFavorite(newSong))
+        #expect(!viewModel.isFavorite(song))
 
-        let newAlbum = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"new-album","name":"New Album"}"#.utf8))
-        viewModel.toggleFavorite(newAlbum)
+        viewModel.toggleFavorite(album)
         #expect(await eventually { viewModel.statusMessage == "Added album to favorites" })
-        #expect(viewModel.isFavorite(newAlbum))
-        viewModel.toggleFavorite(newAlbum)
+        #expect(viewModel.isFavorite(album))
+        viewModel.toggleFavorite(album)
         #expect(await eventually { viewModel.statusMessage == "Removed album from favorites" })
 
-        let newArtist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"new-artist","name":"New Artist","albumCount":1}"#.utf8))
-        viewModel.toggleFavorite(newArtist)
+        viewModel.toggleFavorite(artist)
         #expect(await eventually { viewModel.statusMessage == "Added artist to favorites" })
-        #expect(viewModel.isFavorite(newArtist))
-        viewModel.toggleFavorite(newArtist)
+        #expect(viewModel.isFavorite(artist))
+        viewModel.toggleFavorite(artist)
         #expect(await eventually { viewModel.statusMessage == "Removed artist from favorites" })
 
         let currentEntry = PlaybackQueueEntry(song: song)
@@ -243,5 +250,57 @@ struct AppViewModelTests {
         viewModel.favoriteArtists = []
         #expect(viewModel.artistForNavigation(from: song)?.name == "Artist")
         #expect(viewModel.artistForNavigation(from: makeSong(artist: nil)) == nil)
+    }
+
+    @Test func cachedLibraryLoadsBeforeFailedNetworkingAndRemainsBrowsableOffline() async throws {
+        let handler: StubURLProtocol.Handler = { _ in
+            envelope(#"{"status":"failed","error":{"message":"Server unavailable"}}"#)
+        }
+        let (viewModel, store, _) = makeViewModel(
+            session: StubURLProtocol.session(handler: handler)
+        )
+        let profile = makeProfile()
+        let artist = NavidromeArtist(id: "artist", name: "Cached Artist", albumCount: 1)
+        let album = NavidromeAlbum(id: "album", name: "Cached Album", artist: artist.name, artistId: artist.id)
+        let song = NavidromeSong(
+            id: "song",
+            title: "Cached Song",
+            artist: artist.name,
+            album: album.name,
+            albumId: album.id,
+            artistId: artist.id,
+            track: 1
+        )
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [artist],
+                albums: [album],
+                songs: [song],
+                playlists: [],
+                favorites: FavoriteMetadata(songIDs: [song.id]),
+                catalogToken: "scan",
+                checkedAt: Date()
+            ),
+            serverKey: profile.serverKey
+        )
+
+        await viewModel.connect(profile)
+
+        #expect(!viewModel.isOnline)
+        #expect(viewModel.hasCachedLibrary)
+        #expect(viewModel.canBrowseLibrary)
+        #expect(viewModel.albums.map(\.id) == [album.id])
+        #expect(viewModel.artists.map(\.id) == [artist.id])
+        #expect(viewModel.favoriteSongs.map(\.id) == [song.id])
+
+        viewModel.searchText = "cached"
+        await viewModel.search()
+        #expect(viewModel.searchResults.map(\.id) == [song.id])
+        await viewModel.loadSongs(for: album)
+        #expect(viewModel.albumSongs.map(\.id) == [song.id])
+
+        viewModel.toggleFavorite(song)
+        #expect(viewModel.isFavorite(song))
+        #expect(viewModel.statusMessage == "Connect to the server to update favorites.")
     }
 }

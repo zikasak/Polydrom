@@ -102,14 +102,14 @@ struct SidebarView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(viewModel.selectedSection == section ? .primary : .secondary)
-                .disabled(!viewModel.isConnected)
+                .disabled(!viewModel.canBrowseLibrary)
             }
         }
     }
 
     private var statusLine: some View {
         HStack(spacing: 8) {
-            if viewModel.isBusy {
+            if viewModel.isBusy || viewModel.isRefreshingMetadata {
                 ProgressView()
                     .controlSize(.small)
             }

@@ -62,6 +62,7 @@ struct SongRowView: View {
                     .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
+            .disabled(!viewModel.isOnline)
             .help("Play")
 
             CoverArtView(resource: viewModel.coverArtResource(for: song, size: 96), size: 38)
@@ -92,6 +93,7 @@ struct SongRowView: View {
                     .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
+            .disabled(!viewModel.isOnline)
             .help(viewModel.isFavorite(song) ? "Remove from favorites" : "Add to favorites")
         }
         .padding(.vertical, 4)
@@ -102,7 +104,9 @@ struct SongRowView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-            viewModel.play(queue, startingAt: queueIndex)
+            if viewModel.isOnline {
+                viewModel.play(queue, startingAt: queueIndex)
+            }
         }
         .contextMenu {
             Button {
@@ -110,6 +114,7 @@ struct SongRowView: View {
             } label: {
                 Label("Play", systemImage: "play.fill")
             }
+            .disabled(!viewModel.isOnline)
 
             Button {
                 viewModel.playNext([song])
@@ -133,6 +138,7 @@ struct SongRowView: View {
                     systemImage: viewModel.isFavorite(song) ? "heart.slash" : "heart"
                 )
             }
+            .disabled(!viewModel.isOnline)
 
             if navigationAlbum != nil || navigationArtist != nil {
                 Divider()

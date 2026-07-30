@@ -26,6 +26,7 @@ typealias PlaylistsEnvelope = SubsonicEnvelope<PlaylistsResponse>
 typealias PlaylistEnvelope = SubsonicEnvelope<PlaylistResponse>
 typealias LyricsEnvelope = SubsonicEnvelope<LyricsResponse>
 typealias StarredEnvelope = SubsonicEnvelope<StarredResponse>
+typealias ScanStatusEnvelope = SubsonicEnvelope<ScanStatusResponse>
 
 protocol SubsonicResponse: Decodable {
     var status: String { get }
@@ -105,6 +106,43 @@ struct StarredResponse: SubsonicResponse {
     let starred2: StarredContainer?
 }
 
+struct ScanStatusResponse: SubsonicResponse {
+    let status: String
+    let error: SubsonicServerError?
+    let scanStatus: ScanStatus?
+}
+
+struct ScanStatus: Decodable {
+    let scanning: Bool
+    let count: Int?
+    let lastScan: String?
+
+    enum CodingKeys: String, CodingKey {
+        case scanning
+        case count
+        case lastScan
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        scanning = (try? container.decode(Bool.self, forKey: .scanning)) ?? false
+        if let value = try? container.decode(Int.self, forKey: .count) {
+            count = value
+        } else if let value = try? container.decode(String.self, forKey: .count) {
+            count = Int(value)
+        } else {
+            count = nil
+        }
+        if let value = try? container.decode(String.self, forKey: .lastScan) {
+            lastScan = value
+        } else if let value = try? container.decode(Double.self, forKey: .lastScan) {
+            lastScan = String(value)
+        } else {
+            lastScan = nil
+        }
+    }
+}
+
 struct StarredContainer: Decodable {
     let artists: FlexibleArray<NavidromeArtist>
     let albums: FlexibleArray<NavidromeAlbum>
@@ -139,16 +177,19 @@ struct LyricsList: Decodable {
 
 struct SearchResult: Decodable {
     let artists: FlexibleArray<NavidromeArtist>
+    let albums: FlexibleArray<NavidromeAlbum>
     let songs: FlexibleArray<NavidromeSong>
 
     enum CodingKeys: String, CodingKey {
         case artists = "artist"
+        case albums = "album"
         case songs = "song"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         artists = (try? container.decode(FlexibleArray<NavidromeArtist>.self, forKey: .artists)) ?? FlexibleArray(values: [])
+        albums = (try? container.decode(FlexibleArray<NavidromeAlbum>.self, forKey: .albums)) ?? FlexibleArray(values: [])
         songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
     }
 }

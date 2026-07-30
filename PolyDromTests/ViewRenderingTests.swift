@@ -50,18 +50,21 @@ struct ViewRenderingTests {
     }
 
     @Test func connectedLibraryDetailRendersEverySection() async throws {
-        StubURLProtocol.handler = { request in
+        let handler: StubURLProtocol.Handler = { request in
             if apiMethod(in: request) == "getCoverArt" {
                 return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
             }
             switch apiMethod(in: request) {
             case "ping": return envelope(#"{"status":"ok"}"#)
+            case "getScanStatus": return envelope(#"{"status":"ok","scanStatus":{"scanning":false,"lastScan":"scan"}}"#)
             case "getStarred2": return envelope(#"{"status":"ok","starred2":{}}"#)
             case "getRandomSongs": return envelope(#"{"status":"ok","randomSongs":{"song":[]}}"#)
+            case "getPlaylists": return envelope(#"{"status":"ok","playlists":{"playlist":[]}}"#)
+            case "search3": return envelope(#"{"status":"ok","searchResult3":{}}"#)
             default: return envelope(#"{"status":"ok"}"#)
             }
         }
-        let (viewModel, _, _) = makeViewModel()
+        let (viewModel, _, _) = makeViewModel(session: StubURLProtocol.session(handler: handler))
         await viewModel.connect(makeProfile())
         let song = makeSong(albumId: nil, artistId: nil)
         let album = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"album","name":"Album"}"#.utf8))

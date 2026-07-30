@@ -16,6 +16,7 @@ struct ArtistBrowserView: View {
             selectedArtistID: viewModel.selectedArtist?.id,
             favoriteArtistIDs: viewModel.favoriteArtistIDs,
             serverKey: viewModel.serverKey,
+            isOnline: viewModel.isOnline,
             coverArtResource: { viewModel.coverArtResource(for: $0, size: 220) },
             play: viewModel.play,
             playNext: viewModel.playNext,
@@ -35,6 +36,7 @@ struct FavoriteArtistBrowserView: View {
             selectedArtistID: viewModel.selectedArtist?.id,
             favoriteArtistIDs: viewModel.favoriteArtistIDs,
             serverKey: viewModel.serverKey,
+            isOnline: viewModel.isOnline,
             coverArtResource: { viewModel.coverArtResource(for: $0, size: 220) },
             play: viewModel.play,
             playNext: viewModel.playNext,
@@ -50,6 +52,7 @@ private struct ArtistBrowserGrid: View, Equatable {
     let selectedArtistID: String?
     let favoriteArtistIDs: Set<String>
     let serverKey: String?
+    let isOnline: Bool
     let coverArtResource: (NavidromeArtist) -> CoverArtResource?
     let play: (NavidromeArtist) -> Void
     let playNext: (NavidromeArtist) -> Void
@@ -62,6 +65,7 @@ private struct ArtistBrowserGrid: View, Equatable {
             && lhs.selectedArtistID == rhs.selectedArtistID
             && lhs.favoriteArtistIDs == rhs.favoriteArtistIDs
             && lhs.serverKey == rhs.serverKey
+            && lhs.isOnline == rhs.isOnline
     }
 
     var body: some View {
@@ -88,6 +92,7 @@ private struct ArtistBrowserGrid: View, Equatable {
                     .background(.regularMaterial, in: Circle())
                 }
                 .buttonStyle(.borderless)
+                .disabled(!isOnline)
                 .padding(15)
                 .help(favoriteArtistIDs.contains(artist.id) ? "Remove artist from favorites" : "Add artist to favorites")
             }
@@ -97,6 +102,7 @@ private struct ArtistBrowserGrid: View, Equatable {
                 } label: {
                     Label("Play", systemImage: "play.fill")
                 }
+                .disabled(!isOnline)
 
                 Button {
                     playNext(artist)
@@ -118,6 +124,7 @@ private struct ArtistBrowserGrid: View, Equatable {
                         systemImage: favoriteArtistIDs.contains(artist.id) ? "heart.slash" : "heart"
                     )
                 }
+                .disabled(!isOnline)
 
                 Divider()
 
@@ -163,6 +170,7 @@ struct ArtistDetailView: View {
                         systemImage: viewModel.isFavorite(artist) ? "heart.fill" : "heart"
                     )
                 }
+                .disabled(!viewModel.isOnline)
                 .help(viewModel.isFavorite(artist) ? "Remove artist from favorites" : "Add artist to favorites")
             }
 

@@ -187,6 +187,7 @@ struct PolyDromTests {
 
         viewModel.playbackQueue = [first, second, laterEntry]
         viewModel.currentPlaybackQueueEntryID = second.id
+        viewModel.isOnline = true
         audioPlayer.currentSong = duplicate
 
         #expect(first.id != second.id)

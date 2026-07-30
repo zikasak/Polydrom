@@ -18,6 +18,10 @@ final class AppViewModel: ObservableObject {
     @Published var selectedSection: LibrarySection = .home
     @Published var statusMessage = "Disconnected"
     @Published var isBusy = false
+    @Published var isOnline = false
+    @Published var hasCachedLibrary = false
+    @Published var isRefreshingMetadata = false
+    @Published var lastMetadataCheckAt: Date?
     @Published var searchText = ""
     @Published var searchResults: [NavidromeSong] = []
     @Published var randomSongs: [NavidromeSong] = []
@@ -52,7 +56,13 @@ final class AppViewModel: ObservableObject {
     private let store: LibraryStore
     private let clientFactory: @MainActor (ServerProfile) -> NavidromeClient?
     private let coverArtCache: CoverArtCache
+    private let syncCoordinator: LibrarySyncCoordinator
     private var client: NavidromeClient?
+    private var metadataMonitorTask: Task<Void, Never>?
+    private var metadataSyncTask: Task<MetadataSyncOutcome, Error>?
+    private var metadataRefreshID: UUID?
+    private var scanRetryTask: Task<Void, Never>?
+    private var isApplicationActive = false
     private var lyricsSongID: String?
     private var albumCoverPrefetchTask: Task<Void, Never>?
     private var artistCoverPrefetchTask: Task<Void, Never>?
@@ -61,7 +71,6 @@ final class AppViewModel: ObservableObject {
     private var loadedArtistAlbumsID: String?
     private var loadedAlbumSongsID: String?
     private var loadedPlaylistSongsID: String?
-    private let libraryPageSize = 200
     private let coverArtPrefetchLimit = 200
     private let thumbnailCoverSize = 96
     private let gridCoverSize = 220
@@ -73,7 +82,11 @@ final class AppViewModel: ObservableObject {
     private var songFavoriteUpdatesInFlight = Set<String>()
 
     var isConnected: Bool {
-        activeServer != nil && client != nil
+        activeServer != nil && isOnline
+    }
+
+    var canBrowseLibrary: Bool {
+        activeServer != nil && (isOnline || hasCachedLibrary)
     }
 
     var serverKey: String? {
@@ -81,10 +94,12 @@ final class AppViewModel: ObservableObject {
     }
 
     init() {
-        self.store = LibraryStore()
+        let store = LibraryStore()
+        self.store = store
         self.audioPlayer = AudioPlayer()
         self.clientFactory = { NavidromeClient(profile: $0) }
         self.coverArtCache = .shared
+        self.syncCoordinator = LibrarySyncCoordinator(store: store)
         configureAudioPlayer()
         loadServers()
     }
@@ -99,6 +114,7 @@ final class AppViewModel: ObservableObject {
         self.audioPlayer = audioPlayer
         self.clientFactory = clientFactory
         self.coverArtCache = coverArtCache
+        self.syncCoordinator = LibrarySyncCoordinator(store: store)
         configureAudioPlayer()
         loadServers()
     }
@@ -145,44 +161,70 @@ final class AppViewModel: ObservableObject {
         }
 
         let previousServerKey = activeServer?.serverKey
+        cancelMetadataRefresh()
+        scanRetryTask?.cancel()
+        if previousServerKey != profile.serverKey {
+            clearRemoteLibraryState()
+        }
+        activeServer = profile
+        client = nextClient
+        isOnline = false
+        serverAddress = profile.address
+        username = profile.username
+        password = profile.password
+        await reloadCachedLibrary()
+
         isBusy = true
         defer { isBusy = false }
 
         do {
             try await nextClient.ping()
-            client = nextClient
-            activeServer = profile
-            if previousServerKey != profile.serverKey {
-                clearRemoteLibraryState()
-            }
-            serverAddress = profile.address
-            username = profile.username
-            password = profile.password
+            guard activeServer?.serverKey == profile.serverKey else { return }
+            isOnline = true
             try store.touchServer(profile)
             loadServers()
-            do {
-                try await refreshLibraryLists()
-                statusMessage = "Connected to \(profile.displayName)"
-            } catch {
-                statusMessage = "Connected to \(profile.displayName), but favorites could not sync: \(error.localizedDescription)"
-            }
-            await refreshSelectedSection()
+            await refreshMetadata()
         } catch {
-            client = nil
-            activeServer = nil
-            statusMessage = error.localizedDescription
+            guard activeServer?.serverKey == profile.serverKey else { return }
+            isOnline = false
+            statusMessage = hasCachedLibrary
+                ? "Offline — showing cached library. \(error.localizedDescription)"
+                : error.localizedDescription
         }
     }
 
     func deleteServer(_ profile: ServerProfile) {
+        let refreshToDrain: Task<MetadataSyncOutcome, Error>?
+        if activeServer?.id == profile.id {
+            refreshToDrain = metadataSyncTask
+            metadataMonitorTask?.cancel()
+            cancelMetadataRefresh()
+            scanRetryTask?.cancel()
+        } else {
+            refreshToDrain = nil
+        }
+
         do {
             try store.deleteServer(profile)
             if activeServer?.id == profile.id {
                 activeServer = nil
                 client = nil
+                isOnline = false
+                hasCachedLibrary = false
                 audioPlayer.stop()
+                clearRemoteLibraryState()
             }
             loadServers()
+            if let refreshToDrain {
+                Task { [weak self] in
+                    _ = try? await refreshToDrain.value
+                    guard let self else { return }
+                    // A background reconciliation that was already committing
+                    // when cancellation arrived must not recreate this profile's cache.
+                    try? self.store.deleteServer(profile)
+                    self.loadServers()
+                }
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -194,7 +236,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func refreshSelectedSection(force: Bool = false) async {
-        guard isConnected else { return }
+        guard canBrowseLibrary else { return }
 
         switch selectedSection {
         case .home:
@@ -240,41 +282,33 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadHome() async {
-        guard let client else { return }
+        guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
 
         do {
-            async let addedRequest = client.albumPage(type: .newest, size: 12, offset: 0)
-            async let playedRequest = client.albumPage(type: .recent, size: 12, offset: 0)
-            async let randomRequest = client.albumPage(type: .random, size: 12, offset: 0)
-            async let featuredRequest = client.albumPage(type: .random, size: 5, offset: 0)
-
-            let (added, played, random, featured) = try await (
-                addedRequest,
-                playedRequest,
-                randomRequest,
-                featuredRequest
-            )
-            let allAlbums = added + played + random + featured
+            let home = try await store.homeMetadata(serverKey: serverKey)
+            let allAlbums = home.recentlyAdded + home.recentlyPlayed + home.random + home.featured
             await warmCachedAlbumCovers(allAlbums)
             guard !Task.isCancelled else { return }
 
-            recentlyAddedAlbums = added
-            recentlyPlayedAlbums = played
-            homeRandomAlbums = random
-            featuredAlbums = featured
+            recentlyAddedAlbums = home.recentlyAdded
+            recentlyPlayedAlbums = home.recentlyPlayed
+            homeRandomAlbums = home.random
+            featuredAlbums = home.featured
             hasLoadedHome = true
             prefetchAlbumCovers(allAlbums)
-            statusMessage = allAlbums.isEmpty ? "No albums returned for Home." : "Home updated"
+            if allAlbums.isEmpty {
+                statusMessage = "No cached albums for Home."
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
     }
 
     func playRandomSongs(count: Int) async {
-        guard let client else {
-            statusMessage = "Connect first."
+        guard let serverKey else {
+            statusMessage = "Select a library first."
             return
         }
 
@@ -282,13 +316,12 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            let songs = try await client.randomSongs(size: count)
+            let songs = try await store.randomSongs(serverKey: serverKey, count: count)
             guard !songs.isEmpty else {
-                statusMessage = "No random songs returned."
+                statusMessage = "No cached songs available."
                 return
             }
 
-            try cache(songs)
             await warmCachedSongCovers(songs)
             prefetchSongCovers(songs)
             play(songs, startingAt: 0)
@@ -298,8 +331,8 @@ final class AppViewModel: ObservableObject {
     }
 
     func search() async {
-        guard let client else {
-            statusMessage = "Connect first."
+        guard let serverKey else {
+            statusMessage = "Select a library first."
             return
         }
 
@@ -314,8 +347,7 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            let results = try await client.searchSongs(matching: query)
-            try cache(results)
+            let results = try await store.searchSongs(query, serverKey: serverKey)
             await warmCachedSongCovers(results)
             searchResults = results
             prefetchSongCovers(results)
@@ -326,13 +358,12 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadRandomSongs() async {
-        guard let client else { return }
+        guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
 
         do {
-            let songs = try await client.randomSongs()
-            try cache(songs)
+            let songs = try await store.randomSongs(serverKey: serverKey, count: 50)
             await warmCachedSongCovers(songs)
             randomSongs = songs
             prefetchSongCovers(songs)
@@ -343,92 +374,52 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadAlbums() async {
-        guard let client else { return }
+        guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
 
         do {
-            var loadedAlbums: [NavidromeAlbum] = []
-            var seenAlbumIDs = Set<String>()
-            var offset = 0
-
-            while true {
-                let page = try await client.albumPage(type: .newest, size: libraryPageSize, offset: offset)
-                guard !Task.isCancelled else { return }
-
-                let newAlbums = page.filter { seenAlbumIDs.insert($0.id).inserted }
-                await warmCachedAlbumCovers(newAlbums)
-                loadedAlbums.append(contentsOf: newAlbums)
-                albums = loadedAlbums
-
-                if offset == 0 {
-                    prefetchAlbumCovers(loadedAlbums)
-                }
-
-                if page.count < libraryPageSize || newAlbums.isEmpty {
-                    statusMessage = loadedAlbums.isEmpty ? "No albums returned." : "Loaded \(loadedAlbums.count) albums"
-                    return
-                }
-
-                statusMessage = "Loaded \(loadedAlbums.count) albums..."
-                offset += libraryPageSize
-            }
+            let loadedAlbums = try await store.albums(serverKey: serverKey)
+            await warmCachedAlbumCovers(loadedAlbums)
+            albums = loadedAlbums
+            prefetchAlbumCovers(loadedAlbums)
+            statusMessage = loadedAlbums.isEmpty ? "No cached albums." : "Loaded \(loadedAlbums.count) albums"
         } catch {
             statusMessage = error.localizedDescription
         }
     }
 
     func loadArtists() async {
-        guard let client else { return }
+        guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
 
         do {
-            var loadedArtists: [NavidromeArtist] = []
-            var seenArtistIDs = Set<String>()
-            var offset = 0
-
-            while true {
-                let page = try await client.artistPage(size: libraryPageSize, offset: offset)
-                guard !Task.isCancelled else { return }
-
-                let newArtists = page.filter { seenArtistIDs.insert($0.id).inserted }
-                loadedArtists.append(contentsOf: newArtists)
-                await warmCachedArtistCovers(newArtists)
-                artists = sortedVisibleArtists(loadedArtists)
-
-                if offset == 0 {
-                    prefetchArtistCovers(loadedArtists)
-                }
-
-                if page.count < libraryPageSize || newArtists.isEmpty {
-                    statusMessage = artists.isEmpty ? "No artists returned." : "Loaded \(artists.count) artists"
-                    return
-                }
-
-                statusMessage = "Loaded \(artists.count) artists..."
-                offset += libraryPageSize
-            }
+            let loadedArtists = try await store.artists(serverKey: serverKey)
+            await warmCachedArtistCovers(loadedArtists)
+            artists = sortedVisibleArtists(loadedArtists)
+            prefetchArtistCovers(loadedArtists)
+            statusMessage = artists.isEmpty ? "No cached artists." : "Loaded \(artists.count) artists"
         } catch {
             statusMessage = error.localizedDescription
         }
     }
 
     func loadPlaylists() async {
-        guard let client else { return }
+        guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
 
         do {
-            playlists = try await client.playlists()
-            statusMessage = playlists.isEmpty ? "No playlists returned." : "Loaded playlists"
+            playlists = try await store.playlists(serverKey: serverKey)
+            statusMessage = playlists.isEmpty ? "No cached playlists." : "Loaded playlists"
         } catch {
             statusMessage = error.localizedDescription
         }
     }
 
     func loadAlbums(for artist: NavidromeArtist, force: Bool = false) async {
-        guard let client else { return }
+        guard let serverKey else { return }
         if !force, loadedArtistAlbumsID == artist.id {
             if selectedArtist?.id != artist.id {
                 selectedArtist = artist
@@ -446,7 +437,7 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            let albums = try await client.albums(for: artist)
+            let albums = try await store.albums(serverKey: serverKey, artistID: artist.id)
             await warmCachedAlbumCovers(albums)
             artistAlbums = albums
             guard !Task.isCancelled else { return }
@@ -459,7 +450,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadSongs(for album: NavidromeAlbum, force: Bool = false) async {
-        guard let client else { return }
+        guard let serverKey else { return }
         if !force, loadedAlbumSongsID == album.id {
             if selectedAlbum?.id != album.id {
                 selectedAlbum = album
@@ -474,8 +465,7 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            let songs = try await client.songs(for: album)
-            try cache(songs)
+            let songs = try await store.songs(serverKey: serverKey, albumID: album.id)
             await warmCachedSongCovers(songs)
             albumSongs = songs
             guard !Task.isCancelled else { return }
@@ -488,7 +478,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadSongs(for playlist: NavidromePlaylist, force: Bool = false) async {
-        guard let client else { return }
+        guard let serverKey else { return }
         if !force, loadedPlaylistSongsID == playlist.id {
             selectedPlaylist = playlist
             return
@@ -501,8 +491,7 @@ final class AppViewModel: ObservableObject {
         defer { isBusy = false }
 
         do {
-            let songs = try await client.songs(for: playlist)
-            try cache(songs)
+            let songs = try await store.songs(serverKey: serverKey, playlistID: playlist.id)
             await warmCachedSongCovers(songs)
             playlistSongs = songs
             guard !Task.isCancelled else { return }
@@ -532,14 +521,15 @@ final class AppViewModel: ObservableObject {
     }
 
     func play(_ album: NavidromeAlbum) {
-        performQueueAction(.play) { client in
-            try await client.songs(for: album)
+        performQueueAction(.play) {
+            guard let serverKey = self.serverKey else { return [] }
+            return try await self.store.songs(serverKey: serverKey, albumID: album.id)
         }
     }
 
     func play(_ artist: NavidromeArtist) {
-        performQueueAction(.play) { client in
-            try await self.songs(for: artist, using: client)
+        performQueueAction(.play) {
+            try await self.cachedSongs(for: artist)
         }
     }
 
@@ -557,14 +547,15 @@ final class AppViewModel: ObservableObject {
     }
 
     func playNext(_ album: NavidromeAlbum) {
-        performQueueAction(.next) { client in
-            try await client.songs(for: album)
+        performQueueAction(.next) {
+            guard let serverKey = self.serverKey else { return [] }
+            return try await self.store.songs(serverKey: serverKey, albumID: album.id)
         }
     }
 
     func playNext(_ artist: NavidromeArtist) {
-        performQueueAction(.next) { client in
-            try await self.songs(for: artist, using: client)
+        performQueueAction(.next) {
+            try await self.cachedSongs(for: artist)
         }
     }
 
@@ -576,14 +567,15 @@ final class AppViewModel: ObservableObject {
     }
 
     func addToQueue(_ album: NavidromeAlbum) {
-        performQueueAction(.end) { client in
-            try await client.songs(for: album)
+        performQueueAction(.end) {
+            guard let serverKey = self.serverKey else { return [] }
+            return try await self.store.songs(serverKey: serverKey, albumID: album.id)
         }
     }
 
     func addToQueue(_ artist: NavidromeArtist) {
-        performQueueAction(.end) { client in
-            try await self.songs(for: artist, using: client)
+        performQueueAction(.end) {
+            try await self.cachedSongs(for: artist)
         }
     }
 
@@ -592,8 +584,8 @@ final class AppViewModel: ObservableObject {
         replacingQueueWith queue: [PlaybackQueueEntry]? = nil,
         shouldHydrateSong: Bool
     ) async {
-        guard let client, let serverKey else {
-            statusMessage = "Connect first."
+        guard isOnline, let client, let serverKey else {
+            statusMessage = "Connect to the server to play music."
             return
         }
 
@@ -640,10 +632,10 @@ final class AppViewModel: ObservableObject {
 
     private func performQueueAction(
         _ action: QueueAction,
-        loadSongs: @escaping (NavidromeClient) async throws -> [NavidromeSong]
+        loadSongs: @escaping () async throws -> [NavidromeSong]
     ) {
-        guard let client else {
-            statusMessage = "Connect first."
+        guard serverKey != nil else {
+            statusMessage = "Select a library first."
             return
         }
 
@@ -652,13 +644,12 @@ final class AppViewModel: ObservableObject {
             defer { isBusy = false }
 
             do {
-                let songs = try await loadSongs(client)
+                let songs = try await loadSongs()
                 guard !songs.isEmpty else {
                     statusMessage = "No songs found."
                     return
                 }
 
-                try cache(songs)
                 await warmCachedSongCovers(songs)
                 prefetchSongCovers(songs)
 
@@ -676,11 +667,12 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func songs(for artist: NavidromeArtist, using client: NavidromeClient) async throws -> [NavidromeSong] {
+    private func cachedSongs(for artist: NavidromeArtist) async throws -> [NavidromeSong] {
+        guard let serverKey else { return [] }
         var songs: [NavidromeSong] = []
-        for album in try await client.albums(for: artist) {
+        for album in try await store.albums(serverKey: serverKey, artistID: artist.id) {
             try Task.checkCancellation()
-            songs.append(contentsOf: try await client.songs(for: album))
+            songs.append(contentsOf: try await store.songs(serverKey: serverKey, albumID: album.id))
         }
         return songs
     }
@@ -704,17 +696,19 @@ final class AppViewModel: ObservableObject {
     }
 
     func canPlayPreviousTrack() -> Bool {
+        guard isOnline else { return false }
         guard let currentIndex = currentPlaybackQueueIndex else { return false }
         return playbackQueue.indices.contains(currentIndex - 1)
     }
 
     func canPlayNextTrack() -> Bool {
+        guard isOnline else { return false }
         guard let currentIndex = currentPlaybackQueueIndex else { return false }
         return playbackQueue.indices.contains(currentIndex + 1)
     }
 
     func loadLyrics(for song: NavidromeSong, force: Bool = false) async {
-        guard let client else {
+        guard isOnline, let client else {
             currentLyrics = nil
             lyricsMessage = "Connect to a server to load lyrics."
             return
@@ -761,7 +755,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleFavorite(_ song: NavidromeSong) {
-        guard let client, let serverKey, songFavoriteUpdatesInFlight.insert(song.id).inserted else { return }
+        guard isOnline, let client, let serverKey, songFavoriteUpdatesInFlight.insert(song.id).inserted else {
+            if !isOnline { statusMessage = "Connect to the server to update favorites." }
+            return
+        }
 
         let wasFavorite = favoriteIDs.contains(song.id)
         let nextValue = !wasFavorite
@@ -780,10 +777,11 @@ final class AppViewModel: ObservableObject {
 
             guard let self, self.serverKey == serverKey else { return }
             do {
-                try await self.refreshFavorites()
+                try await self.store.setFavorite(nextValue, songID: song.id, serverKey: serverKey)
+                try await self.loadCachedFavorites()
                 self.statusMessage = nextValue ? "Added to favorites" : "Removed from favorites"
             } catch {
-                self.statusMessage = "Favorite updated in Navidrome, but could not refresh: \(error.localizedDescription)"
+                self.statusMessage = "Favorite updated in Navidrome, but could not cache it: \(error.localizedDescription)"
             }
             self.songFavoriteUpdatesInFlight.remove(song.id)
         }
@@ -794,7 +792,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleFavorite(_ album: NavidromeAlbum) {
-        guard let client, let serverKey, albumFavoriteUpdatesInFlight.insert(album.id).inserted else { return }
+        guard isOnline, let client, let serverKey, albumFavoriteUpdatesInFlight.insert(album.id).inserted else {
+            if !isOnline { statusMessage = "Connect to the server to update favorites." }
+            return
+        }
 
         let wasFavorite = favoriteAlbumIDs.contains(album.id)
         let nextValue = !wasFavorite
@@ -813,10 +814,11 @@ final class AppViewModel: ObservableObject {
 
             guard let self, self.serverKey == serverKey else { return }
             do {
-                try await self.refreshFavorites()
+                try await self.store.setFavorite(nextValue, albumID: album.id, serverKey: serverKey)
+                try await self.loadCachedFavorites()
                 self.statusMessage = nextValue ? "Added album to favorites" : "Removed album from favorites"
             } catch {
-                self.statusMessage = "Favorite updated in Navidrome, but could not refresh: \(error.localizedDescription)"
+                self.statusMessage = "Favorite updated in Navidrome, but could not cache it: \(error.localizedDescription)"
             }
             self.albumFavoriteUpdatesInFlight.remove(album.id)
         }
@@ -827,7 +829,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleFavorite(_ artist: NavidromeArtist) {
-        guard let client, let serverKey, artistFavoriteUpdatesInFlight.insert(artist.id).inserted else { return }
+        guard isOnline, let client, let serverKey, artistFavoriteUpdatesInFlight.insert(artist.id).inserted else {
+            if !isOnline { statusMessage = "Connect to the server to update favorites." }
+            return
+        }
 
         let wasFavorite = favoriteArtistIDs.contains(artist.id)
         let nextValue = !wasFavorite
@@ -846,10 +851,11 @@ final class AppViewModel: ObservableObject {
 
             guard let self, self.serverKey == serverKey else { return }
             do {
-                try await self.refreshFavorites()
+                try await self.store.setFavorite(nextValue, artistID: artist.id, serverKey: serverKey)
+                try await self.loadCachedFavorites()
                 self.statusMessage = nextValue ? "Added artist to favorites" : "Removed artist from favorites"
             } catch {
-                self.statusMessage = "Favorite updated in Navidrome, but could not refresh: \(error.localizedDescription)"
+                self.statusMessage = "Favorite updated in Navidrome, but could not cache it: \(error.localizedDescription)"
             }
             self.artistFavoriteUpdatesInFlight.remove(artist.id)
         }
@@ -888,26 +894,20 @@ final class AppViewModel: ObservableObject {
             ?? fallback
     }
 
-    private func cache(_ songs: [NavidromeSong]) throws {
-        guard let serverKey else { return }
-        try store.upsertSongs(songs, serverKey: serverKey)
-    }
-
-    private func refreshLibraryLists() async throws {
-        try await refreshFavorites()
-        try await refreshRecentSongs()
-    }
-
     private func refreshFavorites() async throws {
-        guard let client, let serverKey else { return }
-        let starredItems = try await client.starredItems()
-        let loadedFavoriteArtists = starredItems.artists
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        let loadedFavoriteAlbums = starredItems.albums
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        let loadedFavoriteSongs = starredItems.songs
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        try store.upsertSongs(loadedFavoriteSongs, serverKey: serverKey)
+        try await loadCachedFavorites()
+    }
+
+    private func loadCachedFavorites() async throws {
+        guard let serverKey else { return }
+        async let artistsRequest = store.favoriteArtists(serverKey: serverKey)
+        async let albumsRequest = store.favoriteAlbums(serverKey: serverKey)
+        async let songsRequest = store.favoriteSongs(serverKey: serverKey)
+        let (loadedFavoriteArtists, loadedFavoriteAlbums, loadedFavoriteSongs) = try await (
+            artistsRequest,
+            albumsRequest,
+            songsRequest
+        )
         await warmCachedArtistCovers(loadedFavoriteArtists)
         await warmCachedAlbumCovers(loadedFavoriteAlbums)
         await warmCachedSongCovers(loadedFavoriteSongs)
@@ -925,11 +925,188 @@ final class AppViewModel: ObservableObject {
 
     private func refreshRecentSongs() async throws {
         guard let serverKey else { return }
-        let loadedRecentSongs = try store.recentSongs(serverKey: serverKey)
+        let loadedRecentSongs = try await store.recentSongsAsync(serverKey: serverKey)
         await warmCachedSongCovers(loadedRecentSongs)
         guard self.serverKey == serverKey else { return }
         recentSongs = loadedRecentSongs
         prefetchSongCovers(loadedRecentSongs)
+    }
+
+    func refreshMetadata() async {
+        guard metadataRefreshID == nil, let client, let serverKey else { return }
+        let wasOnline = isOnline
+        let refreshID = UUID()
+        metadataRefreshID = refreshID
+        isRefreshingMetadata = true
+        defer {
+            if metadataRefreshID == refreshID {
+                metadataRefreshID = nil
+                metadataSyncTask = nil
+                isRefreshingMetadata = false
+            }
+        }
+
+        do {
+            if !isOnline {
+                try await client.ping()
+                guard self.serverKey == serverKey else { return }
+                isOnline = true
+            }
+
+            statusMessage = hasCachedLibrary
+                ? "Checking library metadata…"
+                : "Building local metadata cache…"
+            let syncTask = Task {
+                try await syncCoordinator.synchronize(client: client, serverKey: serverKey)
+            }
+            metadataSyncTask = syncTask
+            let outcome = try await syncTask.value
+            guard self.serverKey == serverKey else { return }
+            switch outcome {
+            case .full:
+                await reloadCachedLibrary()
+                statusMessage = metadataCompletionMessage(prefix: "Library metadata updated")
+            case .metadataOnly:
+                await reloadCachedLibrary()
+                statusMessage = metadataCompletionMessage(prefix: "Library metadata is up to date")
+            case .deferredForScan:
+                statusMessage = "Navidrome is scanning. Refresh will retry shortly."
+                scheduleScanRetry(serverKey: serverKey)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard self.serverKey == serverKey else { return }
+            if !wasOnline || error is URLError {
+                isOnline = false
+            }
+            statusMessage = hasCachedLibrary
+                ? "Refresh failed — showing cached library. \(error.localizedDescription)"
+                : error.localizedDescription
+        }
+    }
+
+    func setApplicationActive(_ isActive: Bool) {
+        isApplicationActive = isActive
+        metadataMonitorTask?.cancel()
+        metadataMonitorTask = nil
+        if !isActive {
+            scanRetryTask?.cancel()
+            cancelMetadataRefresh()
+            return
+        }
+
+        metadataMonitorTask = Task { [weak self] in
+            guard let self else { return }
+            await refreshMetadata()
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(900))
+                } catch {
+                    return
+                }
+                await refreshMetadata()
+            }
+        }
+    }
+
+    private func scheduleScanRetry(serverKey: String) {
+        guard isApplicationActive else { return }
+        scanRetryTask?.cancel()
+        scanRetryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(30))
+            } catch {
+                return
+            }
+            guard let self, self.serverKey == serverKey, self.isApplicationActive else { return }
+            await self.refreshMetadata()
+        }
+    }
+
+    private func cancelMetadataRefresh() {
+        metadataSyncTask?.cancel()
+        metadataSyncTask = nil
+        metadataRefreshID = nil
+        isRefreshingMetadata = false
+    }
+
+    private func metadataCompletionMessage(prefix: String) -> String {
+        let completedAt = lastMetadataCheckAt ?? Date()
+        return "\(prefix) at \(completedAt.formatted(date: .omitted, time: .shortened))"
+    }
+
+    private func reloadCachedLibrary() async {
+        guard let serverKey else { return }
+        do {
+            let syncState = try await store.metadataSyncState(serverKey: serverKey)
+            guard self.serverKey == serverKey else { return }
+            hasCachedLibrary = syncState.isComplete
+            lastMetadataCheckAt = syncState.lastCheckedAt
+            guard syncState.isComplete else { return }
+
+            async let artistsRequest = store.artists(serverKey: serverKey)
+            async let albumsRequest = store.albums(serverKey: serverKey)
+            async let playlistsRequest = store.playlists(serverKey: serverKey)
+            async let homeRequest = store.homeMetadata(serverKey: serverKey)
+            async let favoriteArtistsRequest = store.favoriteArtists(serverKey: serverKey)
+            async let favoriteAlbumsRequest = store.favoriteAlbums(serverKey: serverKey)
+            async let favoriteSongsRequest = store.favoriteSongs(serverKey: serverKey)
+            async let recentRequest = store.recentSongsAsync(serverKey: serverKey)
+
+            let (
+                loadedArtists,
+                loadedAlbums,
+                loadedPlaylists,
+                home,
+                loadedFavoriteArtists,
+                loadedFavoriteAlbums,
+                loadedFavoriteSongs,
+                loadedRecentSongs
+            ) = try await (
+                artistsRequest,
+                albumsRequest,
+                playlistsRequest,
+                homeRequest,
+                favoriteArtistsRequest,
+                favoriteAlbumsRequest,
+                favoriteSongsRequest,
+                recentRequest
+            )
+            guard self.serverKey == serverKey else { return }
+            artists = sortedVisibleArtists(loadedArtists)
+            albums = loadedAlbums
+            playlists = loadedPlaylists
+            recentlyAddedAlbums = home.recentlyAdded
+            recentlyPlayedAlbums = home.recentlyPlayed
+            homeRandomAlbums = home.random
+            featuredAlbums = home.featured
+            hasLoadedHome = true
+            favoriteArtists = loadedFavoriteArtists
+            favoriteArtistIDs = Set(loadedFavoriteArtists.map(\.id))
+            favoriteAlbums = loadedFavoriteAlbums
+            favoriteAlbumIDs = Set(loadedFavoriteAlbums.map(\.id))
+            favoriteSongs = loadedFavoriteSongs
+            favoriteIDs = Set(loadedFavoriteSongs.map(\.id))
+            recentSongs = loadedRecentSongs
+
+            if let selectedArtist {
+                artistAlbums = try await store.albums(serverKey: serverKey, artistID: selectedArtist.id)
+                loadedArtistAlbumsID = selectedArtist.id
+            }
+            if let selectedAlbum {
+                albumSongs = try await store.songs(serverKey: serverKey, albumID: selectedAlbum.id)
+                loadedAlbumSongsID = selectedAlbum.id
+            }
+            if let selectedPlaylist {
+                playlistSongs = try await store.songs(serverKey: serverKey, playlistID: selectedPlaylist.id)
+                loadedPlaylistSongsID = selectedPlaylist.id
+            }
+            guard self.serverKey == serverKey else { return }
+        } catch {
+            guard self.serverKey == serverKey else { return }
+            statusMessage = error.localizedDescription
+        }
     }
 
     private func setFavoriteState(_ isFavorite: Bool, for song: NavidromeSong) {
@@ -996,18 +1173,13 @@ final class AppViewModel: ObservableObject {
     }
 
     private func resolvedSongForPlayback(_ song: NavidromeSong, shouldHydrateSong: Bool) async throws -> NavidromeSong {
-        guard shouldHydrateSong, let client else {
-            return song
-        }
-
-        do {
-            return try await client.song(id: song.id) ?? song
-        } catch {
-            return song
-        }
+        _ = shouldHydrateSong
+        return song
     }
 
     private func clearRemoteLibraryState() {
+        hasCachedLibrary = false
+        lastMetadataCheckAt = nil
         searchResults = []
         randomSongs = []
         recentlyAddedAlbums = []

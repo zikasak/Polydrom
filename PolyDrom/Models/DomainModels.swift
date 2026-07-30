@@ -37,6 +37,65 @@ struct NavidromeSong: Decodable, Identifiable, Hashable {
     let coverArt: String?
     let albumId: String?
     let artistId: String?
+    let track: Int?
+    let discNumber: Int?
+    let created: Date?
+    let played: Date?
+
+    init(
+        id: String,
+        title: String,
+        artist: String? = nil,
+        album: String? = nil,
+        duration: Int? = nil,
+        suffix: String? = nil,
+        coverArt: String? = nil,
+        albumId: String? = nil,
+        artistId: String? = nil,
+        track: Int? = nil,
+        discNumber: Int? = nil,
+        created: Date? = nil,
+        played: Date? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.album = album
+        self.duration = duration
+        self.suffix = suffix
+        self.coverArt = coverArt
+        self.albumId = albumId
+        self.artistId = artistId
+        self.track = track
+        self.discNumber = discNumber
+        self.created = created
+        self.played = played
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, artist, album, duration, suffix, coverArt, albumId, artistId
+        case track
+        case discNumber
+        case created
+        case played
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeString(forKey: .id)
+        title = container.decodeStringIfPresent(forKey: .title) ?? "Untitled"
+        artist = container.decodeStringIfPresent(forKey: .artist)
+        album = container.decodeStringIfPresent(forKey: .album)
+        duration = container.decodeIntIfPresent(forKey: .duration)
+        suffix = container.decodeStringIfPresent(forKey: .suffix)
+        coverArt = container.decodeStringIfPresent(forKey: .coverArt)
+        albumId = container.decodeStringIfPresent(forKey: .albumId)
+        artistId = container.decodeStringIfPresent(forKey: .artistId)
+        track = container.decodeIntIfPresent(forKey: .track)
+        discNumber = container.decodeIntIfPresent(forKey: .discNumber)
+        created = container.decodeDateIfPresent(forKey: .created)
+        played = container.decodeDateIfPresent(forKey: .played)
+    }
 
     var subtitle: String {
         [artist, album].compactMap { value in
@@ -70,6 +129,30 @@ struct NavidromeAlbum: Decodable, Identifiable, Hashable {
     let songCount: Int?
     let year: Int?
     let coverArt: String?
+    let created: Date?
+    let played: Date?
+
+    init(
+        id: String,
+        name: String,
+        artist: String? = nil,
+        artistId: String? = nil,
+        songCount: Int? = nil,
+        year: Int? = nil,
+        coverArt: String? = nil,
+        created: Date? = nil,
+        played: Date? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.artist = artist
+        self.artistId = artistId
+        self.songCount = songCount
+        self.year = year
+        self.coverArt = coverArt
+        self.created = created
+        self.played = played
+    }
 
     init?(song: NavidromeSong) {
         guard let id = song.albumId,
@@ -85,6 +168,8 @@ struct NavidromeAlbum: Decodable, Identifiable, Hashable {
         self.songCount = nil
         self.year = nil
         self.coverArt = song.coverArt
+        self.created = song.created
+        self.played = song.played
     }
 
     enum CodingKeys: String, CodingKey {
@@ -96,6 +181,8 @@ struct NavidromeAlbum: Decodable, Identifiable, Hashable {
         case songCount
         case year
         case coverArt
+        case created
+        case played
     }
 
     init(from decoder: Decoder) throws {
@@ -109,6 +196,8 @@ struct NavidromeAlbum: Decodable, Identifiable, Hashable {
         songCount = container.decodeIntIfPresent(forKey: .songCount)
         year = container.decodeIntIfPresent(forKey: .year)
         coverArt = container.decodeStringIfPresent(forKey: .coverArt)
+        created = container.decodeDateIfPresent(forKey: .created)
+        played = container.decodeDateIfPresent(forKey: .played)
     }
 
     var subtitle: String {
@@ -126,6 +215,20 @@ struct NavidromeArtist: Decodable, Identifiable, Hashable {
     let albumCount: Int?
     let coverArt: String?
     let artistImageURL: String?
+
+    init(
+        id: String,
+        name: String,
+        albumCount: Int? = nil,
+        coverArt: String? = nil,
+        artistImageURL: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.albumCount = albumCount
+        self.coverArt = coverArt
+        self.artistImageURL = artistImageURL
+    }
 
     init?(song: NavidromeSong) {
         guard let id = song.artistId,
@@ -169,6 +272,28 @@ struct NavidromePlaylist: Decodable, Identifiable, Hashable {
     let name: String
     let songCount: Int?
     let owner: String?
+    let changed: Date?
+
+    init(id: String, name: String, songCount: Int? = nil, owner: String? = nil, changed: Date? = nil) {
+        self.id = id
+        self.name = name
+        self.songCount = songCount
+        self.owner = owner
+        self.changed = changed
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, songCount, owner, changed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeString(forKey: .id)
+        name = container.decodeStringIfPresent(forKey: .name) ?? "Untitled Playlist"
+        songCount = container.decodeIntIfPresent(forKey: .songCount)
+        owner = container.decodeStringIfPresent(forKey: .owner)
+        changed = container.decodeDateIfPresent(forKey: .changed)
+    }
 
     var subtitle: String {
         var parts: [String] = []
@@ -278,6 +403,30 @@ private extension KeyedDecodingContainer {
 
     func decodeFlexibleInt(forKey key: Key) -> Int? {
         decodeIntIfPresent(forKey: key)
+    }
+
+    func decodeDateIfPresent(forKey key: Key) -> Date? {
+        if let date = try? decode(Date.self, forKey: key) {
+            return date
+        }
+
+        if let value = try? decode(String.self, forKey: key) {
+            return FlexibleISO8601.date(from: value)
+        }
+
+        if let milliseconds = try? decode(Double.self, forKey: key) {
+            return Date(timeIntervalSince1970: milliseconds / 1_000)
+        }
+
+        return nil
+    }
+}
+
+private enum FlexibleISO8601 {
+    static func date(from value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 }
 

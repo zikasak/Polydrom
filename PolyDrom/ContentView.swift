@@ -10,6 +10,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var detailPath: [LibraryRoute] = []
     @State private var isFullPlayerPresented = false
 
@@ -57,6 +58,9 @@ struct ContentView: View {
             }
             .task {
                 await viewModel.connectToLatestServer()
+            }
+            .onChange(of: scenePhase, initial: true) { _, newPhase in
+                viewModel.setApplicationActive(newPhase == .active)
             }
     }
 

@@ -219,7 +219,7 @@ struct FullPlayerView: View {
                 .font(.title2)
             }
             .buttonStyle(.plain)
-            .disabled(audioPlayer.currentSong == nil)
+            .disabled(audioPlayer.currentSong == nil || !viewModel.isOnline)
             .help(currentSongIsFavorite ? "Remove from favorites" : "Add to favorites")
         }
     }
@@ -580,6 +580,7 @@ struct PlayerQueueView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .disabled(!viewModel.isOnline)
                         }
                     }
                     .padding(.horizontal, 12)

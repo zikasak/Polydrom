@@ -37,16 +37,23 @@ struct NavidromeClientTests {
     }
 
     @Test func allAPIEndpointsDecodeSuccessEmptyAndFallbackBranches() async throws {
-        let session = StubURLProtocol.session()
-        StubURLProtocol.handler = { request in
+        let handler: StubURLProtocol.Handler = { request in
             switch apiMethod(in: request) {
             case "ping":
                 return envelope(#"{"status":"ok"}"#)
+            case "getScanStatus":
+                return envelope(#"{"status":"ok","scanStatus":{"scanning":false,"count":"4","lastScan":"scan-token"}}"#)
             case "getRandomSongs":
                 return envelope(#"{"status":"ok","randomSongs":{"song":{"id":"random","title":"Random"}}}"#)
             case "getSong":
                 return envelope(#"{"status":"ok","song":{"id":"hydrated","title":"Hydrated"}}"#)
             case "search3":
+                if queryValue("albumCount", in: request) != "0" {
+                    return envelope(#"{"status":"ok","searchResult3":{"album":[{"id":"metadata-album","name":"Metadata Album"}]}}"#)
+                }
+                if queryValue("query", in: request) == "" && queryValue("songCount", in: request) != "0" {
+                    return envelope(#"{"status":"ok","searchResult3":{"song":[{"id":"metadata-song","title":"Metadata Song","track":2,"discNumber":1}]}}"#)
+                }
                 if queryValue("artistCount", in: request) == "0" {
                     return envelope(#"{"status":"ok","searchResult3":{"song":[{"id":"search","title":"Found"}]}}"#)
                 }
@@ -74,14 +81,21 @@ struct NavidromeClientTests {
                 return StubURLProtocol.Response(statusCode: 404, json: "{}")
             }
         }
+        let session = StubURLProtocol.session(handler: handler)
 
         let client = try #require(NavidromeClient(profile: makeProfile(), session: session))
         try await client.ping()
+        let changeState = try await client.catalogChangeState()
+        #expect(changeState.token == "scan-token")
+        #expect(changeState.itemCount == 4)
+        #expect(!changeState.isScanning)
         #expect(try await client.randomSongs(size: 1).map(\.id) == ["random"])
         #expect(try await client.song(id: "partial")?.id == "hydrated")
         #expect(try await client.searchSongs(matching: "find").map(\.id) == ["search"])
         #expect(try await client.albumPage(type: .newest, size: 20, offset: 10).count == 4)
         #expect(try await client.artistPage(size: 20, offset: 10).map(\.id) == ["artist"])
+        #expect(try await client.albumMetadataPage(size: 20, offset: 10).map(\.id) == ["metadata-album"])
+        #expect(try await client.songMetadataPage(size: 20, offset: 10).map(\.id) == ["metadata-song"])
 
         let directArtist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"direct","name":"Direct"}"#.utf8))
         #expect(try await client.albums(for: directArtist).map(\.id) == ["direct-album"])
@@ -104,7 +118,7 @@ struct NavidromeClientTests {
     }
 
     @Test func optionalContainersReturnEmptyCollectionsAndNilSong() async throws {
-        StubURLProtocol.handler = { request in
+        let handler: StubURLProtocol.Handler = { request in
             let extra: String
             switch apiMethod(in: request) {
             case "getRandomSongs": extra = ""
@@ -117,17 +131,23 @@ struct NavidromeClientTests {
             case "getPlaylist": extra = ""
             case "getLyricsBySongId": extra = ""
             case "getStarred2": extra = ""
+            case "getScanStatus": extra = ""
             default: extra = ""
             }
             _ = extra
             return envelope(#"{"status":"ok"}"#)
         }
-        let client = try #require(NavidromeClient(profile: makeProfile(), session: StubURLProtocol.session()))
+        let client = try #require(
+            NavidromeClient(profile: makeProfile(), session: StubURLProtocol.session(handler: handler))
+        )
         #expect(try await client.randomSongs().isEmpty)
+        #expect(try await client.catalogChangeState().token == nil)
         #expect(try await client.song(id: "missing") == nil)
         #expect(try await client.searchSongs(matching: "none").isEmpty)
         #expect(try await client.albumPage(type: .alphabeticalByName, size: 1, offset: 0).isEmpty)
         #expect(try await client.artistPage(size: 1, offset: 0).isEmpty)
+        #expect(try await client.albumMetadataPage(size: 1, offset: 0).isEmpty)
+        #expect(try await client.songMetadataPage(size: 1, offset: 0).isEmpty)
         #expect(try await client.songs(for: JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"a","name":"A"}"#.utf8))).isEmpty)
         #expect(try await client.playlists().isEmpty)
         #expect(try await client.songs(for: JSONDecoder().decode(NavidromePlaylist.self, from: Data(#"{"id":"p","name":"P"}"#.utf8))).isEmpty)
@@ -137,23 +157,29 @@ struct NavidromeClientTests {
     }
 
     @Test func HTTPServerAndDecodeErrorsPropagate() async throws {
-        let session = StubURLProtocol.session()
-        let client = try #require(NavidromeClient(profile: makeProfile(), session: session))
-
-        StubURLProtocol.handler = { _ in StubURLProtocol.Response(statusCode: 503, json: "{}") }
+        let httpClient = try #require(NavidromeClient(
+            profile: makeProfile(),
+            session: StubURLProtocol.session { _ in StubURLProtocol.Response(statusCode: 503, json: "{}") }
+        ))
         do {
-            try await client.ping()
+            try await httpClient.ping()
             Issue.record("Expected HTTP failure")
         } catch {
             #expect(error.localizedDescription == "HTTP 503")
         }
 
-        StubURLProtocol.handler = { _ in StubURLProtocol.Response(data: Data("not-json".utf8)) }
-        await #expect(throws: DecodingError.self) { try await client.ping() }
+        let decodingClient = try #require(NavidromeClient(
+            profile: makeProfile(),
+            session: StubURLProtocol.session { _ in StubURLProtocol.Response(data: Data("not-json".utf8)) }
+        ))
+        await #expect(throws: DecodingError.self) { try await decodingClient.ping() }
 
-        StubURLProtocol.handler = { _ in envelope(#"{"status":"failed","error":{"message":"Denied"}}"#) }
+        let serverClient = try #require(NavidromeClient(
+            profile: makeProfile(),
+            session: StubURLProtocol.session { _ in envelope(#"{"status":"failed","error":{"message":"Denied"}}"#) }
+        ))
         do {
-            try await client.ping()
+            try await serverClient.ping()
             Issue.record("Expected server failure")
         } catch {
             #expect(error.localizedDescription == "Denied")

@@ -55,6 +55,7 @@ struct HomeView: View {
                             FeaturedAlbumCard(
                                 album: album,
                                 coverArtResource: viewModel.coverArtResource(for: album, size: 220),
+                                isOnline: viewModel.isOnline,
                                 open: { openAlbum(album) },
                                 play: { viewModel.play(album) }
                             )
@@ -85,7 +86,7 @@ struct HomeView: View {
                     await viewModel.playRandomSongs(count: 50)
                 }
             }
-            .disabled(viewModel.isBusy)
+            .disabled(viewModel.isBusy || !viewModel.isOnline)
         }
     }
 }
@@ -110,6 +111,7 @@ private struct AlbumShelf: View {
                             HomeAlbumCard(
                                 album: album,
                                 coverArtResource: viewModel.coverArtResource(for: album, size: 220),
+                                isOnline: viewModel.isOnline,
                                 open: { openAlbum(album) },
                                 play: { viewModel.play(album) }
                             )
@@ -129,6 +131,7 @@ private struct AlbumShelf: View {
 private struct FeaturedAlbumCard: View {
     let album: NavidromeAlbum
     let coverArtResource: CoverArtResource?
+    let isOnline: Bool
     let open: () -> Void
     let play: () -> Void
 
@@ -165,6 +168,7 @@ private struct FeaturedAlbumCard: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .disabled(!isOnline)
             }
             .padding(.vertical, 2)
         }
@@ -181,6 +185,7 @@ private struct FeaturedAlbumCard: View {
 private struct HomeAlbumCard: View {
     let album: NavidromeAlbum
     let coverArtResource: CoverArtResource?
+    let isOnline: Bool
     let open: () -> Void
     let play: () -> Void
 
@@ -199,6 +204,7 @@ private struct HomeAlbumCard: View {
                         .background(.regularMaterial, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .disabled(!isOnline)
                 .padding(8)
             }
 
@@ -298,6 +304,7 @@ private struct AlbumContextMenu: View {
         Button { viewModel.play(album) } label: {
             Label("Play", systemImage: "play.fill")
         }
+        .disabled(!viewModel.isOnline)
         Button { viewModel.playNext(album) } label: {
             Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
         }
@@ -310,6 +317,7 @@ private struct AlbumContextMenu: View {
                 systemImage: viewModel.isFavorite(album) ? "heart.slash" : "heart"
             )
         }
+        .disabled(!viewModel.isOnline)
         Divider()
         Button { openAlbum(album) } label: {
             Label("Open Album", systemImage: "rectangle.stack")

@@ -28,6 +28,7 @@ struct AlbumBrowserView: View {
             albums: albums,
             favoriteAlbumIDs: viewModel.favoriteAlbumIDs,
             serverKey: viewModel.serverKey,
+            isOnline: viewModel.isOnline,
             coverArtResource: { album in
                 viewModel.coverArtResource(for: album, size: 220)
             },
@@ -51,6 +52,7 @@ private struct AlbumBrowserGrid: View, Equatable {
     let albums: [NavidromeAlbum]
     let favoriteAlbumIDs: Set<String>
     let serverKey: String?
+    let isOnline: Bool
     let coverArtResource: (NavidromeAlbum) -> CoverArtResource?
     let play: (NavidromeAlbum) -> Void
     let playNext: (NavidromeAlbum) -> Void
@@ -62,6 +64,7 @@ private struct AlbumBrowserGrid: View, Equatable {
         lhs.albums == rhs.albums
             && lhs.favoriteAlbumIDs == rhs.favoriteAlbumIDs
             && lhs.serverKey == rhs.serverKey
+            && lhs.isOnline == rhs.isOnline
     }
 
     var body: some View {
@@ -87,6 +90,7 @@ private struct AlbumBrowserGrid: View, Equatable {
                     .background(.regularMaterial, in: Circle())
                 }
                 .buttonStyle(.borderless)
+                .disabled(!isOnline)
                 .padding(15)
                 .help(favoriteAlbumIDs.contains(album.id) ? "Remove album from favorites" : "Add album to favorites")
             }
@@ -96,6 +100,7 @@ private struct AlbumBrowserGrid: View, Equatable {
                 } label: {
                     Label("Play", systemImage: "play.fill")
                 }
+                .disabled(!isOnline)
 
                 Button {
                     playNext(album)
@@ -117,6 +122,7 @@ private struct AlbumBrowserGrid: View, Equatable {
                         systemImage: favoriteAlbumIDs.contains(album.id) ? "heart.slash" : "heart"
                     )
                 }
+                .disabled(!isOnline)
 
                 Divider()
 
@@ -163,6 +169,7 @@ struct AlbumDetailView: View {
                             systemImage: viewModel.isFavorite(album) ? "heart.fill" : "heart"
                         )
                     }
+                    .disabled(!viewModel.isOnline)
                     .help(viewModel.isFavorite(album) ? "Remove album from favorites" : "Add album to favorites")
                 }
             }

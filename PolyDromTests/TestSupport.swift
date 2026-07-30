@@ -3,6 +3,8 @@ import Testing
 @testable import PolyDrom
 
 final class StubURLProtocol: URLProtocol, @unchecked Sendable {
+    typealias Handler = @Sendable (URLRequest) throws -> Response
+
     struct Response: Sendable {
         let statusCode: Int
         let headers: [String: String]
@@ -19,10 +21,13 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
         }
     }
 
-    nonisolated(unsafe) static var handler: @Sendable (URLRequest) throws -> Response = { _ in
+    private static let defaultHandler: Handler = { _ in
         Response(statusCode: 500, json: #"{"error":"No stub configured"}"#)
     }
     nonisolated(unsafe) static var requestObserver: (@Sendable (URLRequest) -> Void)?
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static var handlers: [String: Handler] = [:]
+    private static let sessionHeader = "X-PolyDrom-Test-Session"
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -30,7 +35,11 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         do {
             Self.requestObserver?(request)
-            let stub = try Self.handler(request)
+            let sessionID = request.value(forHTTPHeaderField: Self.sessionHeader)
+            Self.registryLock.lock()
+            let sessionHandler = sessionID.flatMap { Self.handlers[$0] }
+            Self.registryLock.unlock()
+            let stub = try (sessionHandler ?? Self.defaultHandler)(request)
             let response = HTTPURLResponse(
                 url: try #require(request.url),
                 statusCode: stub.statusCode,
@@ -48,8 +57,17 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 
     static func session() -> URLSession {
+        session(handler: defaultHandler)
+    }
+
+    static func session(handler: @escaping Handler) -> URLSession {
+        let sessionID = UUID().uuidString
+        registryLock.lock()
+        handlers[sessionID] = handler
+        registryLock.unlock()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
+        configuration.httpAdditionalHeaders = [sessionHeader: sessionID]
         return URLSession(configuration: configuration)
     }
 }

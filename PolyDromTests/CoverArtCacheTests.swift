@@ -18,15 +18,15 @@ struct CoverArtCacheTests {
 
     @Test func dataDownloadsOnceThenUsesMemoryFallbackAndDiskCaches() async throws {
         let directory = try temporaryDirectory()
-        let session = StubURLProtocol.session()
         let lock = NSLock()
         nonisolated(unsafe) var requests = 0
-        StubURLProtocol.handler = { _ in
+        let handler: StubURLProtocol.Handler = { _ in
             lock.lock()
             requests += 1
             lock.unlock()
             return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
         }
+        let session = StubURLProtocol.session(handler: handler)
         let cache = CoverArtCache(session: session, diskDirectory: directory)
         let resource = CoverArtResource(cacheKey: "original", url: URL(string: "https://art.example/image")!)
 
@@ -44,15 +44,15 @@ struct CoverArtCacheTests {
     }
 
     @Test func concurrentConsumersShareDownloadAndDecodedImage() async throws {
-        let session = StubURLProtocol.session()
         let lock = NSLock()
         nonisolated(unsafe) var requests = 0
-        StubURLProtocol.handler = { _ in
+        let handler: StubURLProtocol.Handler = { _ in
             lock.lock()
             requests += 1
             lock.unlock()
             return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
         }
+        let session = StubURLProtocol.session(handler: handler)
         let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
         let resource = CoverArtResource(cacheKey: UUID().uuidString, url: URL(string: "https://art.example/shared")!)
 
@@ -73,12 +73,12 @@ struct CoverArtCacheTests {
     }
 
     @Test func storedImageDoesNotFetchMissingDataButDecodesDiskData() async throws {
-        let session = StubURLProtocol.session()
         nonisolated(unsafe) var requests = 0
-        StubURLProtocol.handler = { _ in
+        let handler: StubURLProtocol.Handler = { _ in
             requests += 1
             return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
         }
+        let session = StubURLProtocol.session(handler: handler)
         let directory = try temporaryDirectory()
         let cache = CoverArtCache(session: session, diskDirectory: directory)
         let missing = CoverArtResource(cacheKey: "missing", url: URL(string: "https://art.example/missing")!)
@@ -92,21 +92,25 @@ struct CoverArtCacheTests {
     }
 
     @Test func invalidImageAndHTTPFailuresSurfaceUsefulErrors() async throws {
-        let session = StubURLProtocol.session()
-        let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
         let invalid = CoverArtResource(cacheKey: "invalid", url: URL(string: "https://art.example/invalid")!)
 
-        StubURLProtocol.handler = { _ in StubURLProtocol.Response(data: Data("invalid".utf8)) }
+        let invalidCache = CoverArtCache(
+            session: StubURLProtocol.session { _ in StubURLProtocol.Response(data: Data("invalid".utf8)) },
+            diskDirectory: try temporaryDirectory()
+        )
         do {
-            _ = try await cache.image(for: invalid)
+            _ = try await invalidCache.image(for: invalid)
             Issue.record("Expected invalid image")
         } catch {
             #expect(error.localizedDescription == "The cover art is not a valid image.")
         }
 
-        StubURLProtocol.handler = { _ in StubURLProtocol.Response(statusCode: 404, data: Data()) }
+        let httpCache = CoverArtCache(
+            session: StubURLProtocol.session { _ in StubURLProtocol.Response(statusCode: 404, data: Data()) },
+            diskDirectory: try temporaryDirectory()
+        )
         do {
-            _ = try await cache.data(for: CoverArtResource(cacheKey: "404", url: invalid.url))
+            _ = try await httpCache.data(for: CoverArtResource(cacheKey: "404", url: invalid.url))
             Issue.record("Expected HTTP error")
         } catch {
             #expect(error.localizedDescription == "HTTP 404")
@@ -114,8 +118,10 @@ struct CoverArtCacheTests {
     }
 
     @Test func prefetchAndWarmDeduplicateAndHandleEmptyInputs() async throws {
-        let session = StubURLProtocol.session()
-        StubURLProtocol.handler = { _ in StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG) }
+        let handler: StubURLProtocol.Handler = { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let session = StubURLProtocol.session(handler: handler)
         let directory = try temporaryDirectory()
         let cache = CoverArtCache(session: session, diskDirectory: directory)
         let one = CoverArtResource(cacheKey: "one", url: URL(string: "https://art.example/one")!)
