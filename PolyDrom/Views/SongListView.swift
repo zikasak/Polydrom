@@ -101,6 +101,9 @@ struct SongRowView: View {
                 .padding(.horizontal, -40)
         }
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            viewModel.play(queue, startingAt: queueIndex)
+        }
         .contextMenu {
             Button {
                 viewModel.play(queue, startingAt: queueIndex)
