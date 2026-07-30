@@ -12,11 +12,17 @@ struct PlayerBarView: View {
     @ObservedObject private var audioPlayer: AudioPlayer
     @State private var presentedDetailPanel: PlayerDetailPanel? = nil
     @State private var isCoverArtHovered = false
+    let openRoute: (LibraryRoute) -> Void
     let onOpenFullPlayer: () -> Void
 
-    init(viewModel: AppViewModel, onOpenFullPlayer: @escaping () -> Void) {
+    init(
+        viewModel: AppViewModel,
+        openRoute: @escaping (LibraryRoute) -> Void = { _ in },
+        onOpenFullPlayer: @escaping () -> Void
+    ) {
         self.viewModel = viewModel
         self.audioPlayer = viewModel.audioPlayer
+        self.openRoute = openRoute
         self.onOpenFullPlayer = onOpenFullPlayer
     }
 
@@ -129,16 +135,20 @@ struct PlayerBarView: View {
                 .onHover { isCoverArtHovered = $0 }
                 .animation(.easeOut(duration: 0.15), value: isCoverArtHovered)
                 .help("Open full player")
+                .contextMenu {
+                    if let album = currentAlbum {
+                        PlayerAlbumContextMenu(
+                            viewModel: viewModel,
+                            album: album,
+                            openRoute: openRoute
+                        )
+                    }
+                }
 
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(audioPlayer.currentSong?.title ?? "Nothing playing")
-                        .font(.headline)
-                        .lineLimit(1)
+                    title
 
-                    Text(audioPlayer.currentSong?.subtitle ?? audioPlayer.statusMessage)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    metadataLine
 
                     HStack(spacing: 8) {
                         Text(timeText(audioPlayer.currentTime))
@@ -256,6 +266,94 @@ struct PlayerBarView: View {
         audioPlayer.currentSong.map(viewModel.isFavorite) ?? false
     }
 
+    @ViewBuilder
+    private var title: some View {
+        if let song = audioPlayer.currentSong, let album = currentAlbum {
+            Button {
+                openRoute(.album(album))
+            } label: {
+                Text(song.title)
+                    .font(.headline)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .help("Open album")
+            .contextMenu {
+                PlayerSongContextMenu(viewModel: viewModel, song: song)
+            }
+        } else {
+            Text(audioPlayer.currentSong?.title ?? "Nothing playing")
+                .font(.headline)
+                .lineLimit(1)
+                .contextMenu {
+                    if let song = audioPlayer.currentSong {
+                        PlayerSongContextMenu(viewModel: viewModel, song: song)
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var metadataLine: some View {
+        if audioPlayer.currentSong == nil {
+            Text(audioPlayer.statusMessage)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        } else {
+            HStack(spacing: 5) {
+                if let artist = currentArtist {
+                    Button {
+                        openRoute(.artist(artist))
+                    } label: {
+                        Text(artist.name)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open artist")
+                        .contextMenu {
+                            PlayerArtistContextMenu(
+                                viewModel: viewModel,
+                                artist: artist,
+                                openRoute: openRoute
+                            )
+                        }
+                }
+
+                if currentArtist != nil, currentAlbum != nil {
+                    Text("-")
+                }
+
+                if let album = currentAlbum {
+                    Button {
+                        openRoute(.album(album))
+                    } label: {
+                        Text(album.name)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open album")
+                        .contextMenu {
+                            PlayerAlbumContextMenu(
+                                viewModel: viewModel,
+                                album: album,
+                                openRoute: openRoute
+                            )
+                        }
+                }
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+    }
+
+    private var currentAlbum: NavidromeAlbum? {
+        audioPlayer.currentSong.flatMap(viewModel.albumForNavigation)
+    }
+
+    private var currentArtist: NavidromeArtist? {
+        audioPlayer.currentSong.flatMap(viewModel.artistForNavigation)
+    }
+
     private var volumeSystemImage: String {
         switch audioPlayer.volume {
         case 0:
@@ -273,5 +371,125 @@ struct PlayerBarView: View {
         guard seconds.isFinite, seconds > 0 else { return "0:00" }
         let totalSeconds = Int(seconds.rounded(.down))
         return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
+    }
+}
+
+struct PlayerSongContextMenu: View {
+    @ObservedObject var viewModel: AppViewModel
+    let song: NavidromeSong
+
+    var body: some View {
+        Button {
+            viewModel.playNext([song])
+        } label: {
+            Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+        }
+
+        Button {
+            viewModel.addToQueue([song])
+        } label: {
+            Label("Add to Queue", systemImage: "text.badge.plus")
+        }
+
+        Divider()
+
+        Button {
+            viewModel.toggleFavorite(song)
+        } label: {
+            Label(
+                viewModel.isFavorite(song) ? "Remove from Favorites" : "Add to Favorites",
+                systemImage: viewModel.isFavorite(song) ? "heart.slash" : "heart"
+            )
+        }
+    }
+}
+
+struct PlayerAlbumContextMenu: View {
+    @ObservedObject var viewModel: AppViewModel
+    let album: NavidromeAlbum
+    let openRoute: (LibraryRoute) -> Void
+
+    var body: some View {
+        Button {
+            viewModel.play(album)
+        } label: {
+            Label("Play", systemImage: "play.fill")
+        }
+
+        Button {
+            viewModel.playNext(album)
+        } label: {
+            Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+        }
+
+        Button {
+            viewModel.addToQueue(album)
+        } label: {
+            Label("Add to Queue", systemImage: "text.badge.plus")
+        }
+
+        Button {
+            viewModel.toggleFavorite(album)
+        } label: {
+            Label(
+                viewModel.isFavorite(album) ? "Remove from Favorites" : "Add to Favorites",
+                systemImage: viewModel.isFavorite(album) ? "heart.slash" : "heart"
+            )
+        }
+
+        Divider()
+
+        Button {
+            openRoute(.album(album))
+        } label: {
+            Label("Open Album", systemImage: "rectangle.stack")
+        }
+
+        OpenInSpotifyLink(album: album)
+    }
+}
+
+struct PlayerArtistContextMenu: View {
+    @ObservedObject var viewModel: AppViewModel
+    let artist: NavidromeArtist
+    let openRoute: (LibraryRoute) -> Void
+
+    var body: some View {
+        Button {
+            viewModel.play(artist)
+        } label: {
+            Label("Play", systemImage: "play.fill")
+        }
+
+        Button {
+            viewModel.playNext(artist)
+        } label: {
+            Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+        }
+
+        Button {
+            viewModel.addToQueue(artist)
+        } label: {
+            Label("Add to Queue", systemImage: "text.badge.plus")
+        }
+
+        Button {
+            viewModel.toggleFavorite(artist)
+        } label: {
+            Label(
+                viewModel.isFavorite(artist) ? "Remove from Favorites" : "Add to Favorites",
+                systemImage: viewModel.isFavorite(artist) ? "heart.slash" : "heart"
+            )
+        }
+
+        Divider()
+
+        Button {
+            openRoute(.artist(artist))
+        } label: {
+            Label("Open Artist", systemImage: "music.mic")
+        }
+
+        OpenInSpotifyLink(artist: artist)
     }
 }

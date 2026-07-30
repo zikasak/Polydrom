@@ -12,14 +12,17 @@ struct FullPlayerView: View {
     @ObservedObject var viewModel: AppViewModel
     @ObservedObject private var audioPlayer: AudioPlayer
     @State private var detailPanel: PlayerDetailPanel? = nil
+    let openRoute: (LibraryRoute) -> Void
     let onClose: () -> Void
 
     init(
         viewModel: AppViewModel,
+        openRoute: @escaping (LibraryRoute) -> Void = { _ in },
         onClose: @escaping () -> Void
     ) {
         self.viewModel = viewModel
         self.audioPlayer = viewModel.audioPlayer
+        self.openRoute = openRoute
         self.onClose = onClose
     }
 
@@ -99,16 +102,20 @@ struct FullPlayerView: View {
                 size: artworkSize
             )
             .shadow(color: .black.opacity(0.28), radius: 28, y: 16)
+            .contextMenu {
+                if let album = currentAlbum {
+                    PlayerAlbumContextMenu(
+                        viewModel: viewModel,
+                        album: album,
+                        openRoute: openRoute
+                    )
+                }
+            }
 
             VStack(spacing: 5) {
-                Text(audioPlayer.currentSong?.title ?? "Nothing playing")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .lineLimit(1)
+                title
 
-                Text(audioPlayer.currentSong?.subtitle ?? audioPlayer.statusMessage)
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                metadataLine
             }
             .frame(maxWidth: 560)
 
@@ -280,6 +287,94 @@ struct FullPlayerView: View {
 
     private var currentSongIsFavorite: Bool {
         audioPlayer.currentSong.map(viewModel.isFavorite) ?? false
+    }
+
+    @ViewBuilder
+    private var title: some View {
+        if let song = audioPlayer.currentSong, let album = currentAlbum {
+            Button {
+                openRoute(.album(album))
+            } label: {
+                Text(song.title)
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .help("Open album")
+            .contextMenu {
+                PlayerSongContextMenu(viewModel: viewModel, song: song)
+            }
+        } else {
+            Text(audioPlayer.currentSong?.title ?? "Nothing playing")
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .contextMenu {
+                    if let song = audioPlayer.currentSong {
+                        PlayerSongContextMenu(viewModel: viewModel, song: song)
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var metadataLine: some View {
+        if audioPlayer.currentSong == nil {
+            Text(audioPlayer.statusMessage)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        } else {
+            HStack(spacing: 6) {
+                if let artist = currentArtist {
+                    Button {
+                        openRoute(.artist(artist))
+                    } label: {
+                        Text(artist.name)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open artist")
+                        .contextMenu {
+                            PlayerArtistContextMenu(
+                                viewModel: viewModel,
+                                artist: artist,
+                                openRoute: openRoute
+                            )
+                        }
+                }
+
+                if currentArtist != nil, currentAlbum != nil {
+                    Text("-")
+                }
+
+                if let album = currentAlbum {
+                    Button {
+                        openRoute(.album(album))
+                    } label: {
+                        Text(album.name)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open album")
+                        .contextMenu {
+                            PlayerAlbumContextMenu(
+                                viewModel: viewModel,
+                                album: album,
+                                openRoute: openRoute
+                            )
+                        }
+                }
+            }
+            .font(.title3)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+    }
+
+    private var currentAlbum: NavidromeAlbum? {
+        audioPlayer.currentSong.flatMap(viewModel.albumForNavigation)
+    }
+
+    private var currentArtist: NavidromeArtist? {
+        audioPlayer.currentSong.flatMap(viewModel.artistForNavigation)
     }
 
     private func timeText(_ seconds: Double) -> String {

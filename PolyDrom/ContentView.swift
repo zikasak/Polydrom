@@ -20,7 +20,10 @@ struct ContentView: View {
             .overlay {
                 ZStack {
                     if isFullPlayerPresented {
-                        FullPlayerView(viewModel: viewModel) {
+                        FullPlayerView(
+                            viewModel: viewModel,
+                            openRoute: openPlayerRoute
+                        ) {
                             isFullPlayerPresented = false
                         }
                         .transition(
@@ -121,12 +124,20 @@ struct ContentView: View {
         content()
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if viewModel.isConnected || viewModel.audioPlayer.currentSong != nil {
-                    PlayerBarView(viewModel: viewModel) {
+                    PlayerBarView(
+                        viewModel: viewModel,
+                        openRoute: openLibraryRoute
+                    ) {
                         NSApp.keyWindow?.makeFirstResponder(nil)
                         isFullPlayerPresented = true
                     }
                 }
             }
+    }
+
+    private func openPlayerRoute(_ route: LibraryRoute) {
+        isFullPlayerPresented = false
+        openLibraryRoute(route)
     }
 }
 
