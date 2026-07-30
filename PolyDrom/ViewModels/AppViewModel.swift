@@ -306,7 +306,7 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func playRandomSongs(count: Int) async {
+    func playRandomSongs(count: Int? = nil) async {
         guard let serverKey else {
             statusMessage = "Select a library first."
             return

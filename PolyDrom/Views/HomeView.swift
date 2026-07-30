@@ -85,6 +85,9 @@ struct HomeView: View {
                 RandomPlayButton(title: "Surprise Me", subtitle: "50 songs", systemImage: "sparkles") {
                     await viewModel.playRandomSongs(count: 50)
                 }
+                RandomPlayButton(title: "Shuffle All", subtitle: "Entire library", systemImage: "music.note.list") {
+                    await viewModel.playRandomSongs()
+                }
             }
             .disabled(viewModel.isBusy || !viewModel.isOnline)
         }

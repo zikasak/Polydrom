@@ -260,11 +260,15 @@ final class LibraryStore {
         }
     }
 
-    func randomSongs(serverKey: String, count: Int) async throws -> [NavidromeSong] {
+    func randomSongs(serverKey: String, count: Int? = nil) async throws -> [NavidromeSong] {
         try await performBackground { context in
             let request = Self.songFetchRequest()
             request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-            return Array(try context.fetch(request).shuffled().prefix(max(0, count))).map(Self.song(from:))
+            let shuffledSongs = try context.fetch(request).shuffled()
+            guard let count else {
+                return shuffledSongs.map(Self.song(from:))
+            }
+            return Array(shuffledSongs.prefix(max(0, count))).map(Self.song(from:))
         }
     }
 

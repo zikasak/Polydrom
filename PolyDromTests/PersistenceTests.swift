@@ -49,7 +49,7 @@ struct PersistenceTests {
         }
     }
 
-    @Test func songsUpsertUpdateRemainServerScopedAndRespectLimit() throws {
+    @Test func songsUpsertUpdateRemainServerScopedAndRespectLimit() async throws {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),
             keychain: MemoryCredentialStore()
@@ -59,6 +59,11 @@ struct PersistenceTests {
 
         try store.upsertSongs([original, other], serverKey: "server-a")
         #expect(try store.recentSongs(serverKey: "server-a").isEmpty)
+        let shuffledLibrary = try await store.randomSongs(serverKey: "server-a")
+        #expect(shuffledLibrary.count == 2)
+        #expect(Set(shuffledLibrary.map(\.id)) == ["one", "two"])
+        #expect(try await store.randomSongs(serverKey: "server-a", count: 1).count == 1)
+        #expect(try await store.randomSongs(serverKey: "server-a", count: 0).isEmpty)
 
         try store.markPlayed(original, serverKey: "server-a")
         Thread.sleep(forTimeInterval: 0.002)
