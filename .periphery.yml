@@ -1,0 +1,6 @@
+project: PolyDrom.xcodeproj
+schemes:
+  - PolyDrom
+format: xcode
+strict: true
+

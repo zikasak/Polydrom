@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct SidebarView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     var onSectionSelected: () -> Void = {}
 
     var body: some View {

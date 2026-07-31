@@ -130,7 +130,6 @@ func makeSong(
     artist: String? = "Artist",
     album: String? = "Album",
     duration: Int? = 185,
-    suffix: String? = "mp3",
     coverArt: String? = nil,
     albumId: String? = "album-1",
     artistId: String? = "artist-1"
@@ -141,7 +140,6 @@ func makeSong(
         artist: artist,
         album: album,
         duration: duration,
-        suffix: suffix,
         coverArt: coverArt,
         albumId: albumId,
         artistId: artistId
@@ -174,16 +172,17 @@ let onePixelPNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1H
 func makeViewModel(
     credentials: MemoryCredentialStore = MemoryCredentialStore(),
     session: URLSession = StubURLProtocol.session()
-) -> (AppViewModel, LibraryStore, MemoryCredentialStore) {
+) -> (AppCoordinator, LibraryStore, MemoryCredentialStore) {
     let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: credentials)
-    let viewModel = AppViewModel(
+    let viewModel = AppCoordinator(
         store: store,
         audioPlayer: AudioPlayer(),
         clientFactory: { NavidromeClient(profile: $0, session: session) },
         coverArtCache: CoverArtCache(
             session: session,
             diskDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        )
+        ),
+        serverRegistry: ServerRegistry(fileURL: nil, keychain: credentials)
     )
     return (viewModel, store, credentials)
 }

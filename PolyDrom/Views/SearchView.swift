@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct SearchView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let openRoute: (LibraryRoute) -> Void
 
     var body: some View {

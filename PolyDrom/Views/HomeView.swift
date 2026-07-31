@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct HomeView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let openAlbum: (NavidromeAlbum) -> Void
 
     var body: some View {
@@ -98,7 +98,7 @@ private struct AlbumShelf: View {
     let title: String
     let emptyMessage: String
     let albums: [NavidromeAlbum]
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let openAlbum: (NavidromeAlbum) -> Void
 
     var body: some View {
@@ -299,7 +299,7 @@ private struct HomeEmptySection: View {
 }
 
 private struct AlbumContextMenu: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let album: NavidromeAlbum
     let openAlbum: (NavidromeAlbum) -> Void
 

@@ -7,7 +7,25 @@
 
 import AppKit
 import Foundation
-import MediaPlayer
+@preconcurrency import MediaPlayer
+
+/// MediaPlayer invokes artwork providers on its own private queue. NSImage is
+/// immutable after construction here, so this wrapper keeps that callback out
+/// of `NowPlayingController`'s main-actor isolation.
+private final class NowPlayingArtworkProvider: @unchecked Sendable {
+    let image: NSImage
+
+    init(image: NSImage) {
+        self.image = image
+    }
+}
+
+private func makeNowPlayingArtwork(from image: NSImage) -> MPMediaItemArtwork {
+    let provider = NowPlayingArtworkProvider(image: image)
+    return MPMediaItemArtwork(boundsSize: image.size) { _ in
+        provider.image
+    }
+}
 
 @MainActor
 final class NowPlayingController {
@@ -27,7 +45,7 @@ final class NowPlayingController {
         configureRemoteCommands()
     }
 
-    deinit {
+    isolated deinit {
         for (command, target) in commandTargets {
             command.removeTarget(target)
         }
@@ -81,9 +99,7 @@ final class NowPlayingController {
         }
 
         if let artworkData, let image = NSImage(data: artworkData) {
-            nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in
-                image
-            }
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = makeNowPlayingArtwork(from: image)
         }
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo

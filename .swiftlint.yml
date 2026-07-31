@@ -1,0 +1,39 @@
+included:
+  - PolyDrom
+excluded:
+  - PolyDrom/Assets.xcassets
+  - PolyDrom.xcodeproj
+
+opt_in_rules:
+  - empty_count
+  - explicit_init
+  - first_where
+  - sorted_first_last
+
+analyzer_rules:
+  - unused_import
+  - unused_declaration
+
+line_length:
+  warning: 150
+  error: 180
+type_body_length:
+  warning: 1500
+  error: 1800
+file_length:
+  warning: 1500
+  error: 1800
+function_body_length:
+  warning: 100
+  error: 150
+function_parameter_count:
+  warning: 8
+  error: 10
+cyclomatic_complexity:
+  warning: 20
+  error: 25
+large_tuple:
+  warning: 4
+  error: 5
+
+reporter: "xcode"

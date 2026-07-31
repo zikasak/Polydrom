@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct ServerProfile: Identifiable, Hashable {
+struct ServerProfile: Identifiable, Hashable, Sendable {
     let id: UUID
     var name: String
     var address: String
@@ -27,13 +27,12 @@ struct ServerProfile: Identifiable, Hashable {
     }
 }
 
-struct NavidromeSong: Decodable, Identifiable, Hashable {
+struct NavidromeSong: Decodable, Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let artist: String?
     let album: String?
     let duration: Int?
-    let suffix: String?
     let coverArt: String?
     let albumId: String?
     let artistId: String?
@@ -48,7 +47,6 @@ struct NavidromeSong: Decodable, Identifiable, Hashable {
         artist: String? = nil,
         album: String? = nil,
         duration: Int? = nil,
-        suffix: String? = nil,
         coverArt: String? = nil,
         albumId: String? = nil,
         artistId: String? = nil,
@@ -62,7 +60,6 @@ struct NavidromeSong: Decodable, Identifiable, Hashable {
         self.artist = artist
         self.album = album
         self.duration = duration
-        self.suffix = suffix
         self.coverArt = coverArt
         self.albumId = albumId
         self.artistId = artistId
@@ -73,7 +70,7 @@ struct NavidromeSong: Decodable, Identifiable, Hashable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, artist, album, duration, suffix, coverArt, albumId, artistId
+        case id, title, artist, album, duration, coverArt, albumId, artistId
         case track
         case discNumber
         case created
@@ -87,7 +84,6 @@ struct NavidromeSong: Decodable, Identifiable, Hashable {
         artist = container.decodeStringIfPresent(forKey: .artist)
         album = container.decodeStringIfPresent(forKey: .album)
         duration = container.decodeIntIfPresent(forKey: .duration)
-        suffix = container.decodeStringIfPresent(forKey: .suffix)
         coverArt = container.decodeStringIfPresent(forKey: .coverArt)
         albumId = container.decodeStringIfPresent(forKey: .albumId)
         artistId = container.decodeStringIfPresent(forKey: .artistId)
@@ -111,7 +107,7 @@ struct NavidromeSong: Decodable, Identifiable, Hashable {
     }
 }
 
-struct PlaybackQueueEntry: Identifiable, Hashable {
+struct PlaybackQueueEntry: Identifiable, Hashable, Sendable {
     let id: UUID
     var song: NavidromeSong
 
@@ -121,7 +117,7 @@ struct PlaybackQueueEntry: Identifiable, Hashable {
     }
 }
 
-struct NavidromeAlbum: Decodable, Identifiable, Hashable {
+struct NavidromeAlbum: Decodable, Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let artist: String?
@@ -209,7 +205,7 @@ struct NavidromeAlbum: Decodable, Identifiable, Hashable {
     }
 }
 
-struct NavidromeArtist: Decodable, Identifiable, Hashable {
+struct NavidromeArtist: Decodable, Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let albumCount: Int?
@@ -267,7 +263,7 @@ struct NavidromeArtist: Decodable, Identifiable, Hashable {
     }
 }
 
-struct NavidromePlaylist: Decodable, Identifiable, Hashable {
+struct NavidromePlaylist: Decodable, Identifiable, Hashable, Sendable {
     let id: String
     let name: String
     let songCount: Int?
@@ -303,7 +299,7 @@ struct NavidromePlaylist: Decodable, Identifiable, Hashable {
     }
 }
 
-struct SongLyrics: Decodable, Identifiable, Hashable {
+struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
     let displayArtist: String?
     let displayTitle: String?
     let language: String?
@@ -347,7 +343,7 @@ struct SongLyrics: Decodable, Identifiable, Hashable {
     }
 }
 
-struct SongLyricsLine: Decodable, Identifiable, Hashable {
+struct SongLyricsLine: Decodable, Identifiable, Hashable, Sendable {
     let value: String
     let start: Int?
 
@@ -430,14 +426,7 @@ private enum FlexibleISO8601 {
     }
 }
 
-enum AlbumListType: String {
-    case newest
-    case recent
-    case random
-    case alphabeticalByName
-}
-
-enum LibrarySection: String, CaseIterable, Identifiable {
+enum LibrarySection: String, CaseIterable, Identifiable, Sendable {
     case home = "Home"
     case search = "Search"
     case random = "Random"

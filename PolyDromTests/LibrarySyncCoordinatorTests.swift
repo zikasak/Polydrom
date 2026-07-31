@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import PolyDrom
 
@@ -6,22 +7,20 @@ import Testing
 @MainActor
 struct LibrarySyncCoordinatorTests {
     @Test func firstChangedAndUnchangedChecksUseTheExpectedSyncDepth() async throws {
-        let lock = NSLock()
-        nonisolated(unsafe) var scanToken = "scan-1"
-        nonisolated(unsafe) var searchRequests = 0
-        nonisolated(unsafe) var playlistDetailRequests = 0
+        struct RequestState: Sendable {
+            var scanToken = "scan-1"
+            var searchRequests = 0
+            var playlistDetailRequests = 0
+        }
+        let state = Mutex(RequestState())
 
         let handler: StubURLProtocol.Handler = { request in
             switch apiMethod(in: request) {
             case "getScanStatus":
-                lock.lock()
-                let token = scanToken
-                lock.unlock()
+                let token = state.withLock { $0.scanToken }
                 return envelope(#"{"status":"ok","scanStatus":{"scanning":false,"lastScan":"\#(token)"}}"#)
             case "search3":
-                lock.lock()
-                searchRequests += 1
-                lock.unlock()
+                state.withLock { $0.searchRequests += 1 }
                 if queryValue("artistCount", in: request) != "0" {
                     return envelope(#"{"status":"ok","searchResult3":{"artist":[{"id":"artist","name":"Artist","albumCount":1}]}}"#)
                 }
@@ -32,9 +31,7 @@ struct LibrarySyncCoordinatorTests {
             case "getPlaylists":
                 return envelope(#"{"status":"ok","playlists":{"playlist":[{"id":"playlist","name":"Mix","songCount":1,"changed":"2026-07-30T12:00:00Z"}]}}"#)
             case "getPlaylist":
-                lock.lock()
-                playlistDetailRequests += 1
-                lock.unlock()
+                state.withLock { $0.playlistDetailRequests += 1 }
                 return envelope(#"{"status":"ok","playlist":{"entry":[{"id":"song","title":"Song","albumId":"album","artistId":"artist"}]}}"#)
             case "getStarred2":
                 return envelope(#"{"status":"ok","starred2":{"song":[{"id":"song","title":"Song"}]}}"#)
@@ -53,20 +50,18 @@ struct LibrarySyncCoordinatorTests {
         )
 
         #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .full)
-        #expect(searchRequests == 3)
-        #expect(playlistDetailRequests == 1)
+        #expect(state.withLock { $0.searchRequests } == 3)
+        #expect(state.withLock { $0.playlistDetailRequests } == 1)
         #expect(try await store.favoriteSongs(serverKey: "server").map(\.id) == ["song"])
 
         #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .metadataOnly)
-        #expect(searchRequests == 3)
-        #expect(playlistDetailRequests == 1)
+        #expect(state.withLock { $0.searchRequests } == 3)
+        #expect(state.withLock { $0.playlistDetailRequests } == 1)
 
-        lock.lock()
-        scanToken = "scan-2"
-        lock.unlock()
+        state.withLock { $0.scanToken = "scan-2" }
         #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .full)
-        #expect(searchRequests == 6)
-        #expect(playlistDetailRequests == 2)
+        #expect(state.withLock { $0.searchRequests } == 6)
+        #expect(state.withLock { $0.playlistDetailRequests } == 2)
         #expect(try await store.metadataSyncState(serverKey: "server").catalogToken == "scan-2")
     }
 
@@ -87,7 +82,7 @@ struct LibrarySyncCoordinatorTests {
         )
 
         #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .deferredForScan)
-        #expect(!(try await store.hasCachedLibrary(serverKey: "server")))
+        #expect(!(try await store.metadataSyncState(serverKey: "server").isComplete))
     }
 
     @Test func metadataOnlyCheckReconcilesFavoritesAndDeletedPlaylists() async throws {
@@ -148,7 +143,7 @@ struct LibrarySyncCoordinatorTests {
                 albums: [],
                 songs: [original],
                 playlists: [],
-                favorites: .empty,
+                favorites: FavoriteMetadata(),
                 catalogToken: "scan-1",
                 checkedAt: Date()
             ),
@@ -198,7 +193,7 @@ struct LibrarySyncCoordinatorTests {
                 albums: [],
                 songs: [],
                 playlists: [],
-                favorites: .empty,
+                favorites: FavoriteMetadata(),
                 catalogToken: "scan",
                 checkedAt: Date()
             ),

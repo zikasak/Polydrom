@@ -8,7 +8,7 @@
 import CryptoKit
 import Foundation
 
-struct NavidromeClient {
+struct NavidromeClient: Sendable {
     let profile: ServerProfile
 
     private let baseURL: URL
@@ -35,74 +35,8 @@ struct NavidromeClient {
         let status = response.subsonicResponse.scanStatus
         return CatalogChangeState(
             isScanning: status?.scanning ?? false,
-            itemCount: status?.count,
             token: status?.lastScan
         )
-    }
-
-    func randomSongs(size: Int = 50) async throws -> [NavidromeSong] {
-        let response: RandomSongsEnvelope = try await request(
-            "getRandomSongs",
-            queryItems: [URLQueryItem(name: "size", value: String(size))]
-        )
-        try response.subsonicResponse.throwIfNeeded()
-        return response.subsonicResponse.randomSongs?.songs.values ?? []
-    }
-
-    func song(id: String) async throws -> NavidromeSong? {
-        let response: SongEnvelope = try await request(
-            "getSong",
-            queryItems: [URLQueryItem(name: "id", value: id)],
-            timeoutInterval: 2
-        )
-        try response.subsonicResponse.throwIfNeeded()
-        return response.subsonicResponse.song
-    }
-
-    func searchSongs(matching query: String) async throws -> [NavidromeSong] {
-        let response: SearchEnvelope = try await request(
-            "search3",
-            queryItems: [
-                URLQueryItem(name: "query", value: query),
-                URLQueryItem(name: "artistCount", value: "0"),
-                URLQueryItem(name: "albumCount", value: "0"),
-                URLQueryItem(name: "songCount", value: "100")
-            ]
-        )
-        try response.subsonicResponse.throwIfNeeded()
-        return response.subsonicResponse.searchResult3?.songs.values ?? []
-    }
-
-    private func allAlbums(type: AlbumListType, pageSize: Int = 500) async throws -> [NavidromeAlbum] {
-        let pageSize = max(1, pageSize)
-        var albums: [NavidromeAlbum] = []
-        var seenAlbumIDs = Set<String>()
-        var offset = 0
-
-        while true {
-            let page = try await albumPage(type: type, size: pageSize, offset: offset)
-            let newAlbums = page.filter { seenAlbumIDs.insert($0.id).inserted }
-            albums.append(contentsOf: newAlbums)
-
-            if page.count < pageSize || newAlbums.isEmpty {
-                return albums
-            }
-
-            offset += pageSize
-        }
-    }
-
-    func albumPage(type: AlbumListType, size: Int, offset: Int) async throws -> [NavidromeAlbum] {
-        let response: AlbumListEnvelope = try await request(
-            "getAlbumList2",
-            queryItems: [
-                URLQueryItem(name: "type", value: type.rawValue),
-                URLQueryItem(name: "size", value: String(size)),
-                URLQueryItem(name: "offset", value: String(offset))
-            ]
-        )
-        try response.subsonicResponse.throwIfNeeded()
-        return response.subsonicResponse.albumList2?.albums.values ?? []
     }
 
     func artistPage(size: Int, offset: Int) async throws -> [NavidromeArtist] {
@@ -148,45 +82,6 @@ struct NavidromeClient {
         )
         try response.subsonicResponse.throwIfNeeded()
         return response.subsonicResponse.searchResult3?.songs.values ?? []
-    }
-
-    func albums(for artist: NavidromeArtist) async throws -> [NavidromeAlbum] {
-        let response: ArtistEnvelope = try await request(
-            "getArtist",
-            queryItems: [URLQueryItem(name: "id", value: artist.id)]
-        )
-        try response.subsonicResponse.throwIfNeeded()
-        let artistAlbums = response.subsonicResponse.artist?.albums.values ?? []
-        if !artistAlbums.isEmpty {
-            return artistAlbums
-        }
-
-        let libraryAlbums = try await allAlbums(type: .alphabeticalByName)
-        return libraryAlbums
-            .filter { album in
-                album.artistId == artist.id || album.artist?.localizedCaseInsensitiveCompare(artist.name) == .orderedSame
-            }
-            .sorted {
-                switch ($0.year, $1.year) {
-                case let (lhs?, rhs?) where lhs != rhs:
-                    return lhs < rhs
-                case (_?, nil):
-                    return true
-                case (nil, _?):
-                    return false
-                default:
-                    return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-                }
-            }
-    }
-
-    func songs(for album: NavidromeAlbum) async throws -> [NavidromeSong] {
-        let response: AlbumEnvelope = try await request(
-            "getAlbum",
-            queryItems: [URLQueryItem(name: "id", value: album.id)]
-        )
-        try response.subsonicResponse.throwIfNeeded()
-        return response.subsonicResponse.album?.songs.values ?? []
     }
 
     func playlists() async throws -> [NavidromePlaylist] {

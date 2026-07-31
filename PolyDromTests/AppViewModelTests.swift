@@ -4,7 +4,7 @@ import Testing
 
 @Suite(.serialized)
 @MainActor
-struct AppViewModelTests {
+struct AppCoordinatorTests {
     @Test func disconnectedActionsReturnUsefulMessagesAndIgnoreUnavailableWork() async {
         let (viewModel, _, _) = makeViewModel()
         #expect(!viewModel.isConnected)
@@ -38,7 +38,7 @@ struct AppViewModelTests {
 
     @Test func invalidClientFactoryAndFailedPingCoverConnectionFailures() async throws {
         let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: MemoryCredentialStore())
-        let invalid = AppViewModel(store: store, audioPlayer: AudioPlayer(), clientFactory: { _ in nil })
+        let invalid = AppCoordinator(store: store, audioPlayer: AudioPlayer(), clientFactory: { _ in nil })
         await invalid.connect(makeProfile())
         #expect(invalid.statusMessage == "Enter a valid server address.")
 
@@ -50,6 +50,27 @@ struct AppViewModelTests {
         #expect(!failed.isConnected)
         #expect(failed.statusMessage == "Bad login")
         #expect(!failed.isBusy)
+    }
+
+    @Test func lateConnectionResponseCannotReplaceNewerServerSession() async throws {
+        let handler: StubURLProtocol.Handler = { request in
+            if apiMethod(in: request) == "ping", queryValue("u", in: request) == "first" {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            return envelope(#"{"status":"ok"}"#)
+        }
+        let (viewModel, _, _) = makeViewModel(session: StubURLProtocol.session(handler: handler))
+        let first = makeProfile(username: "first")
+        let second = makeProfile(username: "second")
+
+        async let staleConnection: Void = viewModel.connect(first)
+        try await Task.sleep(for: .milliseconds(10))
+        await viewModel.connect(second)
+        await staleConnection
+
+        #expect(viewModel.activeServer?.id == second.id)
+        #expect(viewModel.activeServer?.username == "second")
+        #expect(viewModel.isOnline)
     }
 
     @Test func connectionLoadingSearchDetailsLyricsFavoritesAndDeletionWorkTogether() async throws {
@@ -118,16 +139,18 @@ struct AppViewModelTests {
             }
         }
 
-        let (viewModel, store, _) = makeViewModel(
+        let (viewModel, _, _) = makeViewModel(
             session: StubURLProtocol.session(handler: handler)
         )
-        let profile = try store.saveServer(address: "https://music.example.com", username: "user", password: "pw")
-        viewModel.loadServers()
+        viewModel.serverAddress = "https://music.example.com"
+        viewModel.username = "user"
+        viewModel.password = "pw"
+        await viewModel.connectFromForm()
+        let profile = try #require(viewModel.activeServer)
         #expect(viewModel.serverAddress == profile.address)
         #expect(viewModel.username == profile.username)
         #expect(viewModel.password == "pw")
 
-        await viewModel.connectToLatestServer()
         #expect(viewModel.isConnected)
         #expect(viewModel.activeServer?.id == profile.id)
         #expect(viewModel.recentlyAddedAlbums.map(\.id) == ["album"])

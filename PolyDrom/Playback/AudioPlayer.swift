@@ -47,7 +47,7 @@ final class AudioPlayer: ObservableObject {
         observeTimeControlStatus()
     }
 
-    deinit {
+    isolated deinit {
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
         }

@@ -137,7 +137,7 @@ struct PolyDromTests {
         #expect(songs.map(\.title) == ["Favorite Song"])
     }
 
-    @Test func libraryStorePersistsRecentSongs() throws {
+    @Test func libraryStorePersistsRecentSongs() async throws {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),
             keychain: KeychainStore()
@@ -145,9 +145,20 @@ struct PolyDromTests {
         let song = makeSong()
         let serverKey = "https://music.example.com|user"
 
-        try store.upsertSongs([song], serverKey: serverKey)
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [song],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "test",
+                checkedAt: Date()
+            ),
+            serverKey: serverKey
+        )
         try store.markPlayed(song, serverKey: serverKey)
-        #expect(try store.recentSongs(serverKey: serverKey) == [song])
+        #expect(try await store.recentSongsAsync(serverKey: serverKey) == [song])
     }
 
     @Test func playNextInsertsAfterCurrentSongAndQueueAppends() {
@@ -156,7 +167,7 @@ struct PolyDromTests {
             keychain: KeychainStore()
         )
         let audioPlayer = AudioPlayer()
-        let viewModel = AppViewModel(store: store, audioPlayer: audioPlayer)
+        let viewModel = AppCoordinator(store: store, audioPlayer: audioPlayer)
         let current = makeSong(id: "current", title: "Current")
         let later = makeSong(id: "later", title: "Later")
         let next = makeSong(id: "next", title: "Next")
@@ -178,7 +189,7 @@ struct PolyDromTests {
             keychain: KeychainStore()
         )
         let audioPlayer = AudioPlayer()
-        let viewModel = AppViewModel(store: store, audioPlayer: audioPlayer)
+        let viewModel = AppCoordinator(store: store, audioPlayer: audioPlayer)
         let duplicate = makeSong(id: "duplicate", title: "Duplicate")
         let later = makeSong(id: "later", title: "Later")
         let first = PlaybackQueueEntry(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, song: duplicate)
@@ -232,7 +243,7 @@ struct PolyDromTests {
             persistence: PersistenceController(inMemory: true),
             keychain: KeychainStore()
         )
-        let viewModel = AppViewModel(store: store, audioPlayer: AudioPlayer())
+        let viewModel = AppCoordinator(store: store, audioPlayer: AudioPlayer())
         let song = makeSong(
             artist: "Artist",
             album: "Album",
@@ -271,7 +282,6 @@ struct PolyDromTests {
             artist: artist,
             album: album,
             duration: nil,
-            suffix: nil,
             coverArt: nil,
             albumId: albumId,
             artistId: artistId

@@ -9,14 +9,14 @@ import AVKit
 import SwiftUI
 
 struct FullPlayerView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     @ObservedObject private var audioPlayer: AudioPlayer
-    @State private var detailPanel: PlayerDetailPanel? = nil
+    @State private var detailPanel: PlayerDetailPanel?
     let openRoute: (LibraryRoute) -> Void
     let onClose: () -> Void
 
     init(
-        viewModel: AppViewModel,
+        viewModel: AppCoordinator,
         openRoute: @escaping (LibraryRoute) -> Void = { _ in },
         onClose: @escaping () -> Void
     ) {
@@ -522,11 +522,11 @@ enum PlayerDetailPanel: Equatable {
 }
 
 struct PlayerQueueView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     @ObservedObject private var audioPlayer: AudioPlayer
     @State private var isScrolling = false
 
-    init(viewModel: AppViewModel) {
+    init(viewModel: AppCoordinator) {
         self.viewModel = viewModel
         self.audioPlayer = viewModel.audioPlayer
     }
@@ -597,10 +597,10 @@ struct PlayerQueueView: View {
 }
 
 struct PlayerLyricsView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     @ObservedObject private var audioPlayer: AudioPlayer
 
-    init(viewModel: AppViewModel) {
+    init(viewModel: AppCoordinator) {
         self.viewModel = viewModel
         self.audioPlayer = viewModel.audioPlayer
     }

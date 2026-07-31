@@ -6,57 +6,57 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct PersistenceTests {
-    @Test func serverLifecycleTrimsUpdatesSortsTouchesAndDeletes() throws {
+    @Test func serverLifecycleTrimsUpdatesSortsTouchesAndDeletes() async throws {
         let credentials = MemoryCredentialStore()
-        let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: credentials)
+        let registry = ServerRegistry(fileURL: nil, keychain: credentials)
 
-        let first = try store.saveServer(address: "  host.local  ", username: " user ", password: "one")
-        Thread.sleep(forTimeInterval: 0.002)
-        let second = try store.saveServer(address: "https://two.example", username: "two", password: "two", name: "Second")
+        let first = try registry.save(address: "  host.local  ", username: " user ", password: "one")
+        try await Task.sleep(for: .milliseconds(2))
+        let second = try registry.save(address: "https://two.example", username: "two", password: "two", name: "Second")
 
         #expect(first.address == "host.local")
         #expect(first.username == "user")
         #expect(first.password == "one")
-        #expect(try store.servers().map(\.id) == [second.id, first.id])
+        #expect(try registry.servers().map(\.id) == [second.id, first.id])
         #expect(credentials.savedCredentialIDs.count == 2)
 
-        Thread.sleep(forTimeInterval: 0.002)
-        try store.touchServer(first)
-        #expect(try store.servers().first?.id == first.id)
+        try await Task.sleep(for: .milliseconds(2))
+        try registry.touch(first)
+        #expect(try registry.servers().first?.id == first.id)
 
-        let updated = try store.saveServer(address: "host.local", username: "user", password: "changed", name: "Updated")
+        let updated = try registry.save(address: "host.local", username: "user", password: "changed", name: "Updated")
         #expect(updated.id == first.id)
         #expect(updated.name == "Updated")
         #expect(updated.password == "changed")
         #expect(credentials.passwords[first.credentialID] == "changed")
 
-        try store.deleteServer(updated)
-        #expect(try store.servers().map(\.id) == [second.id])
+        try registry.delete(updated)
+        #expect(try registry.servers().map(\.id) == [second.id])
         #expect(credentials.deletedCredentialIDs == [first.credentialID])
 
-        try store.deleteServer(updated)
-        try store.touchServer(updated)
-        #expect(try store.servers().count == 1)
+        try registry.delete(updated)
+        try registry.touch(updated)
+        #expect(try registry.servers().count == 1)
     }
 
     @Test func credentialFailuresPropagateFromSave() {
         let credentials = MemoryCredentialStore()
         credentials.error = TestFailure.intentional
-        let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: credentials)
+        let registry = ServerRegistry(fileURL: nil, keychain: credentials)
 
         #expect(throws: TestFailure.self) {
-            try store.saveServer(address: "host", username: "user", password: "secret")
+            try registry.save(address: "host", username: "user", password: "secret")
         }
     }
 
     @Test func credentialFailuresPropagateFromLoad() throws {
         let credentials = MemoryCredentialStore()
-        let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: credentials)
-        _ = try store.saveServer(address: "host", username: "user", password: "secret")
+        let registry = ServerRegistry(fileURL: nil, keychain: credentials)
+        _ = try registry.save(address: "host", username: "user", password: "secret")
         credentials.error = TestFailure.intentional
 
         #expect(throws: TestFailure.self) {
-            try store.servers()
+            try registry.servers()
         }
     }
 
@@ -68,8 +68,19 @@ struct PersistenceTests {
         let original = makeSong(id: "one", title: "Original", duration: nil, coverArt: "cover")
         let other = makeSong(id: "two", title: "Other", artist: nil, album: nil)
 
-        try store.upsertSongs([original, other], serverKey: "server-a")
-        #expect(try store.recentSongs(serverKey: "server-a").isEmpty)
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [original, other],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "initial",
+                checkedAt: Date()
+            ),
+            serverKey: "server-a"
+        )
+        #expect(try await store.recentSongsAsync(serverKey: "server-a").isEmpty)
         let shuffledLibrary = try await store.randomSongs(serverKey: "server-a")
         #expect(shuffledLibrary.count == 2)
         #expect(Set(shuffledLibrary.map(\.id)) == ["one", "two"])
@@ -77,24 +88,50 @@ struct PersistenceTests {
         #expect(try await store.randomSongs(serverKey: "server-a", count: 0).isEmpty)
 
         try store.markPlayed(original, serverKey: "server-a")
-        Thread.sleep(forTimeInterval: 0.002)
+        try await Task.sleep(for: .milliseconds(2))
         try store.markPlayed(other, serverKey: "server-a")
         try store.markPlayed(makeSong(id: "one", title: "Updated", duration: 42), serverKey: "server-a")
         try store.markPlayed(makeSong(id: "one", title: "Other Server"), serverKey: "server-b")
 
-        let recent = try store.recentSongs(serverKey: "server-a")
+        let recent = try await store.recentSongsAsync(serverKey: "server-a")
         #expect(recent.count == 2)
         #expect(recent.first?.id == "one")
         #expect(recent.first?.title == "Updated")
         #expect(recent.first?.duration == 42)
-        #expect(try store.recentSongs(serverKey: "server-a", limit: 1).count == 1)
-        #expect(try store.recentSongs(serverKey: "server-b").map(\.title) == ["Other Server"])
+        #expect(try await store.recentSongsAsync(serverKey: "server-a", limit: 1).count == 1)
+        #expect(try await store.recentSongsAsync(serverKey: "server-b").map(\.title) == ["Other Server"])
     }
 
     @Test func keychainErrorsExposeStatusCode() {
         #expect(KeychainError.unexpectedStatus(-50).localizedDescription == "Keychain error -50")
         #expect(NavidromeError.invalidURL.localizedDescription == "The server address is not a valid URL.")
         #expect(NavidromeError.server(message: "Nope").localizedDescription == "Nope")
+    }
+
+    @Test func unusableMusicCacheIsRecreatedWithoutARegistryDependency() async throws {
+        let directory = try temporaryDirectory()
+        let cacheURL = directory.appendingPathComponent("LibraryCache.sqlite")
+        try FileManager.default.createDirectory(at: cacheURL, withIntermediateDirectories: true)
+
+        let persistence = PersistenceController(storeURL: cacheURL)
+        #expect(persistence.loadFailure == nil)
+
+        let store = LibraryStore(persistence: persistence, keychain: MemoryCredentialStore())
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [makeSong(id: "recovered")],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "recovered",
+                checkedAt: Date()
+            ),
+            serverKey: "server"
+        )
+
+        #expect(try await store.metadataSyncState(serverKey: "server").isComplete)
+        #expect(FileManager.default.fileExists(atPath: cacheURL.path))
     }
 
     @Test func completeMetadataSnapshotsAreQueryableOrderedScopedAndReconciled() async throws {
@@ -151,14 +188,14 @@ struct PersistenceTests {
                 albums: [],
                 songs: [],
                 playlists: [],
-                favorites: .empty,
+                favorites: FavoriteMetadata(),
                 catalogToken: "other",
                 checkedAt: Date()
             ),
             serverKey: "server-b"
         )
 
-        #expect(try await store.hasCachedLibrary(serverKey: "server-a"))
+        #expect(try await store.metadataSyncState(serverKey: "server-a").isComplete)
         #expect(try await store.metadataSyncState(serverKey: "server-a").catalogToken == "scan-1")
         #expect(try await store.artists(serverKey: "server-a").map(\.id) == ["artist"])
         #expect(try await store.artists(serverKey: "server-b").map(\.id) == ["other"])
@@ -180,7 +217,7 @@ struct PersistenceTests {
                 albums: [album],
                 songs: [first],
                 playlists: [],
-                favorites: .empty,
+                favorites: FavoriteMetadata(),
                 catalogToken: "scan-2",
                 checkedAt: Date()
             ),
@@ -197,7 +234,8 @@ struct PersistenceTests {
             persistence: PersistenceController(inMemory: true),
             keychain: MemoryCredentialStore()
         )
-        let profile = try store.saveServer(
+        let registry = ServerRegistry(fileURL: nil, keychain: MemoryCredentialStore())
+        let profile = try registry.save(
             address: "https://delete.example",
             username: "user",
             password: "password"
@@ -222,9 +260,9 @@ struct PersistenceTests {
         )
         try store.markPlayed(song, serverKey: profile.serverKey)
 
-        try store.deleteServer(profile)
+        try registry.delete(profile)
+        try store.purgeLibrary(serverKey: profile.serverKey)
 
-        #expect(!(try await store.hasCachedLibrary(serverKey: profile.serverKey)))
         #expect(!(try await store.metadataSyncState(serverKey: profile.serverKey).isComplete))
         #expect(try await store.artists(serverKey: profile.serverKey).isEmpty)
         #expect(try await store.albums(serverKey: profile.serverKey).isEmpty)
@@ -274,7 +312,7 @@ struct PersistenceTests {
                 albums: albums,
                 songs: songs,
                 playlists: [],
-                favorites: .empty,
+                favorites: FavoriteMetadata(),
                 catalogToken: "large-snapshot",
                 checkedAt: Date()
             ),
@@ -289,7 +327,7 @@ struct PersistenceTests {
         #expect(try await store.metadataSyncState(serverKey: "large-server").isComplete)
     }
 
-    @Test func songOnlyStoreMigratesWithoutLosingProfilesOrPlaybackHistory() async throws {
+    @Test func legacyImportPreservesServerAndKeychainIdentityWhileCacheIsRebuilt() async throws {
         let directory = try temporaryDirectory()
         let storeURL = directory.appendingPathComponent("Legacy.sqlite")
         let legacyContainer = NSPersistentContainer(
@@ -330,19 +368,27 @@ struct PersistenceTests {
             try legacyContainer.persistentStoreCoordinator.remove(persistentStore)
         }
 
-        let migratedStore = LibraryStore(
+        let credentials = MemoryCredentialStore()
+        credentials.passwords["credential"] = "keychain-secret"
+        let legacyStore = LibraryStore(
             persistence: PersistenceController(storeURL: storeURL),
-            keychain: MemoryCredentialStore()
+            keychain: credentials
         )
+        let registry = ServerRegistry(fileURL: nil, keychain: credentials)
+        try registry.importLegacyServersIfNeeded(from: legacyStore)
 
-        let profiles = try migratedStore.servers()
+        let profiles = try registry.servers()
         #expect(profiles.map(\.id) == [serverID])
-        #expect(profiles.first?.password == "")
-        #expect(
-            try migratedStore.recentSongs(serverKey: "https://legacy.example|user").map(\.id)
-                == ["legacy-song"]
+        #expect(profiles.first?.credentialID == "credential")
+        #expect(profiles.first?.password == "keychain-secret")
+        #expect(credentials.savedCredentialIDs.isEmpty)
+
+        let rebuiltCache = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: credentials
         )
-        #expect(!(try await migratedStore.hasCachedLibrary(serverKey: "https://legacy.example|user")))
+        #expect(try await rebuiltCache.recentSongsAsync(serverKey: "https://legacy.example|user").isEmpty)
+        #expect(!(try await rebuiltCache.metadataSyncState(serverKey: "https://legacy.example|user").isComplete))
     }
 }
 

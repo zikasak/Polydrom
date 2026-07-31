@@ -95,8 +95,5 @@ struct DomainModelTests {
             #expect(section.id == section.rawValue)
             #expect(section.systemImage == expected[section])
         }
-        #expect(AlbumListType.newest.rawValue == "newest")
-        #expect(AlbumListType.recent.rawValue == "recent")
-        #expect(AlbumListType.random.rawValue == "random")
     }
 }

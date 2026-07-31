@@ -8,13 +8,13 @@
 import SwiftUI
 
 struct AlbumBrowserView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     @Environment(\.openLibraryRoute) private var openLibraryRoute
     let albums: [NavidromeAlbum]
     var openAlbum: ((NavidromeAlbum) -> Void)?
 
     init(
-        viewModel: AppViewModel,
+        viewModel: AppCoordinator,
         albums: [NavidromeAlbum],
         openAlbum: ((NavidromeAlbum) -> Void)? = nil
     ) {
@@ -139,7 +139,7 @@ private struct AlbumBrowserGrid: View, Equatable {
 }
 
 struct AlbumDetailView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let album: NavidromeAlbum
     let openRoute: (LibraryRoute) -> Void
 

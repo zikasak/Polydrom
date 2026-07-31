@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct ArtistBrowserView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
 
     var body: some View {
         ArtistBrowserGrid(
@@ -28,7 +28,7 @@ struct ArtistBrowserView: View {
 }
 
 struct FavoriteArtistBrowserView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
 
     var body: some View {
         ArtistBrowserGrid(
@@ -141,7 +141,7 @@ private struct ArtistBrowserGrid: View, Equatable {
 }
 
 struct ArtistDetailView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let artist: NavidromeArtist
     let openAlbum: (NavidromeAlbum) -> Void
 

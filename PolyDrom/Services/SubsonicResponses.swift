@@ -17,11 +17,6 @@ struct SubsonicEnvelope<Response: Decodable>: Decodable {
 
 typealias PingEnvelope = SubsonicEnvelope<BasicSubsonicResponse>
 typealias SearchEnvelope = SubsonicEnvelope<SearchResponse>
-typealias RandomSongsEnvelope = SubsonicEnvelope<RandomSongsResponse>
-typealias SongEnvelope = SubsonicEnvelope<SongResponse>
-typealias AlbumListEnvelope = SubsonicEnvelope<AlbumListResponse>
-typealias ArtistEnvelope = SubsonicEnvelope<ArtistResponse>
-typealias AlbumEnvelope = SubsonicEnvelope<AlbumResponse>
 typealias PlaylistsEnvelope = SubsonicEnvelope<PlaylistsResponse>
 typealias PlaylistEnvelope = SubsonicEnvelope<PlaylistResponse>
 typealias LyricsEnvelope = SubsonicEnvelope<LyricsResponse>
@@ -50,36 +45,6 @@ struct SearchResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let searchResult3: SearchResult?
-}
-
-struct RandomSongsResponse: SubsonicResponse {
-    let status: String
-    let error: SubsonicServerError?
-    let randomSongs: SongContainer?
-}
-
-struct SongResponse: SubsonicResponse {
-    let status: String
-    let error: SubsonicServerError?
-    let song: NavidromeSong?
-}
-
-struct AlbumListResponse: SubsonicResponse {
-    let status: String
-    let error: SubsonicServerError?
-    let albumList2: AlbumContainer?
-}
-
-struct ArtistResponse: SubsonicResponse {
-    let status: String
-    let error: SubsonicServerError?
-    let artist: ArtistDetail?
-}
-
-struct AlbumResponse: SubsonicResponse {
-    let status: String
-    let error: SubsonicServerError?
-    let album: AlbumDetail?
 }
 
 struct PlaylistsResponse: SubsonicResponse {
@@ -112,27 +77,18 @@ struct ScanStatusResponse: SubsonicResponse {
     let scanStatus: ScanStatus?
 }
 
-struct ScanStatus: Decodable {
+struct ScanStatus: Decodable, Sendable {
     let scanning: Bool
-    let count: Int?
     let lastScan: String?
 
     enum CodingKeys: String, CodingKey {
         case scanning
-        case count
         case lastScan
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         scanning = (try? container.decode(Bool.self, forKey: .scanning)) ?? false
-        if let value = try? container.decode(Int.self, forKey: .count) {
-            count = value
-        } else if let value = try? container.decode(String.self, forKey: .count) {
-            count = Int(value)
-        } else {
-            count = nil
-        }
         if let value = try? container.decode(String.self, forKey: .lastScan) {
             lastScan = value
         } else if let value = try? container.decode(Double.self, forKey: .lastScan) {
@@ -190,58 +146,6 @@ struct SearchResult: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         artists = (try? container.decode(FlexibleArray<NavidromeArtist>.self, forKey: .artists)) ?? FlexibleArray(values: [])
         albums = (try? container.decode(FlexibleArray<NavidromeAlbum>.self, forKey: .albums)) ?? FlexibleArray(values: [])
-        songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
-    }
-}
-
-struct SongContainer: Decodable {
-    let songs: FlexibleArray<NavidromeSong>
-
-    enum CodingKeys: String, CodingKey {
-        case songs = "song"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
-    }
-}
-
-struct AlbumContainer: Decodable {
-    let albums: FlexibleArray<NavidromeAlbum>
-
-    enum CodingKeys: String, CodingKey {
-        case albums = "album"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        albums = (try? container.decode(FlexibleArray<NavidromeAlbum>.self, forKey: .albums)) ?? FlexibleArray(values: [])
-    }
-}
-
-struct ArtistDetail: Decodable {
-    let albums: FlexibleArray<NavidromeAlbum>
-
-    enum CodingKeys: String, CodingKey {
-        case albums = "album"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        albums = (try? container.decode(FlexibleArray<NavidromeAlbum>.self, forKey: .albums)) ?? FlexibleArray(values: [])
-    }
-}
-
-struct AlbumDetail: Decodable {
-    let songs: FlexibleArray<NavidromeSong>
-
-    enum CodingKeys: String, CodingKey {
-        case songs = "song"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
         songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
     }
 }

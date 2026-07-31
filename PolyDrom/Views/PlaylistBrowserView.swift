@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct PlaylistBrowserView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
 
     var body: some View {
         LazyLibraryList(viewModel.playlists) { playlist in
@@ -31,7 +31,7 @@ struct PlaylistBrowserView: View {
 }
 
 struct PlaylistDetailView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let playlist: NavidromePlaylist
     let openRoute: (LibraryRoute) -> Void
 

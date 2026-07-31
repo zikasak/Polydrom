@@ -8,31 +8,92 @@
 import CoreData
 import Foundation
 
+@MainActor
 final class PersistenceController {
-    static let shared = PersistenceController()
+    static let shared = PersistenceController(storeURL: PersistenceController.libraryCacheURL)
 
     let container: NSPersistentContainer
+    private(set) var loadFailure: PersistenceError?
 
-    init(inMemory: Bool = false, storeURL: URL? = nil) {
+    init(inMemory: Bool = false, storeURL: URL? = nil, recoverDisposableCache: Bool = true) {
         container = NSPersistentContainer(name: "PolyDrom", managedObjectModel: Self.makeModel())
+        let description = container.persistentStoreDescriptions[0]
+        let resolvedStoreURL: URL?
 
         if inMemory {
-            container.persistentStoreDescriptions.first?.url = URL(fileURLWithPath: "/dev/null")
-        } else if let storeURL {
-            container.persistentStoreDescriptions.first?.url = storeURL
+            description.type = NSInMemoryStoreType
+            resolvedStoreURL = nil
+        } else {
+            description.type = NSSQLiteStoreType
+            resolvedStoreURL = storeURL
+        }
+        if let storeURL = resolvedStoreURL {
+            try? FileManager.default.createDirectory(
+                at: storeURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            description.url = storeURL
         }
 
-        container.persistentStoreDescriptions.first?.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
-        container.persistentStoreDescriptions.first?.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
+        description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
+        description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
+        openStore(
+            description: description,
+            cacheURL: recoverDisposableCache ? resolvedStoreURL : nil
+        )
 
-        container.loadPersistentStores { _, error in
-            if let error {
-                fatalError("Unable to load Core Data store: \(error)")
+        container.viewContext.mergePolicy = NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)
+        container.viewContext.automaticallyMergesChangesFromParent = true
+    }
+
+    static var libraryCacheURL: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("PolyDrom", isDirectory: true)
+            .appendingPathComponent("LibraryCache.sqlite")
+    }
+
+    /// The location used by the pre-registry release. It is read only for the
+    /// one-time server migration; music metadata may be rebuilt.
+    static var legacyStoreURL: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("PolyDrom.sqlite")
+    }
+
+    private func openStore(description: NSPersistentStoreDescription, cacheURL: URL?) {
+        do {
+            try container.persistentStoreCoordinator.addPersistentStore(
+                ofType: description.type,
+                configurationName: description.configuration,
+                at: description.url,
+                options: description.options
+            )
+        } catch {
+            guard let cacheURL else {
+                loadFailure = .unavailable(error.localizedDescription)
+                return
+            }
+
+            do {
+                try Self.removeDisposableCache(at: cacheURL)
+                try container.persistentStoreCoordinator.addPersistentStore(
+                    ofType: description.type,
+                    configurationName: description.configuration,
+                    at: cacheURL,
+                    options: description.options
+                )
+            } catch {
+                loadFailure = .unavailable(error.localizedDescription)
             }
         }
+    }
 
-        container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
-        container.viewContext.automaticallyMergesChangesFromParent = true
+    private static func removeDisposableCache(at url: URL) throws {
+        let fileManager = FileManager.default
+        for suffix in ["", "-shm", "-wal"] {
+            let cacheFile = URL(fileURLWithPath: url.path + suffix)
+            guard fileManager.fileExists(atPath: cacheFile.path) else { continue }
+            try fileManager.removeItem(at: cacheFile)
+        }
     }
 
     private static func makeModel() -> NSManagedObjectModel {
@@ -58,7 +119,6 @@ final class PersistenceController {
             attribute("address", .stringAttributeType, isOptional: false),
             attribute("username", .stringAttributeType, isOptional: false),
             attribute("credentialID", .stringAttributeType),
-            attribute("password", .stringAttributeType),
             attribute("createdAt", .dateAttributeType, isOptional: false),
             attribute("lastConnectedAt", .dateAttributeType)
         ]
@@ -71,14 +131,12 @@ final class PersistenceController {
         entity.name = "VDSong"
         entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
         entity.properties = [
-            attribute("uuid", .UUIDAttributeType, isOptional: false),
             attribute("songID", .stringAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("title", .stringAttributeType, isOptional: false),
             attribute("artist", .stringAttributeType),
             attribute("album", .stringAttributeType),
             attribute("duration", .integer64AttributeType),
-            attribute("suffix", .stringAttributeType),
             attribute("coverArt", .stringAttributeType),
             attribute("albumId", .stringAttributeType),
             attribute("artistId", .stringAttributeType),
@@ -87,8 +145,6 @@ final class PersistenceController {
             attribute("created", .dateAttributeType),
             attribute("serverPlayedAt", .dateAttributeType),
             attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false),
-            attribute("playCount", .integer64AttributeType, isOptional: false, defaultValue: 0),
-            attribute("cachedAt", .dateAttributeType, isOptional: false),
             attribute("lastPlayedAt", .dateAttributeType)
         ]
         entity.uniquenessConstraints = [["serverKey", "songID"]]
@@ -100,15 +156,13 @@ final class PersistenceController {
         entity.name = "VDArtist"
         entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
         entity.properties = [
-            attribute("uuid", .UUIDAttributeType, isOptional: false),
             attribute("artistID", .stringAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("name", .stringAttributeType, isOptional: false),
             attribute("albumCount", .integer64AttributeType),
             attribute("coverArt", .stringAttributeType),
             attribute("artistImageURL", .stringAttributeType),
-            attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false),
-            attribute("cachedAt", .dateAttributeType, isOptional: false)
+            attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false)
         ]
         entity.uniquenessConstraints = [["serverKey", "artistID"]]
         return entity
@@ -119,7 +173,6 @@ final class PersistenceController {
         entity.name = "VDAlbum"
         entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
         entity.properties = [
-            attribute("uuid", .UUIDAttributeType, isOptional: false),
             attribute("albumID", .stringAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("name", .stringAttributeType, isOptional: false),
@@ -131,8 +184,7 @@ final class PersistenceController {
             attribute("created", .dateAttributeType),
             attribute("serverPlayedAt", .dateAttributeType),
             attribute("lastPlayedAt", .dateAttributeType),
-            attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false),
-            attribute("cachedAt", .dateAttributeType, isOptional: false)
+            attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false)
         ]
         entity.uniquenessConstraints = [["serverKey", "albumID"]]
         return entity
@@ -143,14 +195,12 @@ final class PersistenceController {
         entity.name = "VDPlaylist"
         entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
         entity.properties = [
-            attribute("uuid", .UUIDAttributeType, isOptional: false),
             attribute("playlistID", .stringAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("name", .stringAttributeType, isOptional: false),
             attribute("songCount", .integer64AttributeType),
             attribute("owner", .stringAttributeType),
-            attribute("changedAt", .dateAttributeType),
-            attribute("cachedAt", .dateAttributeType, isOptional: false)
+            attribute("changedAt", .dateAttributeType)
         ]
         entity.uniquenessConstraints = [["serverKey", "playlistID"]]
         return entity
@@ -161,7 +211,6 @@ final class PersistenceController {
         entity.name = "VDPlaylistEntry"
         entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
         entity.properties = [
-            attribute("uuid", .UUIDAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("playlistID", .stringAttributeType, isOptional: false),
             attribute("songID", .stringAttributeType, isOptional: false),
@@ -176,11 +225,9 @@ final class PersistenceController {
         entity.name = "VDMetadataSyncState"
         entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
         entity.properties = [
-            attribute("uuid", .UUIDAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("catalogToken", .stringAttributeType),
             attribute("lastCheckedAt", .dateAttributeType),
-            attribute("lastFullSyncAt", .dateAttributeType),
             attribute("isComplete", .booleanAttributeType, isOptional: false, defaultValue: false)
         ]
         entity.uniquenessConstraints = [["serverKey"]]
@@ -199,5 +246,16 @@ final class PersistenceController {
         attribute.isOptional = isOptional
         attribute.defaultValue = defaultValue
         return attribute
+    }
+}
+
+enum PersistenceError: LocalizedError {
+    case unavailable(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable(let description):
+            "The local music cache is unavailable: \(description)"
+        }
     }
 }

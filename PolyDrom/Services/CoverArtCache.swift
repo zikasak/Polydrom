@@ -172,31 +172,27 @@ actor CoverArtCache {
     private var inFlightRequests: [String: InFlightRequest] = [:]
     private var inFlightImageRequests: [String: InFlightImageRequest] = [:]
 
-    private init() {
+    init(session: URLSession? = nil, diskDirectory: URL? = nil) {
         memoryCache.countLimit = 4_000
         memoryCache.totalCostLimit = 100 * 1024 * 1024
-        let configuration = URLSessionConfiguration.default
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.httpMaximumConnectionsPerHost = 5
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
-        session = URLSession(configuration: configuration)
+        if let session {
+            self.session = session
+        } else {
+            let configuration = URLSessionConfiguration.default
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            configuration.httpMaximumConnectionsPerHost = 5
+            configuration.timeoutIntervalForRequest = 30
+            configuration.timeoutIntervalForResource = 60
+            self.session = URLSession(configuration: configuration)
+        }
 
-        let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        let defaultDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        diskDirectory = cachesDirectory
-            .appendingPathComponent("PolyDrom", isDirectory: true)
-            .appendingPathComponent("CoverArt", isDirectory: true)
-
-        try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
-    }
-
-    init(session: URLSession, diskDirectory: URL) {
-        memoryCache.countLimit = 4_000
-        memoryCache.totalCostLimit = 100 * 1024 * 1024
-        self.session = session
         self.diskDirectory = diskDirectory
-        try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
+            ?? defaultDirectory
+                .appendingPathComponent("PolyDrom", isDirectory: true)
+                .appendingPathComponent("CoverArt", isDirectory: true)
+        try? FileManager.default.createDirectory(at: self.diskDirectory, withIntermediateDirectories: true)
     }
 
     func data(for resource: CoverArtResource) async throws -> Data {

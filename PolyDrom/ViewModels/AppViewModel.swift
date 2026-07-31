@@ -1,5 +1,5 @@
 //
-//  AppViewModel.swift
+//  AppCoordinator.swift
 //  PolyDrom
 //
 //  Created by zikasak on 07/07/2026.
@@ -9,7 +9,7 @@ import Combine
 import Foundation
 
 @MainActor
-final class AppViewModel: ObservableObject {
+final class AppCoordinator: ObservableObject {
     @Published var serverAddress = ""
     @Published var username = ""
     @Published var password = ""
@@ -54,6 +54,7 @@ final class AppViewModel: ObservableObject {
     let audioPlayer: AudioPlayer
 
     private let store: LibraryStore
+    private let serverRegistry: ServerRegistry
     private let clientFactory: @MainActor (ServerProfile) -> NavidromeClient?
     private let coverArtCache: CoverArtCache
     private let syncCoordinator: LibrarySyncCoordinator
@@ -77,6 +78,7 @@ final class AppViewModel: ObservableObject {
     private let interchangeableThumbnailSizes = [72, 80, 96]
     private var didAttemptInitialConnection = false
     private var hasLoadedHome = false
+    private var sessionGeneration: UInt = 0
     private var artistFavoriteUpdatesInFlight = Set<String>()
     private var albumFavoriteUpdatesInFlight = Set<String>()
     private var songFavoriteUpdatesInFlight = Set<String>()
@@ -93,35 +95,45 @@ final class AppViewModel: ObservableObject {
         activeServer?.serverKey
     }
 
-    init() {
-        let store = LibraryStore()
-        self.store = store
-        self.audioPlayer = AudioPlayer()
-        self.clientFactory = { NavidromeClient(profile: $0) }
-        self.coverArtCache = .shared
-        self.syncCoordinator = LibrarySyncCoordinator(store: store)
-        configureAudioPlayer()
-        loadServers()
-    }
-
     init(
-        store: LibraryStore,
-        audioPlayer: AudioPlayer,
+        store: LibraryStore = LibraryStore(),
+        audioPlayer: AudioPlayer = AudioPlayer(),
         clientFactory: @escaping @MainActor (ServerProfile) -> NavidromeClient? = { NavidromeClient(profile: $0) },
-        coverArtCache: CoverArtCache = .shared
+        coverArtCache: CoverArtCache = .shared,
+        serverRegistry: ServerRegistry? = nil
     ) {
         self.store = store
+        let suppliedRegistry = serverRegistry
+        self.serverRegistry = suppliedRegistry ?? ServerRegistry()
         self.audioPlayer = audioPlayer
         self.clientFactory = clientFactory
         self.coverArtCache = coverArtCache
         self.syncCoordinator = LibrarySyncCoordinator(store: store)
+        if suppliedRegistry == nil,
+           let legacyStoreURL = PersistenceController.legacyStoreURL,
+           FileManager.default.fileExists(atPath: legacyStoreURL.path) {
+            let legacyStore = LibraryStore(
+                persistence: PersistenceController(
+                    storeURL: legacyStoreURL,
+                    recoverDisposableCache: false
+                ),
+                keychain: KeychainStore()
+            )
+            try? self.serverRegistry.importLegacyServersIfNeeded(from: legacyStore)
+        } else {
+            try? self.serverRegistry.importLegacyServersIfNeeded(from: store)
+        }
         configureAudioPlayer()
         loadServers()
+        if let initializationError = store.initializationError {
+            statusMessage = initializationError.localizedDescription
+        }
     }
 
     func loadServers() {
         do {
-            servers = try store.servers()
+            try serverRegistry.importLegacyServersIfNeeded(from: store)
+            servers = try serverRegistry.servers()
             if let latest = servers.first, activeServer == nil {
                 serverAddress = latest.address
                 username = latest.username
@@ -134,7 +146,7 @@ final class AppViewModel: ObservableObject {
 
     func connectFromForm() async {
         do {
-            let profile = try store.saveServer(address: serverAddress, username: username, password: password)
+            let profile = try serverRegistry.save(address: serverAddress, username: username, password: password)
             await connect(profile)
         } catch {
             statusMessage = error.localizedDescription
@@ -160,6 +172,8 @@ final class AppViewModel: ObservableObject {
             return
         }
 
+        sessionGeneration &+= 1
+        let generation = sessionGeneration
         let previousServerKey = activeServer?.serverKey
         cancelMetadataRefresh()
         scanRetryTask?.cancel()
@@ -172,20 +186,20 @@ final class AppViewModel: ObservableObject {
         serverAddress = profile.address
         username = profile.username
         password = profile.password
-        await reloadCachedLibrary()
+        await reloadCachedLibrary(for: generation)
 
         isBusy = true
         defer { isBusy = false }
 
         do {
             try await nextClient.ping()
-            guard activeServer?.serverKey == profile.serverKey else { return }
+            guard isCurrentSession(generation, serverKey: profile.serverKey) else { return }
             isOnline = true
-            try store.touchServer(profile)
+            try serverRegistry.touch(profile)
             loadServers()
-            await refreshMetadata()
+            await refreshMetadata(for: generation)
         } catch {
-            guard activeServer?.serverKey == profile.serverKey else { return }
+            guard isCurrentSession(generation, serverKey: profile.serverKey) else { return }
             isOnline = false
             statusMessage = hasCachedLibrary
                 ? "Offline — showing cached library. \(error.localizedDescription)"
@@ -196,6 +210,7 @@ final class AppViewModel: ObservableObject {
     func deleteServer(_ profile: ServerProfile) {
         let refreshToDrain: Task<MetadataSyncOutcome, Error>?
         if activeServer?.id == profile.id {
+            sessionGeneration &+= 1
             refreshToDrain = metadataSyncTask
             metadataMonitorTask?.cancel()
             cancelMetadataRefresh()
@@ -205,7 +220,8 @@ final class AppViewModel: ObservableObject {
         }
 
         do {
-            try store.deleteServer(profile)
+            try serverRegistry.delete(profile)
+            try store.purgeLibrary(serverKey: profile.serverKey)
             if activeServer?.id == profile.id {
                 activeServer = nil
                 client = nil
@@ -221,7 +237,7 @@ final class AppViewModel: ObservableObject {
                     guard let self else { return }
                     // A background reconciliation that was already committing
                     // when cancellation arrived must not recreate this profile's cache.
-                    try? self.store.deleteServer(profile)
+                    try? self.store.purgeLibrary(serverKey: profile.serverKey)
                     self.loadServers()
                 }
             }
@@ -282,6 +298,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadHome() async {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
@@ -290,7 +307,7 @@ final class AppViewModel: ObservableObject {
             let home = try await store.homeMetadata(serverKey: serverKey)
             let allAlbums = home.recentlyAdded + home.recentlyPlayed + home.random + home.featured
             await warmCachedAlbumCovers(allAlbums)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isCurrentSession(generation, serverKey: serverKey) else { return }
 
             recentlyAddedAlbums = home.recentlyAdded
             recentlyPlayedAlbums = home.recentlyPlayed
@@ -331,6 +348,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func search() async {
+        let generation = sessionGeneration
         guard let serverKey else {
             statusMessage = "Select a library first."
             return
@@ -349,6 +367,7 @@ final class AppViewModel: ObservableObject {
         do {
             let results = try await store.searchSongs(query, serverKey: serverKey)
             await warmCachedSongCovers(results)
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             searchResults = results
             prefetchSongCovers(results)
             statusMessage = searchResults.isEmpty ? "No songs found." : "\(searchResults.count) songs found"
@@ -358,6 +377,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadRandomSongs() async {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
@@ -365,6 +385,7 @@ final class AppViewModel: ObservableObject {
         do {
             let songs = try await store.randomSongs(serverKey: serverKey, count: 50)
             await warmCachedSongCovers(songs)
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             randomSongs = songs
             prefetchSongCovers(songs)
             statusMessage = randomSongs.isEmpty ? "No random songs returned." : "Loaded random songs"
@@ -374,6 +395,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadAlbums() async {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
@@ -381,6 +403,7 @@ final class AppViewModel: ObservableObject {
         do {
             let loadedAlbums = try await store.albums(serverKey: serverKey)
             await warmCachedAlbumCovers(loadedAlbums)
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             albums = loadedAlbums
             prefetchAlbumCovers(loadedAlbums)
             statusMessage = loadedAlbums.isEmpty ? "No cached albums." : "Loaded \(loadedAlbums.count) albums"
@@ -390,6 +413,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadArtists() async {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
@@ -397,6 +421,7 @@ final class AppViewModel: ObservableObject {
         do {
             let loadedArtists = try await store.artists(serverKey: serverKey)
             await warmCachedArtistCovers(loadedArtists)
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             artists = sortedVisibleArtists(loadedArtists)
             prefetchArtistCovers(loadedArtists)
             statusMessage = artists.isEmpty ? "No cached artists." : "Loaded \(artists.count) artists"
@@ -406,12 +431,15 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadPlaylists() async {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         isBusy = true
         defer { isBusy = false }
 
         do {
-            playlists = try await store.playlists(serverKey: serverKey)
+            let loadedPlaylists = try await store.playlists(serverKey: serverKey)
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
+            playlists = loadedPlaylists
             statusMessage = playlists.isEmpty ? "No cached playlists." : "Loaded playlists"
         } catch {
             statusMessage = error.localizedDescription
@@ -419,6 +447,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadAlbums(for artist: NavidromeArtist, force: Bool = false) async {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         if !force, loadedArtistAlbumsID == artist.id {
             if selectedArtist?.id != artist.id {
@@ -440,7 +469,7 @@ final class AppViewModel: ObservableObject {
             let albums = try await store.albums(serverKey: serverKey, artistID: artist.id)
             await warmCachedAlbumCovers(albums)
             artistAlbums = albums
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isCurrentSession(generation, serverKey: serverKey) else { return }
             loadedArtistAlbumsID = artist.id
             prefetchAlbumCovers(artistAlbums)
             statusMessage = artistAlbums.isEmpty ? "No albums for \(artist.name)." : "Loaded \(artist.name)"
@@ -450,6 +479,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadSongs(for album: NavidromeAlbum, force: Bool = false) async {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         if !force, loadedAlbumSongsID == album.id {
             if selectedAlbum?.id != album.id {
@@ -468,7 +498,7 @@ final class AppViewModel: ObservableObject {
             let songs = try await store.songs(serverKey: serverKey, albumID: album.id)
             await warmCachedSongCovers(songs)
             albumSongs = songs
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isCurrentSession(generation, serverKey: serverKey) else { return }
             loadedAlbumSongsID = album.id
             prefetchSongCovers(songs)
             statusMessage = songs.isEmpty ? "No songs for \(album.name)." : "Loaded \(album.name)"
@@ -478,6 +508,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadSongs(for playlist: NavidromePlaylist, force: Bool = false) async {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         if !force, loadedPlaylistSongsID == playlist.id {
             selectedPlaylist = playlist
@@ -494,7 +525,7 @@ final class AppViewModel: ObservableObject {
             let songs = try await store.songs(serverKey: serverKey, playlistID: playlist.id)
             await warmCachedSongCovers(songs)
             playlistSongs = songs
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isCurrentSession(generation, serverKey: serverKey) else { return }
             loadedPlaylistSongsID = playlist.id
             prefetchSongCovers(songs)
             statusMessage = songs.isEmpty ? "No songs for \(playlist.name)." : "Loaded \(playlist.name)"
@@ -708,7 +739,8 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadLyrics(for song: NavidromeSong, force: Bool = false) async {
-        guard isOnline, let client else {
+        let generation = sessionGeneration
+        guard isOnline, let client, let serverKey else {
             currentLyrics = nil
             lyricsMessage = "Connect to a server to load lyrics."
             return
@@ -726,11 +758,11 @@ final class AppViewModel: ObservableObject {
 
         do {
             let availableLyrics = try await client.lyrics(for: song)
-            guard lyricsSongID == song.id else { return }
+            guard lyricsSongID == song.id, isCurrentSession(generation, serverKey: serverKey) else { return }
             currentLyrics = availableLyrics.first(where: \.synced) ?? availableLyrics.first
             lyricsMessage = currentLyrics == nil ? "No lyrics are available for this song." : ""
         } catch {
-            guard lyricsSongID == song.id else { return }
+            guard lyricsSongID == song.id, isCurrentSession(generation, serverKey: serverKey) else { return }
             currentLyrics = nil
             lyricsMessage = "Lyrics could not be loaded: \(error.localizedDescription)"
         }
@@ -762,20 +794,21 @@ final class AppViewModel: ObservableObject {
 
         let wasFavorite = favoriteIDs.contains(song.id)
         let nextValue = !wasFavorite
+        let generation = sessionGeneration
         setFavoriteState(nextValue, for: song)
 
         Task { [weak self] in
             do {
                 try await client.setStarred(nextValue, itemID: song.id)
             } catch {
-                guard let self, self.serverKey == serverKey else { return }
+                guard let self, self.isCurrentSession(generation, serverKey: serverKey) else { return }
                 self.songFavoriteUpdatesInFlight.remove(song.id)
                 self.setFavoriteState(wasFavorite, for: song)
                 self.statusMessage = error.localizedDescription
                 return
             }
 
-            guard let self, self.serverKey == serverKey else { return }
+            guard let self, self.isCurrentSession(generation, serverKey: serverKey) else { return }
             do {
                 try await self.store.setFavorite(nextValue, songID: song.id, serverKey: serverKey)
                 try await self.loadCachedFavorites()
@@ -799,20 +832,21 @@ final class AppViewModel: ObservableObject {
 
         let wasFavorite = favoriteAlbumIDs.contains(album.id)
         let nextValue = !wasFavorite
+        let generation = sessionGeneration
         setFavoriteState(nextValue, for: album)
 
         Task { [weak self] in
             do {
                 try await client.setStarred(nextValue, itemID: album.id)
             } catch {
-                guard let self, self.serverKey == serverKey else { return }
+                guard let self, self.isCurrentSession(generation, serverKey: serverKey) else { return }
                 self.albumFavoriteUpdatesInFlight.remove(album.id)
                 self.setFavoriteState(wasFavorite, for: album)
                 self.statusMessage = error.localizedDescription
                 return
             }
 
-            guard let self, self.serverKey == serverKey else { return }
+            guard let self, self.isCurrentSession(generation, serverKey: serverKey) else { return }
             do {
                 try await self.store.setFavorite(nextValue, albumID: album.id, serverKey: serverKey)
                 try await self.loadCachedFavorites()
@@ -836,20 +870,21 @@ final class AppViewModel: ObservableObject {
 
         let wasFavorite = favoriteArtistIDs.contains(artist.id)
         let nextValue = !wasFavorite
+        let generation = sessionGeneration
         setFavoriteState(nextValue, for: artist)
 
         Task { [weak self] in
             do {
                 try await client.setStarred(nextValue, itemID: artist.id)
             } catch {
-                guard let self, self.serverKey == serverKey else { return }
+                guard let self, self.isCurrentSession(generation, serverKey: serverKey) else { return }
                 self.artistFavoriteUpdatesInFlight.remove(artist.id)
                 self.setFavoriteState(wasFavorite, for: artist)
                 self.statusMessage = error.localizedDescription
                 return
             }
 
-            guard let self, self.serverKey == serverKey else { return }
+            guard let self, self.isCurrentSession(generation, serverKey: serverKey) else { return }
             do {
                 try await self.store.setFavorite(nextValue, artistID: artist.id, serverKey: serverKey)
                 try await self.loadCachedFavorites()
@@ -899,6 +934,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func loadCachedFavorites() async throws {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         async let artistsRequest = store.favoriteArtists(serverKey: serverKey)
         async let albumsRequest = store.favoriteAlbums(serverKey: serverKey)
@@ -911,7 +947,7 @@ final class AppViewModel: ObservableObject {
         await warmCachedArtistCovers(loadedFavoriteArtists)
         await warmCachedAlbumCovers(loadedFavoriteAlbums)
         await warmCachedSongCovers(loadedFavoriteSongs)
-        guard self.serverKey == serverKey else { return }
+        guard isCurrentSession(generation, serverKey: serverKey) else { return }
         favoriteArtistIDs = Set(loadedFavoriteArtists.map(\.id))
         favoriteArtists = loadedFavoriteArtists
         favoriteAlbumIDs = Set(loadedFavoriteAlbums.map(\.id))
@@ -924,16 +960,18 @@ final class AppViewModel: ObservableObject {
     }
 
     private func refreshRecentSongs() async throws {
+        let generation = sessionGeneration
         guard let serverKey else { return }
         let loadedRecentSongs = try await store.recentSongsAsync(serverKey: serverKey)
         await warmCachedSongCovers(loadedRecentSongs)
-        guard self.serverKey == serverKey else { return }
+        guard isCurrentSession(generation, serverKey: serverKey) else { return }
         recentSongs = loadedRecentSongs
         prefetchSongCovers(loadedRecentSongs)
     }
 
-    func refreshMetadata() async {
-        guard metadataRefreshID == nil, let client, let serverKey else { return }
+    func refreshMetadata(for requestedGeneration: UInt? = nil) async {
+        let generation = requestedGeneration ?? sessionGeneration
+        guard generation == sessionGeneration, metadataRefreshID == nil, let client, let serverKey else { return }
         let wasOnline = isOnline
         let refreshID = UUID()
         metadataRefreshID = refreshID
@@ -949,7 +987,7 @@ final class AppViewModel: ObservableObject {
         do {
             if !isOnline {
                 try await client.ping()
-                guard self.serverKey == serverKey else { return }
+                guard isCurrentSession(generation, serverKey: serverKey) else { return }
                 isOnline = true
             }
 
@@ -961,22 +999,22 @@ final class AppViewModel: ObservableObject {
             }
             metadataSyncTask = syncTask
             let outcome = try await syncTask.value
-            guard self.serverKey == serverKey else { return }
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             switch outcome {
             case .full:
-                await reloadCachedLibrary()
+                await reloadCachedLibrary(for: generation)
                 statusMessage = metadataCompletionMessage(prefix: "Library metadata updated")
             case .metadataOnly:
-                await reloadCachedLibrary()
+                await reloadCachedLibrary(for: generation)
                 statusMessage = metadataCompletionMessage(prefix: "Library metadata is up to date")
             case .deferredForScan:
                 statusMessage = "Navidrome is scanning. Refresh will retry shortly."
-                scheduleScanRetry(serverKey: serverKey)
+                scheduleScanRetry(serverKey: serverKey, generation: generation)
             }
         } catch is CancellationError {
             return
         } catch {
-            guard self.serverKey == serverKey else { return }
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             if !wasOnline || error is URLError {
                 isOnline = false
             }
@@ -1010,7 +1048,7 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func scheduleScanRetry(serverKey: String) {
+    private func scheduleScanRetry(serverKey: String, generation: UInt) {
         guard isApplicationActive else { return }
         scanRetryTask?.cancel()
         scanRetryTask = Task { [weak self] in
@@ -1019,8 +1057,10 @@ final class AppViewModel: ObservableObject {
             } catch {
                 return
             }
-            guard let self, self.serverKey == serverKey, self.isApplicationActive else { return }
-            await self.refreshMetadata()
+            guard let self,
+                  self.isCurrentSession(generation, serverKey: serverKey),
+                  self.isApplicationActive else { return }
+            await self.refreshMetadata(for: generation)
         }
     }
 
@@ -1036,11 +1076,12 @@ final class AppViewModel: ObservableObject {
         return "\(prefix) at \(completedAt.formatted(date: .omitted, time: .shortened))"
     }
 
-    private func reloadCachedLibrary() async {
+    private func reloadCachedLibrary(for requestedGeneration: UInt? = nil) async {
+        let generation = requestedGeneration ?? sessionGeneration
         guard let serverKey else { return }
         do {
             let syncState = try await store.metadataSyncState(serverKey: serverKey)
-            guard self.serverKey == serverKey else { return }
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             hasCachedLibrary = syncState.isComplete
             lastMetadataCheckAt = syncState.lastCheckedAt
             guard syncState.isComplete else { return }
@@ -1073,7 +1114,7 @@ final class AppViewModel: ObservableObject {
                 favoriteSongsRequest,
                 recentRequest
             )
-            guard self.serverKey == serverKey else { return }
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             artists = sortedVisibleArtists(loadedArtists)
             albums = loadedAlbums
             playlists = loadedPlaylists
@@ -1102,9 +1143,9 @@ final class AppViewModel: ObservableObject {
                 playlistSongs = try await store.songs(serverKey: serverKey, playlistID: selectedPlaylist.id)
                 loadedPlaylistSongsID = selectedPlaylist.id
             }
-            guard self.serverKey == serverKey else { return }
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
         } catch {
-            guard self.serverKey == serverKey else { return }
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             statusMessage = error.localizedDescription
         }
     }
@@ -1209,6 +1250,10 @@ final class AppViewModel: ObservableObject {
         loadedArtistAlbumsID = nil
         loadedAlbumSongsID = nil
         loadedPlaylistSongsID = nil
+    }
+
+    private func isCurrentSession(_ generation: UInt, serverKey: String) -> Bool {
+        sessionGeneration == generation && self.serverKey == serverKey
     }
 
     private func sortedVisibleArtists(_ artists: [NavidromeArtist]) -> [NavidromeArtist] {

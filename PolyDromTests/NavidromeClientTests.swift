@@ -87,23 +87,11 @@ struct NavidromeClientTests {
         try await client.ping()
         let changeState = try await client.catalogChangeState()
         #expect(changeState.token == "scan-token")
-        #expect(changeState.itemCount == 4)
         #expect(!changeState.isScanning)
-        #expect(try await client.randomSongs(size: 1).map(\.id) == ["random"])
-        #expect(try await client.song(id: "partial")?.id == "hydrated")
-        #expect(try await client.searchSongs(matching: "find").map(\.id) == ["search"])
-        #expect(try await client.albumPage(type: .newest, size: 20, offset: 10).count == 4)
         #expect(try await client.artistPage(size: 20, offset: 10).map(\.id) == ["artist"])
         #expect(try await client.albumMetadataPage(size: 20, offset: 10).map(\.id) == ["metadata-album"])
         #expect(try await client.songMetadataPage(size: 20, offset: 10).map(\.id) == ["metadata-song"])
 
-        let directArtist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"direct","name":"Direct"}"#.utf8))
-        #expect(try await client.albums(for: directArtist).map(\.id) == ["direct-album"])
-        let fallbackArtist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"fallback","name":"Fallback"}"#.utf8))
-        #expect(try await client.albums(for: fallbackArtist).map(\.id) == ["early", "late", "none"])
-
-        let album = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"album","name":"Album"}"#.utf8))
-        #expect(try await client.songs(for: album).map(\.id) == ["album-song"])
         let playlists = try await client.playlists()
         #expect(playlists.map(\.id) == ["playlist"])
         #expect(try await client.songs(for: playlists[0]).map(\.id) == ["playlist-song"])
@@ -117,7 +105,7 @@ struct NavidromeClientTests {
         try await client.setStarred(false, itemID: "star-s")
     }
 
-    @Test func optionalContainersReturnEmptyCollectionsAndNilSong() async throws {
+    @Test func optionalContainersReturnEmptyCollections() async throws {
         let handler: StubURLProtocol.Handler = { request in
             let extra: String
             switch apiMethod(in: request) {
@@ -140,15 +128,10 @@ struct NavidromeClientTests {
         let client = try #require(
             NavidromeClient(profile: makeProfile(), session: StubURLProtocol.session(handler: handler))
         )
-        #expect(try await client.randomSongs().isEmpty)
         #expect(try await client.catalogChangeState().token == nil)
-        #expect(try await client.song(id: "missing") == nil)
-        #expect(try await client.searchSongs(matching: "none").isEmpty)
-        #expect(try await client.albumPage(type: .alphabeticalByName, size: 1, offset: 0).isEmpty)
         #expect(try await client.artistPage(size: 1, offset: 0).isEmpty)
         #expect(try await client.albumMetadataPage(size: 1, offset: 0).isEmpty)
         #expect(try await client.songMetadataPage(size: 1, offset: 0).isEmpty)
-        #expect(try await client.songs(for: JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"a","name":"A"}"#.utf8))).isEmpty)
         #expect(try await client.playlists().isEmpty)
         #expect(try await client.songs(for: JSONDecoder().decode(NavidromePlaylist.self, from: Data(#"{"id":"p","name":"P"}"#.utf8))).isEmpty)
         #expect(try await client.lyrics(for: makeSong()).isEmpty)

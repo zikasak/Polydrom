@@ -37,9 +37,7 @@ struct CoverArtCacheTests {
 
         let diskCache = CoverArtCache(session: session, diskDirectory: directory)
         #expect(try await diskCache.data(for: resource) == onePixelPNG)
-        lock.lock()
-        let requestCount = requests
-        lock.unlock()
+        let requestCount = lock.withLock { requests }
         #expect(requestCount == 1)
     }
 
@@ -66,9 +64,7 @@ struct CoverArtCacheTests {
         let images = try await [imageOne, imageTwo]
         #expect(images.allSatisfy { $0.width == 1 && $0.height == 1 })
         #expect(cache.cachedImage(for: resource) != nil)
-        lock.lock()
-        let requestCount = requests
-        lock.unlock()
+        let requestCount = lock.withLock { requests }
         #expect(requestCount == 1)
     }
 

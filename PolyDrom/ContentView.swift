@@ -9,7 +9,7 @@ import AppKit
 import SwiftUI
 
 struct ContentView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     @Environment(\.scenePhase) private var scenePhase
     @State private var detailPath: [LibraryRoute] = []
     @State private var isFullPlayerPresented = false
@@ -161,11 +161,11 @@ private extension LibraryRoute {
 }
 
 private struct OpenLibraryRouteKey: EnvironmentKey {
-    static let defaultValue: (LibraryRoute) -> Void = { _ in }
+    static let defaultValue: @MainActor @Sendable (LibraryRoute) -> Void = { _ in }
 }
 
 extension EnvironmentValues {
-    var openLibraryRoute: (LibraryRoute) -> Void {
+    var openLibraryRoute: @MainActor @Sendable (LibraryRoute) -> Void {
         get { self[OpenLibraryRouteKey.self] }
         set { self[OpenLibraryRouteKey.self] = newValue }
     }

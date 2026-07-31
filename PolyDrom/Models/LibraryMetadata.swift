@@ -1,19 +1,17 @@
 import Foundation
 
-struct CatalogChangeState: Equatable {
+struct CatalogChangeState: Equatable, Sendable {
     let isScanning: Bool
-    let itemCount: Int?
     let token: String?
 }
 
-struct MetadataSyncState: Equatable {
+struct MetadataSyncState: Equatable, Sendable {
     let catalogToken: String?
     let lastCheckedAt: Date?
-    let lastFullSyncAt: Date?
     let isComplete: Bool
 }
 
-struct FavoriteMetadata: Equatable {
+struct FavoriteMetadata: Equatable, Sendable {
     var artistIDs: Set<String>
     var albumIDs: Set<String>
     var songIDs: Set<String>
@@ -27,16 +25,14 @@ struct FavoriteMetadata: Equatable {
         self.albumIDs = albumIDs
         self.songIDs = songIDs
     }
-
-    static let empty = FavoriteMetadata(artistIDs: [], albumIDs: [], songIDs: [])
 }
 
-struct PlaylistMetadataSnapshot: Equatable {
+struct PlaylistMetadataSnapshot: Equatable, Sendable {
     let playlist: NavidromePlaylist
     let songs: [NavidromeSong]
 }
 
-struct LibrarySnapshot: Equatable {
+struct LibrarySnapshot: Equatable, Sendable {
     let artists: [NavidromeArtist]
     let albums: [NavidromeAlbum]
     let songs: [NavidromeSong]
@@ -46,7 +42,7 @@ struct LibrarySnapshot: Equatable {
     let checkedAt: Date
 }
 
-struct CachedHomeMetadata: Equatable {
+struct CachedHomeMetadata: Equatable, Sendable {
     let recentlyAdded: [NavidromeAlbum]
     let recentlyPlayed: [NavidromeAlbum]
     let random: [NavidromeAlbum]

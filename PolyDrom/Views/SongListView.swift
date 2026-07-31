@@ -10,10 +10,10 @@ import SwiftUI
 struct SongListView: View {
     let title: String
     let songs: [NavidromeSong]
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let emptyMessage: String
     let openRoute: (LibraryRoute) -> Void
-    var currentAlbumID: String? = nil
+    var currentAlbumID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -48,7 +48,7 @@ struct SongRowView: View {
     let song: NavidromeSong
     let queue: [NavidromeSong]
     let queueIndex: Int
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     @ObservedObject var audioPlayer: AudioPlayer
     let openRoute: (LibraryRoute) -> Void
     let currentAlbumID: String?
@@ -218,7 +218,7 @@ struct CoverArtView: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .task(id: CoverArtLoadID(cacheKey: resource?.cacheKey, isPaused: shouldPauseLoading)) {
+        .task(id: coverArtTaskID) {
             if restoreCachedImage() { return }
             if shouldPauseLoading {
                 await restoreStoredImage()
@@ -238,6 +238,10 @@ struct CoverArtView: View {
         // A view can be reused for another row before its task gets a chance to
         // reset state. This also lets a pre-warmed cached image render immediately.
         return CoverArtCache.shared.cachedImage(for: resource)
+    }
+
+    private var coverArtTaskID: String {
+        "\(resource?.cacheKey ?? "missing")|\(shouldPauseLoading)"
     }
 
     private var shouldPauseLoading: Bool {
@@ -334,9 +338,4 @@ struct CoverArtView: View {
             .dnsLookupFailed
         ].contains(URLError.Code(rawValue: nsError.code))
     }
-}
-
-private struct CoverArtLoadID: Hashable {
-    let cacheKey: String?
-    let isPaused: Bool
 }

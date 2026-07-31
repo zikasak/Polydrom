@@ -10,7 +10,7 @@ import SwiftUI
 
 @main
 struct PolyDromApp: App {
-    @StateObject private var viewModel = AppViewModel()
+    @StateObject private var viewModel = AppCoordinator()
 
     var body: some Scene {
         WindowGroup {

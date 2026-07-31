@@ -8,15 +8,15 @@
 import SwiftUI
 
 struct PlayerBarView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     @ObservedObject private var audioPlayer: AudioPlayer
-    @State private var presentedDetailPanel: PlayerDetailPanel? = nil
+    @State private var presentedDetailPanel: PlayerDetailPanel?
     @State private var isCoverArtHovered = false
     let openRoute: (LibraryRoute) -> Void
     let onOpenFullPlayer: () -> Void
 
     init(
-        viewModel: AppViewModel,
+        viewModel: AppCoordinator,
         openRoute: @escaping (LibraryRoute) -> Void = { _ in },
         onOpenFullPlayer: @escaping () -> Void
     ) {
@@ -375,7 +375,7 @@ struct PlayerBarView: View {
 }
 
 struct PlayerSongContextMenu: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let song: NavidromeSong
 
     var body: some View {
@@ -406,7 +406,7 @@ struct PlayerSongContextMenu: View {
 }
 
 struct PlayerAlbumContextMenu: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let album: NavidromeAlbum
     let openRoute: (LibraryRoute) -> Void
 
@@ -453,7 +453,7 @@ struct PlayerAlbumContextMenu: View {
 }
 
 struct PlayerArtistContextMenu: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let artist: NavidromeArtist
     let openRoute: (LibraryRoute) -> Void
 

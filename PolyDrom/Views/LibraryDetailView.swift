@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct LibraryDetailView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let openRoute: (LibraryRoute) -> Void
 
     var body: some View {
@@ -100,7 +100,7 @@ struct LibraryDetailView: View {
 }
 
 private struct FavoriteLibraryView: View {
-    @ObservedObject var viewModel: AppViewModel
+    @ObservedObject var viewModel: AppCoordinator
     let openRoute: (LibraryRoute) -> Void
     @State private var selection: FavoriteContent = .songs
 
