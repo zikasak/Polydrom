@@ -1,5 +1,34 @@
 import Foundation
 
+enum MetadataRefreshInterval: Int, CaseIterable, Identifiable, Sendable {
+    case manually = 0
+    case fiveMinutes = 300
+    case fifteenMinutes = 900
+    case thirtyMinutes = 1_800
+    case oneHour = 3_600
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .manually:
+            "Manually"
+        case .fiveMinutes:
+            "Every 5 minutes"
+        case .fifteenMinutes:
+            "Every 15 minutes"
+        case .thirtyMinutes:
+            "Every 30 minutes"
+        case .oneHour:
+            "Every hour"
+        }
+    }
+
+    var seconds: Int64? {
+        self == .manually ? nil : Int64(rawValue)
+    }
+}
+
 struct CatalogChangeState: Equatable, Sendable {
     let isScanning: Bool
     let token: String?

@@ -23,14 +23,16 @@ final class PolyDromUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testSettingsWindowOpensWithKeyboardShortcut() throws {
         let app = XCUIApplication()
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
+        app.typeKey(",", modifierFlags: .command)
+
+        XCTAssertTrue(app.textFields["serverAddressField"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.textFields["serverUsernameField"].exists)
+        XCTAssertTrue(app.secureTextFields["serverPasswordField"].exists)
+        XCTAssertTrue(app.buttons["saveAndConnectButton"].exists)
     }
 
     @MainActor

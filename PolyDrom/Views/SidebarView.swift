@@ -13,8 +13,7 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            connectionForm
-            savedServers
+            serverSelector
             sectionList
             Spacer()
             statusLine
@@ -22,66 +21,40 @@ struct SidebarView: View {
         .padding(14)
     }
 
-    private var connectionForm: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextField("Server address", text: $viewModel.serverAddress)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("Server address")
-
-            TextField("Username", text: $viewModel.username)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("Username")
-
-            SecureField("Password", text: $viewModel.password)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("Password")
-
-            Button {
-                Task { await viewModel.connectFromForm() }
-            } label: {
-                Label("Save & Connect", systemImage: "network")
-                    .frame(maxWidth: .infinity)
-            }
-            .disabled(viewModel.isBusy || viewModel.serverAddress.isEmpty || viewModel.username.isEmpty)
-            .buttonStyle(.borderedProminent)
-        }
-    }
-
-    private var savedServers: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Servers")
+    private var serverSelector: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Server")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            if viewModel.servers.isEmpty {
-                Text("No saved servers")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(viewModel.servers) { server in
-                    HStack(spacing: 6) {
-                        Button {
-                            Task { await viewModel.connect(server) }
-                        } label: {
-                            Label(server.displayName, systemImage: viewModel.activeServer?.id == server.id ? "checkmark.circle.fill" : "server.rack")
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(viewModel.isBusy)
+            Picker("Server", selection: selectedServerID) {
+                Text(viewModel.servers.isEmpty ? "No saved servers" : "Select a server")
+                    .tag(UUID?.none)
 
-                        Button {
-                            viewModel.deleteServer(server)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                                .labelStyle(.iconOnly)
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Delete server")
-                    }
+                ForEach(viewModel.servers) { server in
+                    Text(server.displayName)
+                        .tag(Optional(server.id))
                 }
             }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity)
+            .disabled(viewModel.isBusy || viewModel.servers.isEmpty)
+            .accessibilityLabel("Server")
+            .accessibilityIdentifier("serverSelector")
         }
+    }
+
+    private var selectedServerID: Binding<UUID?> {
+        Binding(
+            get: { viewModel.activeServer?.id },
+            set: { serverID in
+                guard let serverID,
+                      let server = viewModel.servers.first(where: { $0.id == serverID }),
+                      server.id != viewModel.activeServer?.id else { return }
+                Task { await viewModel.connect(server) }
+            }
+        )
     }
 
     private var sectionList: some View {

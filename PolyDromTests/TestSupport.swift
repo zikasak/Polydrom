@@ -171,7 +171,8 @@ let onePixelPNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1H
 @MainActor
 func makeViewModel(
     credentials: MemoryCredentialStore = MemoryCredentialStore(),
-    session: URLSession = StubURLProtocol.session()
+    session: URLSession = StubURLProtocol.session(),
+    userDefaults: UserDefaults = temporaryUserDefaults()
 ) -> (AppCoordinator, LibraryStore, MemoryCredentialStore) {
     let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: credentials)
     let viewModel = AppCoordinator(
@@ -182,9 +183,17 @@ func makeViewModel(
             session: session,
             diskDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         ),
-        serverRegistry: ServerRegistry(fileURL: nil, keychain: credentials)
+        serverRegistry: ServerRegistry(fileURL: nil, keychain: credentials),
+        userDefaults: userDefaults
     )
     return (viewModel, store, credentials)
+}
+
+func temporaryUserDefaults() -> UserDefaults {
+    let suiteName = "PolyDromTests.\(UUID().uuidString)"
+    let userDefaults = UserDefaults(suiteName: suiteName)!
+    userDefaults.removePersistentDomain(forName: suiteName)
+    return userDefaults
 }
 
 func eventually(

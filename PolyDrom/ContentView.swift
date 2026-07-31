@@ -10,6 +10,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var viewModel: AppCoordinator
+    @Environment(\.openSettings) private var openSettings
     @Environment(\.scenePhase) private var scenePhase
     @State private var detailPath: [LibraryRoute] = []
     @State private var isFullPlayerPresented = false
@@ -58,10 +59,16 @@ struct ContentView: View {
             }
             .task {
                 await viewModel.connectToLatestServer()
+                openSettingsForFirstRunIfNeeded()
             }
             .onChange(of: scenePhase, initial: true) { _, newPhase in
                 viewModel.setApplicationActive(newPhase == .active)
             }
+    }
+
+    private func openSettingsForFirstRunIfNeeded() {
+        guard viewModel.takeFirstRunSettingsPresentationRequest() else { return }
+        openSettings()
     }
 
     private var libraryContent: some View {

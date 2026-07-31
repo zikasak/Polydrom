@@ -22,6 +22,13 @@ final class AppCoordinator: ObservableObject {
     @Published var hasCachedLibrary = false
     @Published var isRefreshingMetadata = false
     @Published var lastMetadataCheckAt: Date?
+    @Published var metadataRefreshInterval: MetadataRefreshInterval {
+        didSet {
+            guard metadataRefreshInterval != oldValue else { return }
+            userDefaults.set(metadataRefreshInterval.rawValue, forKey: Self.metadataRefreshIntervalKey)
+            restartMetadataMonitor(refreshImmediately: false)
+        }
+    }
     @Published var searchText = ""
     @Published var searchResults: [NavidromeSong] = []
     @Published var randomSongs: [NavidromeSong] = []
@@ -58,6 +65,7 @@ final class AppCoordinator: ObservableObject {
     private let clientFactory: @MainActor (ServerProfile) -> NavidromeClient?
     private let coverArtCache: CoverArtCache
     private let syncCoordinator: LibrarySyncCoordinator
+    private let userDefaults: UserDefaults
     private var client: NavidromeClient?
     private var metadataMonitorTask: Task<Void, Never>?
     private var metadataSyncTask: Task<MetadataSyncOutcome, Error>?
@@ -77,11 +85,13 @@ final class AppCoordinator: ObservableObject {
     private let gridCoverSize = 220
     private let interchangeableThumbnailSizes = [72, 80, 96]
     private var didAttemptInitialConnection = false
+    private var didRequestFirstRunSettings = false
     private var hasLoadedHome = false
     private var sessionGeneration: UInt = 0
     private var artistFavoriteUpdatesInFlight = Set<String>()
     private var albumFavoriteUpdatesInFlight = Set<String>()
     private var songFavoriteUpdatesInFlight = Set<String>()
+    private static let metadataRefreshIntervalKey = "metadataRefreshInterval"
 
     var isConnected: Bool {
         activeServer != nil && isOnline
@@ -89,6 +99,12 @@ final class AppCoordinator: ObservableObject {
 
     var canBrowseLibrary: Bool {
         activeServer != nil && (isOnline || hasCachedLibrary)
+    }
+
+    var canConnectFromForm: Bool {
+        !isBusy
+            && !serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var serverKey: String? {
@@ -100,7 +116,8 @@ final class AppCoordinator: ObservableObject {
         audioPlayer: AudioPlayer = AudioPlayer(),
         clientFactory: @escaping @MainActor (ServerProfile) -> NavidromeClient? = { NavidromeClient(profile: $0) },
         coverArtCache: CoverArtCache = .shared,
-        serverRegistry: ServerRegistry? = nil
+        serverRegistry: ServerRegistry? = nil,
+        userDefaults: UserDefaults = .standard
     ) {
         self.store = store
         let suppliedRegistry = serverRegistry
@@ -109,6 +126,14 @@ final class AppCoordinator: ObservableObject {
         self.clientFactory = clientFactory
         self.coverArtCache = coverArtCache
         self.syncCoordinator = LibrarySyncCoordinator(store: store)
+        self.userDefaults = userDefaults
+        if userDefaults.object(forKey: Self.metadataRefreshIntervalKey) == nil {
+            self.metadataRefreshInterval = .fifteenMinutes
+        } else {
+            self.metadataRefreshInterval = MetadataRefreshInterval(
+                rawValue: userDefaults.integer(forKey: Self.metadataRefreshIntervalKey)
+            ) ?? .fifteenMinutes
+        }
         if suppliedRegistry == nil,
            let legacyStoreURL = PersistenceController.legacyStoreURL,
            FileManager.default.fileExists(atPath: legacyStoreURL.path) {
@@ -164,6 +189,12 @@ final class AppCoordinator: ObservableObject {
         guard let latest = servers.first else { return }
         statusMessage = "Connecting to \(latest.displayName)..."
         await connect(latest)
+    }
+
+    func takeFirstRunSettingsPresentationRequest() -> Bool {
+        guard servers.isEmpty, !didRequestFirstRunSettings else { return false }
+        didRequestFirstRunSettings = true
+        return true
     }
 
     func connect(_ profile: ServerProfile) async {
@@ -1034,12 +1065,22 @@ final class AppCoordinator: ObservableObject {
             return
         }
 
+        restartMetadataMonitor(refreshImmediately: true)
+    }
+
+    private func restartMetadataMonitor(refreshImmediately: Bool) {
+        metadataMonitorTask?.cancel()
+        metadataMonitorTask = nil
+        guard isApplicationActive, let refreshIntervalSeconds = metadataRefreshInterval.seconds else { return }
+
         metadataMonitorTask = Task { [weak self] in
             guard let self else { return }
-            await refreshMetadata()
+            if refreshImmediately {
+                await refreshMetadata()
+            }
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: .seconds(900))
+                    try await Task.sleep(for: .seconds(refreshIntervalSeconds))
                 } catch {
                     return
                 }

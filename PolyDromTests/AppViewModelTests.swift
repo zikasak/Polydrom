@@ -5,6 +5,57 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct AppCoordinatorTests {
+    @Test func serverFormRequiresNonWhitespaceAddressAndUsernameAndIsDisabledWhileBusy() {
+        let (viewModel, _, _) = makeViewModel()
+        #expect(!viewModel.canConnectFromForm)
+
+        viewModel.serverAddress = "   "
+        viewModel.username = "user"
+        #expect(!viewModel.canConnectFromForm)
+
+        viewModel.serverAddress = "https://music.example.com"
+        viewModel.username = "\n"
+        #expect(!viewModel.canConnectFromForm)
+
+        viewModel.username = "user"
+        #expect(viewModel.canConnectFromForm)
+
+        viewModel.isBusy = true
+        #expect(!viewModel.canConnectFromForm)
+    }
+
+    @Test func firstRunSettingsPresentationIsRequestedOnlyOnceWithoutServers() {
+        let (viewModel, _, _) = makeViewModel()
+        #expect(viewModel.takeFirstRunSettingsPresentationRequest())
+        #expect(!viewModel.takeFirstRunSettingsPresentationRequest())
+
+        let (configuredViewModel, _, _) = makeViewModel()
+        configuredViewModel.servers = [makeProfile()]
+        #expect(!configuredViewModel.takeFirstRunSettingsPresentationRequest())
+    }
+
+    @Test func metadataRefreshIntervalDefaultsToFifteenMinutesAndPersistsChanges() {
+        let suiteName = "MetadataRefreshIntervalTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+
+        let (viewModel, _, _) = makeViewModel(userDefaults: userDefaults)
+        #expect(viewModel.metadataRefreshInterval == .fifteenMinutes)
+
+        viewModel.metadataRefreshInterval = .oneHour
+        let (reloadedViewModel, _, _) = makeViewModel(userDefaults: userDefaults)
+        #expect(reloadedViewModel.metadataRefreshInterval == .oneHour)
+        #expect(MetadataRefreshInterval.manually.seconds == nil)
+        #expect(MetadataRefreshInterval.fiveMinutes.seconds == 300)
+        #expect(MetadataRefreshInterval.allCases.map(\.title) == [
+            "Manually",
+            "Every 5 minutes",
+            "Every 15 minutes",
+            "Every 30 minutes",
+            "Every hour"
+        ])
+    }
+
     @Test func disconnectedActionsReturnUsefulMessagesAndIgnoreUnavailableWork() async {
         let (viewModel, _, _) = makeViewModel()
         #expect(!viewModel.isConnected)

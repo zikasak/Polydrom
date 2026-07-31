@@ -18,6 +18,10 @@ struct PolyDromApp: App {
                 .background(MacOSWindowConfigurator())
         }
         .windowStyle(.hiddenTitleBar)
+
+        Settings {
+            SettingsView(viewModel: viewModel)
+        }
     }
 }
 
