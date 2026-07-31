@@ -164,6 +164,7 @@ struct PlaylistContainer: Decodable {
 }
 
 struct PlaylistDetail: Decodable {
+    let summary: NavidromePlaylist?
     let songs: FlexibleArray<NavidromeSong>
 
     enum CodingKeys: String, CodingKey {
@@ -171,6 +172,7 @@ struct PlaylistDetail: Decodable {
     }
 
     init(from decoder: Decoder) throws {
+        summary = try? NavidromePlaylist(from: decoder)
         let container = try decoder.container(keyedBy: CodingKeys.self)
         songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
     }

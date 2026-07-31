@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import PolyDrom
 
@@ -376,5 +377,117 @@ struct AppCoordinatorTests {
         viewModel.toggleFavorite(song)
         #expect(viewModel.isFavorite(song))
         #expect(viewModel.statusMessage == "Connect to the server to update favorites.")
+    }
+
+    @Test func playlistMutationsReconcileFocusedStateAndRespectPermissions() async throws {
+        struct PlaylistState: Sendable {
+            var exists = false
+            var name = ""
+            var songs: [String] = []
+            var failNextPlaylistRead = false
+        }
+        let state = Mutex(PlaylistState())
+        let handler: StubURLProtocol.Handler = { request in
+            switch apiMethod(in: request) {
+            case "ping":
+                return envelope(#"{"status":"ok"}"#)
+            case "getScanStatus":
+                return envelope(#"{"status":"ok","scanStatus":{"scanning":false,"lastScan":"scan"}}"#)
+            case "search3":
+                return envelope(#"{"status":"ok","searchResult3":{}}"#)
+            case "getStarred2":
+                return envelope(#"{"status":"ok","starred2":{}}"#)
+            case "getPlaylists":
+                let shouldFail = state.withLock { value in
+                    defer { value.failNextPlaylistRead = false }
+                    return value.failNextPlaylistRead
+                }
+                if shouldFail {
+                    return StubURLProtocol.Response(statusCode: 503, json: "{}")
+                }
+                let snapshot = state.withLock { $0 }
+                guard snapshot.exists else {
+                    return envelope(#"{"status":"ok","playlists":{"playlist":[]}}"#)
+                }
+                return envelope(
+                    #"{"status":"ok","playlists":{"playlist":[{"id":"managed","name":"\#(snapshot.name)","owner":"User","songCount":\#(snapshot.songs.count)}]}}"#
+                )
+            case "getPlaylist":
+                let snapshot = state.withLock { $0 }
+                let entries = snapshot.songs.map {
+                    #"{"id":"\#($0)","title":"\#($0)"}"#
+                }.joined(separator: ",")
+                return envelope(
+                    #"{"status":"ok","playlist":{"id":"managed","name":"\#(snapshot.name)","entry":[\#(entries)]}}"#
+                )
+            case "createPlaylist":
+                let name = queryValue("name", in: request) ?? ""
+                let songs = queryValues("songId", in: request)
+                state.withLock {
+                    $0.exists = true
+                    $0.name = name
+                    $0.songs = songs
+                }
+                return envelope(
+                    #"{"status":"ok","playlist":{"id":"managed","name":"\#(name)","owner":"User","songCount":\#(songs.count),"entry":[]}}"#
+                )
+            case "updatePlaylist":
+                let name = queryValue("name", in: request)
+                let additions = queryValues("songIdToAdd", in: request)
+                let removals = queryValues("songIndexToRemove", in: request).compactMap(Int.init).sorted(by: >)
+                state.withLock { value in
+                    if let name { value.name = name }
+                    for index in removals where value.songs.indices.contains(index) {
+                        value.songs.remove(at: index)
+                    }
+                    value.songs.append(contentsOf: additions)
+                }
+                return envelope(#"{"status":"ok"}"#)
+            case "deletePlaylist":
+                state.withLock {
+                    $0.exists = false
+                    $0.songs = []
+                }
+                return envelope(#"{"status":"ok"}"#)
+            default:
+                return StubURLProtocol.Response(statusCode: 404, json: "{}")
+            }
+        }
+
+        let (viewModel, _, _) = makeViewModel(session: StubURLProtocol.session(handler: handler))
+        await viewModel.connect(makeProfile(username: "User"))
+        let first = makeSong(id: "first")
+        let second = makeSong(id: "second")
+
+        #expect(!(await viewModel.createPlaylist(name: "   ", songs: [])))
+        #expect(await viewModel.createPlaylist(name: " Mix ", songs: [first]))
+        var playlist = try #require(viewModel.playlists.first)
+        #expect(playlist.name == "Mix")
+        #expect(viewModel.canEdit(playlist))
+
+        #expect(await viewModel.renamePlaylist(playlist, to: "Renamed"))
+        playlist = try #require(viewModel.playlists.first)
+        #expect(playlist.name == "Renamed")
+        #expect(await viewModel.addSongs([second, second], to: playlist))
+
+        playlist = try #require(viewModel.playlists.first)
+        await viewModel.loadSongs(for: playlist)
+        #expect(viewModel.playlistSongs.map(\.id) == ["first", "second", "second"])
+        #expect(await viewModel.removeSongs(at: [1], from: playlist))
+        #expect(viewModel.playlistSongs.map(\.id) == ["first", "second"])
+        playlist = try #require(viewModel.playlists.first)
+        #expect(await viewModel.deletePlaylist(playlist))
+        #expect(viewModel.playlists.isEmpty)
+        #expect(viewModel.selectedPlaylist == nil)
+
+        let readOnly = NavidromePlaylist(id: "readonly", name: "Smart", owner: "User", isReadOnly: true)
+        let foreign = NavidromePlaylist(id: "foreign", name: "Shared", owner: "Someone Else")
+        #expect(!viewModel.canEdit(readOnly))
+        #expect(!viewModel.canEdit(foreign))
+
+        state.withLock { $0.failNextPlaylistRead = true }
+        #expect(await viewModel.createPlaylist(name: "Fallback", songs: [first]))
+        #expect(viewModel.playlists.map(\.name) == ["Fallback"])
+        #expect(viewModel.statusMessage.hasPrefix("Playlist saved, but refresh failed."))
     }
 }

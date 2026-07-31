@@ -152,6 +152,12 @@ func queryValue(_ name: String, in request: URLRequest) -> String? {
     return components.queryItems?.first(where: { $0.name == name })?.value
 }
 
+func queryValues(_ name: String, in request: URLRequest) -> [String] {
+    guard let url = request.url,
+          let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return [] }
+    return components.queryItems?.filter { $0.name == name }.compactMap(\.value) ?? []
+}
+
 func apiMethod(in request: URLRequest) -> String {
     request.url?.deletingPathExtension().lastPathComponent ?? ""
 }

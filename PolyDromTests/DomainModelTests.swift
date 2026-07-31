@@ -45,7 +45,7 @@ struct DomainModelTests {
     @Test func artistPlaylistAndLyricsFormattingCoversBranches() throws {
         let artist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":1,"name":2,"albumCount":"4","coverArt":3,"artistImageUrl":4}"#.utf8))
         let noCount = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"a","name":"A"}"#.utf8))
-        let playlistFull = try JSONDecoder().decode(NavidromePlaylist.self, from: Data(#"{"id":"p","name":"Mix","songCount":2,"owner":"DJ"}"#.utf8))
+        let playlistFull = try JSONDecoder().decode(NavidromePlaylist.self, from: Data(#"{"id":"p","name":"Mix","songCount":2,"owner":"DJ","readonly":true}"#.utf8))
         let playlistEmpty = try JSONDecoder().decode(NavidromePlaylist.self, from: Data(#"{"id":"p","name":"Mix","owner":""}"#.utf8))
 
         #expect(artist.name == "2")
@@ -53,7 +53,9 @@ struct DomainModelTests {
         #expect(artist.subtitle == "4 albums")
         #expect(noCount.subtitle == "")
         #expect(playlistFull.subtitle == "DJ - 2 songs")
+        #expect(playlistFull.isReadOnly)
         #expect(playlistEmpty.subtitle == "")
+        #expect(!playlistEmpty.isReadOnly)
         #expect(NavidromeArtist(song: makeSong(artist: nil)) == nil)
         #expect(NavidromeArtist(song: makeSong(artist: "")) == nil)
         #expect(NavidromeArtist(song: makeSong(artistId: nil)) == nil)

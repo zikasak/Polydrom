@@ -40,12 +40,33 @@ struct ViewRenderingTests {
         await render(ArtistBrowserView(viewModel: viewModel))
         await render(FavoriteArtistBrowserView(viewModel: viewModel))
         await render(PlaylistBrowserView(viewModel: viewModel))
+        await render(
+            PlaylistCreationSheet(
+                viewModel: viewModel,
+                request: PlaylistCreationRequest(songs: [song], onSuccess: {})
+            ),
+            size: CGSize(width: 460, height: 240)
+        )
         await render(AlbumDetailView(viewModel: viewModel, album: album, openRoute: { _ in }))
         await render(ArtistDetailView(viewModel: viewModel, artist: artist, openAlbum: { _ in }))
         await render(OpenInSpotifyLink(album: album))
         await render(OpenInSpotifyLink(album: album, presentation: .iconOnly))
         await render(OpenInSpotifyLink(artist: artist))
         await render(PlaylistDetailView(viewModel: viewModel, playlist: playlist, openRoute: { _ in }))
+        let readOnlyPlaylist = NavidromePlaylist(
+            id: "smart",
+            name: "Smart Playlist",
+            songCount: 1,
+            owner: "Owner",
+            isReadOnly: true
+        )
+        await render(
+            PlaylistDetailView(
+                viewModel: viewModel,
+                playlist: readOnlyPlaylist,
+                openRoute: { _ in }
+            )
+        )
         await render(CoverArtView(resource: nil, size: 48))
     }
 

@@ -170,7 +170,13 @@ struct PersistenceTests {
             artistId: "artist",
             track: 1
         )
-        let playlist = NavidromePlaylist(id: "playlist", name: "Mix", songCount: 2, changed: added)
+        let playlist = NavidromePlaylist(
+            id: "playlist",
+            name: "Mix",
+            songCount: 2,
+            changed: added,
+            isReadOnly: true
+        )
         let snapshot = LibrarySnapshot(
             artists: [artist],
             albums: [album],
@@ -202,6 +208,7 @@ struct PersistenceTests {
         #expect(try await store.albums(serverKey: "server-a").map(\.id) == ["album"])
         #expect(try await store.songs(serverKey: "server-a", albumID: "album").map(\.id) == ["first", "second"])
         #expect(try await store.songs(serverKey: "server-a", playlistID: "playlist").map(\.id) == ["second", "first"])
+        #expect(try await store.playlists(serverKey: "server-a").first?.isReadOnly == true)
         #expect(try await store.searchSongs("artist", serverKey: "server-a").count == 2)
         #expect(try await store.favoriteArtists(serverKey: "server-a").map(\.id) == ["artist"])
         #expect(try await store.favoriteAlbums(serverKey: "server-a").map(\.id) == ["album"])

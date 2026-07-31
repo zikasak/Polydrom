@@ -426,6 +426,22 @@ final class LibraryStore {
         }
     }
 
+    func applyPlaylistMetadata(
+        playlists: [NavidromePlaylist],
+        refreshedPlaylists: [PlaylistMetadataSnapshot],
+        serverKey: String
+    ) async throws {
+        try await performBackground { context in
+            try Self.replacePlaylists(
+                summaries: playlists,
+                refreshed: refreshedPlaylists,
+                serverKey: serverKey,
+                in: context
+            )
+            try context.save()
+        }
+    }
+
     func setFavorite(_ isFavorite: Bool, artistID: String, serverKey: String) async throws {
         try await setFavorite(isFavorite, entityName: "VDArtist", idKey: "artistID", id: artistID, serverKey: serverKey)
     }
@@ -718,6 +734,7 @@ final class LibraryStore {
         object.setValue(playlist.songCount.map { Int64($0) }, forKey: "songCount")
         object.setValue(playlist.owner, forKey: "owner")
         object.setValue(playlist.changed, forKey: "changedAt")
+        object.setValue(playlist.isReadOnly, forKey: "isReadOnly")
         return object
     }
 
@@ -842,7 +859,8 @@ final class LibraryStore {
             name: object.value(forKey: "name") as? String ?? "Untitled Playlist",
             songCount: int(object.value(forKey: "songCount")),
             owner: object.value(forKey: "owner") as? String,
-            changed: object.value(forKey: "changedAt") as? Date
+            changed: object.value(forKey: "changedAt") as? Date,
+            isReadOnly: object.value(forKey: "isReadOnly") as? Bool ?? false
         )
     }
 

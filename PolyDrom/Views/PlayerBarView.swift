@@ -402,6 +402,8 @@ struct PlayerSongContextMenu: View {
             )
         }
         .disabled(!viewModel.isOnline)
+
+        AddToPlaylistMenu(viewModel: viewModel, songs: [song])
     }
 }
 

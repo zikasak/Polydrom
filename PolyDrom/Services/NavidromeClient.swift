@@ -99,6 +99,43 @@ struct NavidromeClient: Sendable {
         return response.subsonicResponse.playlist?.songs.values ?? []
     }
 
+    func createPlaylist(name: String, songIDs: [String] = []) async throws -> NavidromePlaylist {
+        let response: PlaylistEnvelope = try await request(
+            "createPlaylist",
+            queryItems: [URLQueryItem(name: "name", value: name)]
+                + songIDs.map { URLQueryItem(name: "songId", value: $0) }
+        )
+        try response.subsonicResponse.throwIfNeeded()
+        guard let playlist = response.subsonicResponse.playlist?.summary else {
+            throw NavidromeError.server(message: "Navidrome did not return the created playlist.")
+        }
+        return playlist
+    }
+
+    func updatePlaylist(
+        playlistID: String,
+        name: String? = nil,
+        songIDsToAdd: [String] = [],
+        indicesToRemove: [Int] = []
+    ) async throws {
+        var queryItems = [URLQueryItem(name: "playlistId", value: playlistID)]
+        if let name {
+            queryItems.append(URLQueryItem(name: "name", value: name))
+        }
+        queryItems += songIDsToAdd.map { URLQueryItem(name: "songIdToAdd", value: $0) }
+        queryItems += indicesToRemove.map { URLQueryItem(name: "songIndexToRemove", value: String($0)) }
+        let response: PingEnvelope = try await request("updatePlaylist", queryItems: queryItems)
+        try response.subsonicResponse.throwIfNeeded()
+    }
+
+    func deletePlaylist(id: String) async throws {
+        let response: PingEnvelope = try await request(
+            "deletePlaylist",
+            queryItems: [URLQueryItem(name: "id", value: id)]
+        )
+        try response.subsonicResponse.throwIfNeeded()
+    }
+
     func lyrics(for song: NavidromeSong) async throws -> [SongLyrics] {
         let response: LyricsEnvelope = try await request(
             "getLyricsBySongId",

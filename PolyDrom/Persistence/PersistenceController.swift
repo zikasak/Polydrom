@@ -200,7 +200,8 @@ final class PersistenceController {
             attribute("name", .stringAttributeType, isOptional: false),
             attribute("songCount", .integer64AttributeType),
             attribute("owner", .stringAttributeType),
-            attribute("changedAt", .dateAttributeType)
+            attribute("changedAt", .dateAttributeType),
+            attribute("isReadOnly", .booleanAttributeType, isOptional: false, defaultValue: false)
         ]
         entity.uniquenessConstraints = [["serverKey", "playlistID"]]
         return entity

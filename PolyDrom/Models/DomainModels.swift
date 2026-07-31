@@ -269,17 +269,27 @@ struct NavidromePlaylist: Decodable, Identifiable, Hashable, Sendable {
     let songCount: Int?
     let owner: String?
     let changed: Date?
+    let isReadOnly: Bool
 
-    init(id: String, name: String, songCount: Int? = nil, owner: String? = nil, changed: Date? = nil) {
+    init(
+        id: String,
+        name: String,
+        songCount: Int? = nil,
+        owner: String? = nil,
+        changed: Date? = nil,
+        isReadOnly: Bool = false
+    ) {
         self.id = id
         self.name = name
         self.songCount = songCount
         self.owner = owner
         self.changed = changed
+        self.isReadOnly = isReadOnly
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, songCount, owner, changed
+        case isReadOnly = "readonly"
     }
 
     init(from decoder: Decoder) throws {
@@ -289,6 +299,7 @@ struct NavidromePlaylist: Decodable, Identifiable, Hashable, Sendable {
         songCount = container.decodeIntIfPresent(forKey: .songCount)
         owner = container.decodeStringIfPresent(forKey: .owner)
         changed = container.decodeDateIfPresent(forKey: .changed)
+        isReadOnly = (try? container.decode(Bool.self, forKey: .isReadOnly)) ?? false
     }
 
     var subtitle: String {

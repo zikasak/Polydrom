@@ -71,6 +71,19 @@ struct NavidromeClientTests {
                 return envelope(#"{"status":"ok","playlists":{"playlist":{"id":"playlist","name":"Mix"}}}"#)
             case "getPlaylist":
                 return envelope(#"{"status":"ok","playlist":{"entry":{"id":"playlist-song","title":"Playlist Song"}}}"#)
+            case "createPlaylist":
+                #expect(queryValue("name", in: request) == "Road Trip")
+                #expect(queryValues("songId", in: request) == ["first", "second", "first"])
+                return envelope(#"{"status":"ok","playlist":{"id":"created","name":"Road Trip","songCount":3,"entry":[]}}"#)
+            case "updatePlaylist":
+                #expect(queryValue("playlistId", in: request) == "created")
+                #expect(queryValue("name", in: request) == "Renamed")
+                #expect(queryValues("songIdToAdd", in: request) == ["third", "third"])
+                #expect(queryValues("songIndexToRemove", in: request) == ["0", "2"])
+                return envelope(#"{"status":"ok"}"#)
+            case "deletePlaylist":
+                #expect(queryValue("id", in: request) == "created")
+                return envelope(#"{"status":"ok"}"#)
             case "getLyricsBySongId":
                 return envelope(#"{"status":"ok","lyricsList":{"structuredLyrics":{"lang":"en","synced":true,"line":{"value":"Line"}}}}"#)
             case "getStarred2":
@@ -95,6 +108,18 @@ struct NavidromeClientTests {
         let playlists = try await client.playlists()
         #expect(playlists.map(\.id) == ["playlist"])
         #expect(try await client.songs(for: playlists[0]).map(\.id) == ["playlist-song"])
+        let created = try await client.createPlaylist(
+            name: "Road Trip",
+            songIDs: ["first", "second", "first"]
+        )
+        #expect(created.id == "created")
+        try await client.updatePlaylist(
+            playlistID: created.id,
+            name: "Renamed",
+            songIDsToAdd: ["third", "third"],
+            indicesToRemove: [0, 2]
+        )
+        try await client.deletePlaylist(id: created.id)
         #expect(try await client.lyrics(for: makeSong()).first?.lines.first?.value == "Line")
 
         let starred = try await client.starredItems()

@@ -64,6 +64,9 @@ struct ContentView: View {
             .onChange(of: scenePhase, initial: true) { _, newPhase in
                 viewModel.setApplicationActive(newPhase == .active)
             }
+            .sheet(item: $viewModel.playlistCreationRequest) { request in
+                PlaylistCreationSheet(viewModel: viewModel, request: request)
+            }
     }
 
     private func openSettingsForFirstRunIfNeeded() {
@@ -110,7 +113,12 @@ struct ContentView: View {
                             PlaylistDetailView(
                                 viewModel: viewModel,
                                 playlist: playlist,
-                                openRoute: openLibraryRoute
+                                openRoute: openLibraryRoute,
+                                onDeleted: {
+                                    if detailPath.last?.identifiesPlaylist(playlist.id) == true {
+                                        detailPath.removeLast()
+                                    }
+                                }
                             )
                         }
                     }
@@ -153,6 +161,13 @@ struct ContentView: View {
 }
 
 private extension LibraryRoute {
+    func identifiesPlaylist(_ id: String) -> Bool {
+        if case .playlist(let playlist) = self {
+            return playlist.id == id
+        }
+        return false
+    }
+
     func identifiesSameDestination(as other: LibraryRoute) -> Bool {
         switch (self, other) {
         case (.album(let lhs), .album(let rhs)):

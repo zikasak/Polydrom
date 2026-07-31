@@ -45,6 +45,8 @@ final class AppCoordinator: ObservableObject {
     @Published var playlists: [NavidromePlaylist] = []
     @Published var selectedPlaylist: NavidromePlaylist?
     @Published var playlistSongs: [NavidromeSong] = []
+    @Published var playlistCreationRequest: PlaylistCreationRequest?
+    @Published var isPlaylistMutating = false
     @Published var favoriteArtists: [NavidromeArtist] = []
     @Published var favoriteAlbums: [NavidromeAlbum] = []
     @Published var favoriteSongs: [NavidromeSong] = []
@@ -60,13 +62,13 @@ final class AppCoordinator: ObservableObject {
 
     let audioPlayer: AudioPlayer
 
-    private let store: LibraryStore
+    let store: LibraryStore
     private let serverRegistry: ServerRegistry
     private let clientFactory: @MainActor (ServerProfile) -> NavidromeClient?
     private let coverArtCache: CoverArtCache
     private let syncCoordinator: LibrarySyncCoordinator
     private let userDefaults: UserDefaults
-    private var client: NavidromeClient?
+    var client: NavidromeClient?
     private var metadataMonitorTask: Task<Void, Never>?
     private var metadataSyncTask: Task<MetadataSyncOutcome, Error>?
     private var metadataRefreshID: UUID?
@@ -79,7 +81,7 @@ final class AppCoordinator: ObservableObject {
     private var nowPlayingArtworkTask: Task<Void, Never>?
     private var loadedArtistAlbumsID: String?
     private var loadedAlbumSongsID: String?
-    private var loadedPlaylistSongsID: String?
+    var loadedPlaylistSongsID: String?
     private let coverArtPrefetchLimit = 200
     private let thumbnailCoverSize = 96
     private let gridCoverSize = 220
@@ -87,7 +89,7 @@ final class AppCoordinator: ObservableObject {
     private var didAttemptInitialConnection = false
     private var didRequestFirstRunSettings = false
     private var hasLoadedHome = false
-    private var sessionGeneration: UInt = 0
+    var sessionGeneration: UInt = 0
     private var artistFavoriteUpdatesInFlight = Set<String>()
     private var albumFavoriteUpdatesInFlight = Set<String>()
     private var songFavoriteUpdatesInFlight = Set<String>()
@@ -109,6 +111,14 @@ final class AppCoordinator: ObservableObject {
 
     var serverKey: String? {
         activeServer?.serverKey
+    }
+
+    var canCreatePlaylist: Bool {
+        isOnline && !isPlaylistMutating
+    }
+
+    var editablePlaylists: [NavidromePlaylist] {
+        playlists.filter(canEdit)
     }
 
     init(
@@ -1278,6 +1288,8 @@ final class AppCoordinator: ObservableObject {
         playlists = []
         selectedPlaylist = nil
         playlistSongs = []
+        playlistCreationRequest = nil
+        isPlaylistMutating = false
         favoriteArtists = []
         favoriteAlbums = []
         favoriteSongs = []
@@ -1293,7 +1305,7 @@ final class AppCoordinator: ObservableObject {
         loadedPlaylistSongsID = nil
     }
 
-    private func isCurrentSession(_ generation: UInt, serverKey: String) -> Bool {
+    func isCurrentSession(_ generation: UInt, serverKey: String) -> Bool {
         sessionGeneration == generation && self.serverKey == serverKey
     }
 
@@ -1336,7 +1348,7 @@ final class AppCoordinator: ObservableObject {
         await coverArtCache.warmCachedImages(resources)
     }
 
-    private func warmCachedSongCovers(_ songs: [NavidromeSong]) async {
+    func warmCachedSongCovers(_ songs: [NavidromeSong]) async {
         let resources = songs.compactMap { coverArtResource(for: $0, size: thumbnailCoverSize) }
         await coverArtCache.warmCachedImages(resources)
     }
@@ -1353,7 +1365,7 @@ final class AppCoordinator: ObservableObject {
         artistCoverPrefetchTask = prefetchCoverArt(resources)
     }
 
-    private func prefetchSongCovers(_ songs: [NavidromeSong]) {
+    func prefetchSongCovers(_ songs: [NavidromeSong]) {
         let songsToPrefetch = songs.prefix(coverArtPrefetchLimit)
         let resources = songsToPrefetch.compactMap { coverArtResource(for: $0, size: thumbnailCoverSize) }
         songCoverPrefetchTask?.cancel()
