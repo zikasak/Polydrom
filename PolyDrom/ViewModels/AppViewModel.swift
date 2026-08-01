@@ -267,7 +267,6 @@ final class AppCoordinator: ObservableObject {
             AppLog.app.info("Connected to server (session \(generation, privacy: .public))")
             try serverRegistry.touch(profile)
             loadServers()
-            await reconcilePersistedPlaybackQueue(for: generation)
             await restorePersistedPlaybackIfNeeded(for: generation)
             await refreshMetadata(for: generation)
         } catch {

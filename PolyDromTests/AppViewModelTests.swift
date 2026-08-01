@@ -133,7 +133,7 @@ struct AppCoordinatorTests {
         #expect(!reloadedViewModel.audioPlayer.isPlaying)
     }
 
-    @Test func missingPersistedQueueSongsAreRemovedOnReconnect() async throws {
+    @Test func persistedQueueRestorationDoesNotValidateEverySongOnReconnect() async throws {
         let suiteName = "MissingPlaybackRestoreTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!
         let playbackFileURL = temporaryPlaybackFileURL()
@@ -156,15 +156,14 @@ struct AppCoordinatorTests {
             )
         )
 
+        let getSongRequestCount = Mutex(0)
         let session = StubURLProtocol.session { request in
             switch apiMethod(in: request) {
             case "ping":
                 return envelope(#"{"status":"ok"}"#)
             case "getSong":
-                if queryValue("id", in: request) == removedSong.id {
-                    return envelope(#"{"status":"failed","error":{"message":"Song not found"}}"#)
-                }
-                return envelope(#"{"status":"ok","song":{"id":"available-song","title":"Available","artist":"Artist","album":"Album","duration":185,"albumId":"album-1","artistId":"artist-1"}}"#)
+                getSongRequestCount.withLock { $0 += 1 }
+                return envelope(#"{"status":"failed","error":{"message":"Song not found"}}"#)
             default:
                 return StubURLProtocol.Response(statusCode: 500, json: "{}")
             }
@@ -177,13 +176,15 @@ struct AppCoordinatorTests {
 
         await viewModel.connect(profile)
 
-        #expect(viewModel.playbackQueue.map(\.song.id) == [availableSong.id])
-        #expect(viewModel.currentPlaybackQueueEntryID == nil)
-        #expect(viewModel.audioPlayer.currentSong == nil)
+        #expect(getSongRequestCount.withLock { $0 } == 0)
+        #expect(viewModel.playbackQueue.map(\.song.id) == [removedSong.id, availableSong.id])
+        #expect(viewModel.currentPlaybackQueueEntryID == removedEntry.id)
+        #expect(viewModel.audioPlayer.currentSong == removedSong)
+        #expect(viewModel.audioPlayer.hasPlayableItem)
         #expect(!viewModel.audioPlayer.isPlaying)
         #expect(
             PlaybackPersistence(userDefaults: userDefaults, fileURL: playbackFileURL)
-                .load()?.queue.map(\.song.id) == [availableSong.id]
+                .load()?.queue.map(\.song.id) == [removedSong.id, availableSong.id]
         )
     }
 
