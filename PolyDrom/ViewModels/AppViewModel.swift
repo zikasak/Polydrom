@@ -21,6 +21,7 @@ final class AppCoordinator: ObservableObject {
     @Published var isOnline = false
     @Published var hasCachedLibrary = false
     @Published var isRefreshingMetadata = false
+    @Published var isClearingCache = false
     @Published var lastMetadataCheckAt: Date?
     @Published var metadataRefreshInterval: MetadataRefreshInterval {
         didSet {
@@ -101,6 +102,10 @@ final class AppCoordinator: ObservableObject {
 
     var canBrowseLibrary: Bool {
         activeServer != nil && (isOnline || hasCachedLibrary)
+    }
+
+    var canClearCache: Bool {
+        !isBusy && !isRefreshingMetadata && !isClearingCache
     }
 
     var canConnectFromForm: Bool {
@@ -282,6 +287,41 @@ final class AppCoordinator: ObservableObject {
                     self.loadServers()
                 }
             }
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func clearLibraryCache() {
+        guard canClearCache else { return }
+
+        isClearingCache = true
+        defer { isClearingCache = false }
+        sessionGeneration &+= 1
+        cancelMetadataRefresh()
+        scanRetryTask?.cancel()
+        scanRetryTask = nil
+
+        do {
+            try store.purgeAllLibraryCache()
+            clearRemoteLibraryState()
+            statusMessage = "Library cache cleared. Refresh metadata to rebuild it."
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func clearCoverArtCache() async {
+        guard canClearCache else { return }
+
+        isClearingCache = true
+        defer { isClearingCache = false }
+        cancelCoverArtPrefetchTasks()
+        nowPlayingArtworkTask?.cancel()
+
+        do {
+            try await coverArtCache.clear()
+            statusMessage = "Cover art cache cleared."
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1370,6 +1410,15 @@ final class AppCoordinator: ObservableObject {
         let resources = songsToPrefetch.compactMap { coverArtResource(for: $0, size: thumbnailCoverSize) }
         songCoverPrefetchTask?.cancel()
         songCoverPrefetchTask = prefetchCoverArt(resources)
+    }
+
+    private func cancelCoverArtPrefetchTasks() {
+        albumCoverPrefetchTask?.cancel()
+        artistCoverPrefetchTask?.cancel()
+        songCoverPrefetchTask?.cancel()
+        albumCoverPrefetchTask = nil
+        artistCoverPrefetchTask = nil
+        songCoverPrefetchTask = nil
     }
 
     private func prefetchCoverArt(_ resources: [CoverArtResource]) -> Task<Void, Never>? {

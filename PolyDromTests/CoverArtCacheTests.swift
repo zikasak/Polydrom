@@ -41,6 +41,34 @@ struct CoverArtCacheTests {
         #expect(requestCount == 1)
     }
 
+    @Test func clearRemovesMemoryAndDiskCoverArtAndAllowsFreshDownloads() async throws {
+        let directory = try temporaryDirectory()
+        let lock = NSLock()
+        nonisolated(unsafe) var requests = 0
+        let handler: StubURLProtocol.Handler = { _ in
+            lock.lock()
+            requests += 1
+            lock.unlock()
+            return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let cache = CoverArtCache(
+            session: StubURLProtocol.session(handler: handler),
+            diskDirectory: directory
+        )
+        let resource = CoverArtResource(cacheKey: "clearable", url: URL(string: "https://art.example/clearable")!)
+
+        _ = try await cache.image(for: resource)
+        #expect(cache.cachedImage(for: resource) != nil)
+        #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty == false)
+
+        try await cache.clear()
+
+        #expect(cache.cachedImage(for: resource) == nil)
+        #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty)
+        _ = try await cache.data(for: resource)
+        #expect(lock.withLock { requests } == 2)
+    }
+
     @Test func concurrentConsumersShareDownloadAndDecodedImage() async throws {
         let lock = NSLock()
         nonisolated(unsafe) var requests = 0

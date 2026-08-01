@@ -114,25 +114,25 @@ struct ViewRenderingTests {
 
     @Test func settingsRendersEmptySavedConnectedBusyAndErrorStates() async {
         let (viewModel, _, _) = makeViewModel()
-        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 500))
+        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 640))
 
         let server = makeProfile()
         viewModel.servers = [server]
-        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 500))
+        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 640))
 
         viewModel.activeServer = server
         viewModel.isOnline = true
         viewModel.statusMessage = "Connected"
         viewModel.metadataRefreshInterval = .oneHour
-        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 500))
+        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 640))
 
         viewModel.isBusy = true
-        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 500))
+        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 640))
 
         viewModel.isBusy = false
         viewModel.isOnline = false
         viewModel.statusMessage = "Connection failed"
-        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 500))
+        await render(SettingsView(viewModel: viewModel), size: CGSize(width: 540, height: 640))
     }
 
     @Test func playerViewsRenderPlaybackQueueAndEveryLyricsState() async throws {

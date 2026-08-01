@@ -88,6 +88,38 @@ struct AppCoordinatorTests {
         #expect(viewModel.coverArtResource(for: try! JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"a","name":"A"}"#.utf8))) == nil)
     }
 
+    @Test func clearingCachesResetsCoordinatorStateWithoutRemovingServerConnection() async throws {
+        let (viewModel, store, _) = makeViewModel()
+        let profile = makeProfile()
+        viewModel.activeServer = profile
+        viewModel.albums = [NavidromeAlbum(id: "album", name: "Album")]
+        viewModel.hasCachedLibrary = true
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [NavidromeAlbum(id: "album", name: "Album")],
+                songs: [],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "scan",
+                checkedAt: Date()
+            ),
+            serverKey: profile.serverKey
+        )
+
+        viewModel.clearLibraryCache()
+
+        #expect(viewModel.activeServer?.id == profile.id)
+        #expect(!viewModel.hasCachedLibrary)
+        #expect(viewModel.albums.isEmpty)
+        #expect(viewModel.statusMessage == "Library cache cleared. Refresh metadata to rebuild it.")
+        #expect(!(try await store.metadataSyncState(serverKey: profile.serverKey).isComplete))
+
+        await viewModel.clearCoverArtCache()
+        #expect(viewModel.statusMessage == "Cover art cache cleared.")
+        #expect(!viewModel.isClearingCache)
+    }
+
     @Test func invalidClientFactoryAndFailedPingCoverConnectionFailures() async throws {
         let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: MemoryCredentialStore())
         let invalid = AppCoordinator(store: store, audioPlayer: AudioPlayer(), clientFactory: { _ in nil })

@@ -121,6 +121,15 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
             entries[leastRecentlyUsed.key] = nil
         }
     }
+
+    func removeAll() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        entries.removeAll(keepingCapacity: true)
+        totalCost = 0
+        accessCounter = 0
+    }
 }
 
 struct CoverArtResource: Hashable {
@@ -171,6 +180,7 @@ actor CoverArtCache {
     private let decodePermits = AsyncPermitPool(limit: 2)
     private var inFlightRequests: [String: InFlightRequest] = [:]
     private var inFlightImageRequests: [String: InFlightImageRequest] = [:]
+    private var cacheGeneration: UInt = 0
 
     init(session: URLSession? = nil, diskDirectory: URL? = nil) {
         memoryCache.countLimit = 4_000
@@ -207,6 +217,7 @@ actor CoverArtCache {
         }
 
         let consumerID = UUID()
+        let requestGeneration = cacheGeneration
         let task: Task<Data, Error>
 
         if var request = inFlightRequests[resource.cacheKey] {
@@ -238,7 +249,6 @@ actor CoverArtCache {
                     throw NavidromeError.server(message: "HTTP \(httpResponse.statusCode)")
                 }
 
-                try? data.write(to: destinationURL, options: .atomic)
                 return data
             }
             inFlightRequests[resource.cacheKey] = InFlightRequest(
@@ -252,7 +262,10 @@ actor CoverArtCache {
                 let data = try await task.value
                 try Task.checkCancellation()
                 releaseConsumer(consumerID, forKey: resource.cacheKey, cancelIfUnused: false)
-                memoryCache.setObject(data as NSData, forKey: key, cost: data.count)
+                if requestGeneration == cacheGeneration {
+                    try? data.write(to: destinationURL, options: .atomic)
+                    memoryCache.setObject(data as NSData, forKey: key, cost: data.count)
+                }
                 return data
             } catch {
                 releaseConsumer(
@@ -297,6 +310,7 @@ actor CoverArtCache {
         }
 
         let consumerID = UUID()
+        let requestGeneration = cacheGeneration
         let task: Task<CGImage, Error>
 
         if var request = inFlightImageRequests[resource.cacheKey] {
@@ -305,7 +319,7 @@ actor CoverArtCache {
             task = request.task
         } else {
             task = Task { [self] in
-                try await decodeImage(for: resource)
+                try await decodeImage(for: resource, generation: requestGeneration)
             }
             inFlightImageRequests[resource.cacheKey] = InFlightImageRequest(
                 task: task,
@@ -336,6 +350,24 @@ actor CoverArtCache {
                 )
             }
         }
+    }
+
+    /// Removes downloaded and decoded cover art. Requests that were in flight
+    /// before the clear are canceled and cannot repopulate the cache afterward.
+    func clear() throws {
+        cacheGeneration &+= 1
+        inFlightRequests.values.forEach { $0.task.cancel() }
+        inFlightImageRequests.values.forEach { $0.task.cancel() }
+        inFlightRequests.removeAll()
+        inFlightImageRequests.removeAll()
+        memoryCache.removeAllObjects()
+        decodedImageCache.removeAll()
+
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: diskDirectory.path) {
+            try fileManager.removeItem(at: diskDirectory)
+        }
+        try fileManager.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
     }
 
     /// Decodes images that are already stored locally without issuing requests.
@@ -370,7 +402,7 @@ actor CoverArtCache {
         }
     }
 
-    private func decodeImage(for resource: CoverArtResource) async throws -> CGImage {
+    private func decodeImage(for resource: CoverArtResource, generation: UInt) async throws -> CGImage {
         if let cachedImage = cachedImage(for: resource) {
             return cachedImage
         }
@@ -385,6 +417,7 @@ actor CoverArtCache {
 
         let image = try await decode(data)
 
+        guard generation == cacheGeneration else { throw CancellationError() }
         decodedImageCache.insert(image, forKey: resource.cacheKey)
         return image
     }

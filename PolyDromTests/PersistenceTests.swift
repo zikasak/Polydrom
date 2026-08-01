@@ -278,6 +278,40 @@ struct PersistenceTests {
         #expect(try await store.recentSongsAsync(serverKey: profile.serverKey).isEmpty)
     }
 
+    @Test func clearingAllLibraryCachePreservesSavedServersAndCredentials() async throws {
+        let credentials = MemoryCredentialStore()
+        let registry = ServerRegistry(fileURL: nil, keychain: credentials)
+        let profile = try registry.save(
+            address: "https://cache.example",
+            username: "user",
+            password: "password"
+        )
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: credentials
+        )
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [NavidromeArtist(id: "artist", name: "Artist", albumCount: 1)],
+                albums: [],
+                songs: [makeSong()],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "scan",
+                checkedAt: Date()
+            ),
+            serverKey: profile.serverKey
+        )
+
+        try store.purgeAllLibraryCache()
+
+        #expect(!(try await store.metadataSyncState(serverKey: profile.serverKey).isComplete))
+        #expect(try await store.artists(serverKey: profile.serverKey).isEmpty)
+        #expect(try await store.songs(serverKey: profile.serverKey, albumID: "missing").isEmpty)
+        #expect(try registry.servers().map(\.id) == [profile.id])
+        #expect(credentials.passwords[profile.credentialID] == "password")
+    }
+
     @Test func largeInitialSnapshotReconcilesWithoutPerRecordFetches() async throws {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),

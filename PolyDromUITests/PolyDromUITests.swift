@@ -33,6 +33,8 @@ final class PolyDromUITests: XCTestCase {
         XCTAssertTrue(app.textFields["serverUsernameField"].exists)
         XCTAssertTrue(app.secureTextFields["serverPasswordField"].exists)
         XCTAssertTrue(app.buttons["saveAndConnectButton"].exists)
+        XCTAssertTrue(app.buttons["clearLibraryCacheButton"].exists)
+        XCTAssertTrue(app.buttons["clearCoverArtCacheButton"].exists)
     }
 
     @MainActor

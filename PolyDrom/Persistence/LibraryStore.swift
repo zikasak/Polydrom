@@ -41,6 +41,13 @@ final class LibraryStore {
         try save()
     }
 
+    /// Deletes cached metadata for every saved server without touching server
+    /// profiles or their credentials.
+    func purgeAllLibraryCache() throws {
+        try purgeMetadata(serverKey: nil, in: context)
+        try save()
+    }
+
     func markPlayed(_ song: NavidromeSong, serverKey: String) throws {
         let songObject = try Self.upsertSong(song, serverKey: serverKey, isFavorite: nil, in: context)
         let now = Date()
@@ -481,10 +488,12 @@ final class LibraryStore {
         }
     }
 
-    private func purgeMetadata(serverKey: String, in context: NSManagedObjectContext) throws {
+    private func purgeMetadata(serverKey: String?, in context: NSManagedObjectContext) throws {
         for entityName in ["VDPlaylistEntry", "VDPlaylist", "VDSong", "VDAlbum", "VDArtist", "VDMetadataSyncState"] {
             let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
+            if let serverKey {
+                request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
+            }
             try context.fetch(request).forEach(context.delete)
         }
     }
