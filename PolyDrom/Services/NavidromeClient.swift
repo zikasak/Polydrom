@@ -30,6 +30,15 @@ struct NavidromeClient: Sendable {
         try response.subsonicResponse.throwIfNeeded()
     }
 
+    func songMetadata(for songID: String) async throws -> NavidromeSong? {
+        let response: SongEnvelope = try await request(
+            "getSong",
+            queryItems: [URLQueryItem(name: "id", value: songID)]
+        )
+        guard response.subsonicResponse.status == "ok" else { return nil }
+        return response.subsonicResponse.song
+    }
+
     func catalogChangeState() async throws -> CatalogChangeState {
         let response: ScanStatusEnvelope = try await request("getScanStatus")
         try response.subsonicResponse.throwIfNeeded()

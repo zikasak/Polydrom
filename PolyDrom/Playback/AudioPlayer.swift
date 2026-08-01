@@ -22,6 +22,12 @@ final class AudioPlayer: ObservableObject {
     let player: AVPlayer
     let airPlayRoutePickerController: AirPlayRoutePickerController
     var onSongFinished: (() -> Void)?
+    var onSongFailed: ((NavidromeSong) -> Void)?
+    var onPlaybackStateChanged: (() -> Void)?
+
+    var hasPlayableItem: Bool {
+        player.currentItem != nil
+    }
 
     private let nowPlayingController = NowPlayingController()
     private var timeObserver: Any?
@@ -36,6 +42,7 @@ final class AudioPlayer: ObservableObject {
     private var lastObservedPlaybackTime: Double = 0
     private var lastPlaybackProgressAt = Date()
     private var didAttemptStallRecovery = false
+    private var pendingSeekTarget: Double?
     private var canPlayPreviousInNowPlaying = false
     private var canPlayNextInNowPlaying = false
 
@@ -66,28 +73,71 @@ final class AudioPlayer: ObservableObject {
         stallCheckTimer?.invalidate()
     }
 
-    func play(song: NavidromeSong, url: URL) {
+    func play(
+        song: NavidromeSong,
+        url: URL,
+        startingAt startTime: Double = 0,
+        autoplay: Bool = true
+    ) {
         AppLog.playback.info(
             "Starting playback for song \(song.id, privacy: .private(mask: .hash))"
         )
+        let targetTime = normalizedPlaybackTime(startTime, duration: Double(song.duration ?? 0))
         playbackGeneration += 1
+        let generation = playbackGeneration
         removeTimeObserver()
         removeStallCheckTimer()
-        resetStallTracking()
+        pendingSeekTarget = targetTime > 0 ? targetTime : nil
+        resetStallTracking(at: targetTime)
         let item = AVPlayerItem(url: url)
         observeSongFinished(for: item)
-        observePlaybackFailure(for: item)
+        observePlaybackFailure(for: item, generation: generation)
         player.replaceCurrentItem(with: item)
         observePlaybackTime(for: playbackGeneration)
         observePlaybackStalls()
         startStallCheckTimer()
-        player.play()
         currentSong = song
-        isPlaying = true
+        isPlaying = autoplay
         hasFinishedCurrentSong = false
-        currentTime = 0
+        currentTime = targetTime
         duration = Double(song.duration ?? 0)
-        statusMessage = "Playing through the selected audio route."
+        statusMessage = autoplay ? "Playing through the selected audio route." : "Paused"
+
+        if targetTime > 0 {
+            let target = CMTime(seconds: targetTime, preferredTimescale: 600)
+            player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          self.playbackGeneration == generation,
+                          self.currentSong?.id == song.id else { return }
+                    self.currentTime = targetTime
+                    self.lastObservedPlaybackTime = targetTime
+                    self.lastPlaybackProgressAt = Date()
+                    if autoplay {
+                        self.player.play()
+                    }
+                    self.updateNowPlayingInfo()
+                    self.notifyPlaybackStateChanged()
+                }
+            }
+        } else if autoplay {
+            player.play()
+        }
+
+        updateNowPlayingInfo()
+        notifyPlaybackStateChanged()
+    }
+
+    func restore(song: NavidromeSong, at seconds: Double) {
+        let targetTime = normalizedPlaybackTime(seconds, duration: Double(song.duration ?? 0))
+        currentSong = song
+        isPlaying = false
+        hasFinishedCurrentSong = false
+        pendingSeekTarget = nil
+        currentTime = targetTime
+        duration = Double(song.duration ?? 0)
+        resetStallTracking(at: targetTime)
+        statusMessage = "Ready to resume"
         updateNowPlayingInfo()
     }
 
@@ -100,7 +150,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     func playCurrentSong() {
-        guard currentSong != nil else { return }
+        guard currentSong != nil, player.currentItem != nil else { return }
 
         AppLog.playback.debug("Resuming current song")
         resetStallTracking(at: currentTime)
@@ -109,6 +159,7 @@ final class AudioPlayer: ObservableObject {
         player.play()
         statusMessage = "Playing through the selected audio route."
         updateNowPlayingInfo()
+        notifyPlaybackStateChanged()
     }
 
     func pauseCurrentSong() {
@@ -120,6 +171,7 @@ final class AudioPlayer: ObservableObject {
         isPlaying = false
         statusMessage = "Paused"
         updateNowPlayingInfo()
+        notifyPlaybackStateChanged()
     }
 
     func stop() {
@@ -132,6 +184,7 @@ final class AudioPlayer: ObservableObject {
         removeStallCheckTimer()
         player.pause()
         player.replaceCurrentItem(with: nil)
+        pendingSeekTarget = nil
         currentSong = nil
         isPlaying = false
         hasFinishedCurrentSong = false
@@ -139,6 +192,7 @@ final class AudioPlayer: ObservableObject {
         duration = 0
         statusMessage = "Nothing playing"
         updateNowPlayingInfo()
+        notifyPlaybackStateChanged()
     }
 
     func seek(to seconds: Double) {
@@ -149,8 +203,10 @@ final class AudioPlayer: ObservableObject {
         lastObservedPlaybackTime = clampedSeconds
         lastPlaybackProgressAt = Date()
         didAttemptStallRecovery = false
+        pendingSeekTarget = nil
         player.seek(to: CMTime(seconds: clampedSeconds, preferredTimescale: 600))
         updateNowPlayingInfo()
+        notifyPlaybackStateChanged()
     }
 
     func setVolume(_ nextVolume: Double) {
@@ -196,6 +252,11 @@ final class AudioPlayer: ObservableObject {
     private func updatePlaybackTime(_ seconds: Double, generation: Int) {
         guard generation == playbackGeneration, currentSong != nil else { return }
 
+        if let pendingSeekTarget {
+            guard seconds.isFinite, abs(seconds - pendingSeekTarget) <= 1 else { return }
+            self.pendingSeekTarget = nil
+        }
+
         if seconds.isFinite {
             currentTime = seconds
             if seconds > lastObservedPlaybackTime + 0.1 || seconds < lastObservedPlaybackTime - 1 {
@@ -216,6 +277,7 @@ final class AudioPlayer: ObservableObject {
         }
 
         updateNowPlayingInfo()
+        notifyPlaybackStateChanged()
     }
 
     private func checkForPlaybackStall() {
@@ -268,7 +330,7 @@ final class AudioPlayer: ObservableObject {
         }
     }
 
-    private func observePlaybackFailure(for item: AVPlayerItem) {
+    private func observePlaybackFailure(for item: AVPlayerItem, generation: Int) {
         removePlaybackFailureObserver()
         songFailedObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemFailedToPlayToEndTime,
@@ -276,15 +338,17 @@ final class AudioPlayer: ObservableObject {
             queue: .main
         ) { [weak self] notification in
             let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
-            Task { [weak self] in
-                await self?.failCurrentSong(error: error ?? item.error)
+            Task { @MainActor [weak self, weak item] in
+                guard let self, self.isCurrentPlayback(item, generation: generation) else { return }
+                self.failCurrentSong(error: error ?? item?.error)
             }
         }
 
         itemStatusObservation = item.observe(\.status, options: [.new]) { [weak self, weak item] observedItem, _ in
             guard observedItem.status == .failed else { return }
             Task { @MainActor [weak self, weak item] in
-                self?.failCurrentSong(error: item?.error)
+                guard let self, self.isCurrentPlayback(item, generation: generation) else { return }
+                self.failCurrentSong(error: item?.error)
             }
         }
     }
@@ -320,6 +384,7 @@ final class AudioPlayer: ObservableObject {
             isPlaying = false
             statusMessage = "Paused"
             updateNowPlayingInfo()
+            notifyPlaybackStateChanged()
         case .waitingToPlayAtSpecifiedRate, .playing:
             guard !isPlaying else { return }
             resetStallTracking(at: currentTime)
@@ -327,6 +392,7 @@ final class AudioPlayer: ObservableObject {
             isPlaying = true
             statusMessage = "Playing through the selected audio route."
             updateNowPlayingInfo()
+            notifyPlaybackStateChanged()
         @unknown default:
             break
         }
@@ -401,11 +467,12 @@ final class AudioPlayer: ObservableObject {
         isPlaying = false
         statusMessage = "Finished"
         updateNowPlayingInfo()
+        notifyPlaybackStateChanged()
         onSongFinished?()
     }
 
     private func failCurrentSong(error: Error?) {
-        guard !hasFinishedCurrentSong else { return }
+        guard !hasFinishedCurrentSong, let failedSong = currentSong else { return }
         if let error {
             let nsError = error as NSError
             AppLog.playback.error(
@@ -419,6 +486,13 @@ final class AudioPlayer: ObservableObject {
         isPlaying = false
         statusMessage = "Playback failed: \(error?.localizedDescription ?? "Unknown error")"
         updateNowPlayingInfo()
+        notifyPlaybackStateChanged()
+        onSongFailed?(failedSong)
+    }
+
+    private func isCurrentPlayback(_ item: AVPlayerItem?, generation: Int) -> Bool {
+        guard let item else { return false }
+        return playbackGeneration == generation && player.currentItem === item
     }
 
     private func shouldFinishCurrentSong(at seconds: Double) -> Bool {
@@ -437,5 +511,15 @@ final class AudioPlayer: ObservableObject {
             canPlayPrevious: canPlayPreviousInNowPlaying,
             canPlayNext: canPlayNextInNowPlaying
         )
+    }
+
+    private func normalizedPlaybackTime(_ seconds: Double, duration: Double) -> Double {
+        let nonnegativeSeconds = seconds.isFinite ? max(seconds, 0) : 0
+        guard duration.isFinite, duration > 0 else { return nonnegativeSeconds }
+        return min(nonnegativeSeconds, duration)
+    }
+
+    private func notifyPlaybackStateChanged() {
+        onPlaybackStateChanged?()
     }
 }

@@ -178,7 +178,8 @@ let onePixelPNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1H
 func makeViewModel(
     credentials: MemoryCredentialStore = MemoryCredentialStore(),
     session: URLSession = StubURLProtocol.session(),
-    userDefaults: UserDefaults = temporaryUserDefaults()
+    userDefaults: UserDefaults = temporaryUserDefaults(),
+    playbackFileURL: URL = temporaryPlaybackFileURL()
 ) -> (AppCoordinator, LibraryStore, MemoryCredentialStore) {
     let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: credentials)
     let viewModel = AppCoordinator(
@@ -190,7 +191,8 @@ func makeViewModel(
             diskDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         ),
         serverRegistry: ServerRegistry(fileURL: nil, keychain: credentials),
-        userDefaults: userDefaults
+        userDefaults: userDefaults,
+        playbackFileURL: playbackFileURL
     )
     return (viewModel, store, credentials)
 }
@@ -200,6 +202,11 @@ func temporaryUserDefaults() -> UserDefaults {
     let userDefaults = UserDefaults(suiteName: suiteName)!
     userDefaults.removePersistentDomain(forName: suiteName)
     return userDefaults
+}
+
+func temporaryPlaybackFileURL() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("PolyDromTests-\(UUID().uuidString)-playback.json")
 }
 
 func eventually(

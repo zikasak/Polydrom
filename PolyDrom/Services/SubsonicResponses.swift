@@ -16,6 +16,7 @@ struct SubsonicEnvelope<Response: Decodable>: Decodable {
 }
 
 typealias PingEnvelope = SubsonicEnvelope<BasicSubsonicResponse>
+typealias SongEnvelope = SubsonicEnvelope<SongResponse>
 typealias SearchEnvelope = SubsonicEnvelope<SearchResponse>
 typealias PlaylistsEnvelope = SubsonicEnvelope<PlaylistsResponse>
 typealias PlaylistEnvelope = SubsonicEnvelope<PlaylistResponse>
@@ -39,6 +40,12 @@ extension SubsonicResponse {
 struct BasicSubsonicResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
+}
+
+struct SongResponse: SubsonicResponse {
+    let status: String
+    let error: SubsonicServerError?
+    let song: NavidromeSong?
 }
 
 struct SearchResponse: SubsonicResponse {

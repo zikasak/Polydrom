@@ -70,6 +70,7 @@ final class AppCoordinator: ObservableObject {
     private let coverArtCache: CoverArtCache
     private let syncCoordinator: LibrarySyncCoordinator
     private let userDefaults: UserDefaults
+    let playbackPersistence: PlaybackPersistence
     var client: NavidromeClient?
     private var metadataMonitorTask: Task<Void, Never>?
     private var metadataSyncTask: Task<MetadataSyncOutcome, Error>?
@@ -91,6 +92,8 @@ final class AppCoordinator: ObservableObject {
     private var didAttemptInitialConnection = false
     private var didRequestFirstRunSettings = false
     private var hasLoadedHome = false
+    var pendingPlaybackRestore: PersistedPlaybackState?
+    var didRestorePlayback = false
     var sessionGeneration: UInt = 0
     private var artistFavoriteUpdatesInFlight = Set<String>()
     private var albumFavoriteUpdatesInFlight = Set<String>()
@@ -133,7 +136,7 @@ final class AppCoordinator: ObservableObject {
         clientFactory: @escaping @MainActor (ServerProfile) -> NavidromeClient? = { NavidromeClient(profile: $0) },
         coverArtCache: CoverArtCache = .shared,
         serverRegistry: ServerRegistry? = nil,
-        userDefaults: UserDefaults = .standard
+        userDefaults: UserDefaults = .standard, playbackFileURL: URL? = nil
     ) {
         self.store = store
         let suppliedRegistry = serverRegistry
@@ -143,6 +146,7 @@ final class AppCoordinator: ObservableObject {
         self.coverArtCache = coverArtCache
         self.syncCoordinator = LibrarySyncCoordinator(store: store)
         self.userDefaults = userDefaults
+        self.playbackPersistence = PlaybackPersistence(userDefaults: userDefaults, fileURL: playbackFileURL)
         if userDefaults.object(forKey: Self.metadataRefreshIntervalKey) == nil {
             self.metadataRefreshInterval = .fifteenMinutes
         } else {
@@ -165,6 +169,7 @@ final class AppCoordinator: ObservableObject {
             try? self.serverRegistry.importLegacyServersIfNeeded(from: store)
         }
         configureAudioPlayer()
+        restorePersistedPlaybackState()
         loadServers()
         if let initializationError = store.initializationError {
             AppLog.persistence.error(
@@ -238,6 +243,11 @@ final class AppCoordinator: ObservableObject {
         scanRetryTask?.cancel()
         if previousServerKey != profile.serverKey {
             clearRemoteLibraryState()
+            if previousServerKey != nil
+                || (pendingPlaybackRestore?.serverKey != nil
+                    && pendingPlaybackRestore?.serverKey != profile.serverKey) {
+                clearPlaybackState()
+            }
         }
         activeServer = profile
         client = nextClient
@@ -257,6 +267,8 @@ final class AppCoordinator: ObservableObject {
             AppLog.app.info("Connected to server (session \(generation, privacy: .public))")
             try serverRegistry.touch(profile)
             loadServers()
+            await reconcilePersistedPlaybackQueue(for: generation)
+            await restorePersistedPlaybackIfNeeded(for: generation)
             await refreshMetadata(for: generation)
         } catch {
             guard isCurrentSession(generation, serverKey: profile.serverKey) else { return }
@@ -291,7 +303,7 @@ final class AppCoordinator: ObservableObject {
                 client = nil
                 isOnline = false
                 hasCachedLibrary = false
-                audioPlayer.stop()
+                clearPlaybackState()
                 clearRemoteLibraryState()
             }
             loadServers()
@@ -679,6 +691,7 @@ final class AppCoordinator: ObservableObject {
         }
 
         playbackQueue.insert(contentsOf: songs.map { PlaybackQueueEntry(song: $0) }, at: currentIndex + 1)
+        persistPlaybackState()
         updateNowPlayingQueueState()
         statusMessage = songs.count == 1 ? "Playing next" : "Playing next: \(songs.count) songs"
     }
@@ -699,6 +712,7 @@ final class AppCoordinator: ObservableObject {
     func addToQueue(_ songs: [NavidromeSong]) {
         guard !songs.isEmpty else { return }
         playbackQueue.append(contentsOf: songs.map { PlaybackQueueEntry(song: $0) })
+        persistPlaybackState()
         updateNowPlayingQueueState()
         statusMessage = songs.count == 1 ? "Added to queue" : "Added \(songs.count) songs to queue"
     }
@@ -716,7 +730,7 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    private func play(
+    func play(
         _ entry: PlaybackQueueEntry,
         replacingQueueWith queue: [PlaybackQueueEntry]? = nil,
         shouldHydrateSong: Bool
@@ -747,7 +761,10 @@ final class AppCoordinator: ObservableObject {
                 lyricsMessage = "No lyrics loaded."
             }
             updateNowPlayingQueueState()
+            pendingPlaybackRestore = nil
+            didRestorePlayback = true
             audioPlayer.play(song: songToPlay, url: url)
+            persistPlaybackState()
             AppLog.playback.debug("Playback URL prepared for song \(songToPlay.id, privacy: .private(mask: .hash))")
             updateNowPlayingArtwork(for: songToPlay)
             let queueToWarm = playbackQueue.map(\.song)
@@ -1151,6 +1168,7 @@ final class AppCoordinator: ObservableObject {
         metadataMonitorTask?.cancel()
         metadataMonitorTask = nil
         if !isActive {
+            persistPlaybackState()
             scanRetryTask?.cancel()
             cancelMetadataRefresh()
             return
@@ -1321,21 +1339,7 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    private func configureAudioPlayer() {
-        audioPlayer.onSongFinished = { [weak self] in
-            self?.playNextTrackAfterCurrentSongFinished()
-        }
-        audioPlayer.configureRemotePlaybackCommands(
-            onPreviousTrack: { [weak self] in
-                self?.playPreviousTrack()
-            },
-            onNextTrack: { [weak self] in
-                self?.playNextTrack()
-            }
-        )
-    }
-
-    private func playNextTrackAfterCurrentSongFinished() {
+    func playNextTrackAfterCurrentSongFinished() {
         guard canPlayNextTrack() else {
             updateNowPlayingQueueState()
             statusMessage = "Reached end of queue"
@@ -1384,10 +1388,6 @@ final class AppCoordinator: ObservableObject {
         loadedArtistAlbumsID = nil
         loadedAlbumSongsID = nil
         loadedPlaylistSongsID = nil
-    }
-
-    func isCurrentSession(_ generation: UInt, serverKey: String) -> Bool {
-        sessionGeneration == generation && self.serverKey == serverKey
     }
 
     private func sortedVisibleArtists(_ artists: [NavidromeArtist]) -> [NavidromeArtist] {
@@ -1469,14 +1469,14 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    private func updateNowPlayingQueueState() {
+    func updateNowPlayingQueueState() {
         audioPlayer.setNowPlayingQueueState(
             canPlayPrevious: canPlayPreviousTrack(),
             canPlayNext: canPlayNextTrack()
         )
     }
 
-    private func updateNowPlayingArtwork(for song: NavidromeSong) {
+    func updateNowPlayingArtwork(for song: NavidromeSong) {
         nowPlayingArtworkTask?.cancel()
         guard let resource = coverArtResource(for: song, size: 512) else {
             audioPlayer.setNowPlayingArtworkData(nil, for: song.id)

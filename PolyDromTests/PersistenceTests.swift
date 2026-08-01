@@ -6,6 +6,50 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct PersistenceTests {
+    @Test func playbackStateMigratesFromUserDefaultsAndStoresLargeValuesOnDisk() throws {
+        let suiteName = "PlaybackFilePersistenceTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        let directory = try temporaryDirectory()
+        let fileURL = directory.appendingPathComponent("playback-state.json")
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let entry = PlaybackQueueEntry(song: makeSong(id: "legacy-song"))
+        let state = PersistedPlaybackState(
+            serverKey: "server",
+            queue: [entry],
+            currentQueueEntryID: entry.id,
+            currentSong: entry.song,
+            position: 12,
+            isPlaying: false
+        )
+        let legacyData = try JSONEncoder().encode(state)
+        userDefaults.set(legacyData, forKey: PlaybackPersistence.userDefaultsKey)
+
+        let persistence = PlaybackPersistence(userDefaults: userDefaults, fileURL: fileURL)
+        #expect(persistence.load() == state)
+        #expect(userDefaults.object(forKey: PlaybackPersistence.userDefaultsKey) == nil)
+        #expect(FileManager.default.fileExists(atPath: fileURL.path))
+
+        userDefaults.set(legacyData, forKey: PlaybackPersistence.userDefaultsKey)
+        #expect(persistence.load() == state)
+        #expect(userDefaults.object(forKey: PlaybackPersistence.userDefaultsKey) == nil)
+
+        let largeSong = makeSong(id: "large-song", title: String(repeating: "x", count: 5_000_000))
+        let largeState = PersistedPlaybackState(
+            serverKey: "server",
+            queue: [PlaybackQueueEntry(song: largeSong)],
+            currentQueueEntryID: nil,
+            currentSong: largeSong,
+            position: 0,
+            isPlaying: false
+        )
+        persistence.save(largeState)
+
+        #expect(userDefaults.object(forKey: PlaybackPersistence.userDefaultsKey) == nil)
+        #expect(persistence.load() == largeState)
+    }
+
     @Test func serverLifecycleTrimsUpdatesSortsTouchesAndDeletes() async throws {
         let credentials = MemoryCredentialStore()
         let registry = ServerRegistry(fileURL: nil, keychain: credentials)

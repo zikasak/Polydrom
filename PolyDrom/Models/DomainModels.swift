@@ -27,7 +27,7 @@ struct ServerProfile: Identifiable, Hashable, Sendable {
     }
 }
 
-struct NavidromeSong: Decodable, Identifiable, Hashable, Sendable {
+struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let artist: String?
@@ -107,7 +107,7 @@ struct NavidromeSong: Decodable, Identifiable, Hashable, Sendable {
     }
 }
 
-struct PlaybackQueueEntry: Identifiable, Hashable, Sendable {
+struct PlaybackQueueEntry: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     var song: NavidromeSong
 

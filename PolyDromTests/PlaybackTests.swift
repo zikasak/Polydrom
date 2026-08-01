@@ -61,6 +61,24 @@ struct PlaybackTests {
         #expect(!player.isPlaying)
     }
 
+    @Test func audioPlayerCanStartAtAPersistedPositionWithoutAutoplaying() {
+        let player = AudioPlayer()
+        let song = makeSong(duration: 120)
+
+        player.play(
+            song: song,
+            url: URL(fileURLWithPath: "/dev/null"),
+            startingAt: 37,
+            autoplay: false
+        )
+
+        #expect(player.currentSong == song)
+        #expect(player.currentTime == 37)
+        #expect(player.duration == 120)
+        #expect(!player.isPlaying)
+        #expect(player.hasPlayableItem)
+    }
+
     @Test func nowPlayingControllerBuildsAndClearsMetadataAcrossBranches() throws {
         let controller = NowPlayingController()
         let song = makeSong(title: "Title", artist: "Artist", album: "Album", duration: 200)

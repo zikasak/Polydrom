@@ -104,6 +104,7 @@ struct NavidromeClientTests {
         #expect(try await client.artistPage(size: 20, offset: 10).map(\.id) == ["artist"])
         #expect(try await client.albumMetadataPage(size: 20, offset: 10).map(\.id) == ["metadata-album"])
         #expect(try await client.songMetadataPage(size: 20, offset: 10).map(\.id) == ["metadata-song"])
+        #expect(try await client.songMetadata(for: "hydrated")?.id == "hydrated")
 
         let playlists = try await client.playlists()
         #expect(playlists.map(\.id) == ["playlist"])

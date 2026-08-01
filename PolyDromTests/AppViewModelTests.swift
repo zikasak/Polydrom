@@ -57,6 +57,185 @@ struct AppCoordinatorTests {
         ])
     }
 
+    @Test func playbackQueueSongAndPositionSurviveCoordinatorRecreation() {
+        let suiteName = "PlaybackPersistenceTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        let playbackFileURL = temporaryPlaybackFileURL()
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        defer { try? FileManager.default.removeItem(at: playbackFileURL) }
+
+        let song = makeSong(id: "persisted-song", duration: 120)
+        let entry = PlaybackQueueEntry(id: UUID(), song: song)
+        let profile = makeProfile()
+        let (viewModel, _, _) = makeViewModel(
+            userDefaults: userDefaults,
+            playbackFileURL: playbackFileURL
+        )
+        viewModel.activeServer = profile
+        viewModel.playbackQueue = [entry, PlaybackQueueEntry(song: makeSong(id: "queued-song"))]
+        viewModel.currentPlaybackQueueEntryID = entry.id
+        viewModel.audioPlayer.restore(song: song, at: 37)
+        viewModel.setApplicationActive(false)
+
+        let (reloadedViewModel, _, _) = makeViewModel(
+            userDefaults: userDefaults,
+            playbackFileURL: playbackFileURL
+        )
+
+        #expect(reloadedViewModel.playbackQueue.map(\.song.id) == ["persisted-song", "queued-song"])
+        #expect(reloadedViewModel.currentPlaybackQueueEntryID == entry.id)
+        #expect(reloadedViewModel.audioPlayer.currentSong == song)
+        #expect(reloadedViewModel.audioPlayer.currentTime == 37)
+        #expect(!reloadedViewModel.audioPlayer.isPlaying)
+    }
+
+    @Test func persistedPlaybackIsRecreatedAfterMatchingServerConnects() async throws {
+        let suiteName = "PlaybackRestoreTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        let playbackFileURL = temporaryPlaybackFileURL()
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        defer { try? FileManager.default.removeItem(at: playbackFileURL) }
+
+        let song = makeSong(id: "restore-song", duration: 120)
+        let entry = PlaybackQueueEntry(song: song)
+        let profile = makeProfile()
+        PlaybackPersistence(userDefaults: userDefaults, fileURL: playbackFileURL).save(
+            PersistedPlaybackState(
+                serverKey: profile.serverKey,
+                queue: [entry],
+                currentQueueEntryID: entry.id,
+                currentSong: song,
+                position: 37,
+                isPlaying: true
+            )
+        )
+
+        let session = StubURLProtocol.session { request in
+            if apiMethod(in: request) == "ping" {
+                return envelope(#"{"status":"ok"}"#)
+            }
+            if apiMethod(in: request) == "getSong" {
+                return envelope(#"{"status":"ok","song":{"id":"restore-song","title":"Song","artist":"Artist","album":"Album","duration":120,"albumId":"album-1","artistId":"artist-1"}}"#)
+            }
+            return StubURLProtocol.Response(statusCode: 500, json: "{}")
+        }
+        let (reloadedViewModel, _, _) = makeViewModel(
+            session: session,
+            userDefaults: userDefaults,
+            playbackFileURL: playbackFileURL
+        )
+
+        await reloadedViewModel.connect(profile)
+
+        #expect(reloadedViewModel.audioPlayer.currentSong == song)
+        #expect(reloadedViewModel.audioPlayer.currentTime == 37)
+        #expect(reloadedViewModel.audioPlayer.hasPlayableItem)
+        #expect(!reloadedViewModel.audioPlayer.isPlaying)
+    }
+
+    @Test func missingPersistedQueueSongsAreRemovedOnReconnect() async throws {
+        let suiteName = "MissingPlaybackRestoreTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        let playbackFileURL = temporaryPlaybackFileURL()
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        defer { try? FileManager.default.removeItem(at: playbackFileURL) }
+
+        let removedSong = makeSong(id: "removed-song")
+        let availableSong = makeSong(id: "available-song", title: "Available")
+        let removedEntry = PlaybackQueueEntry(song: removedSong)
+        let availableEntry = PlaybackQueueEntry(song: availableSong)
+        let profile = makeProfile()
+        PlaybackPersistence(userDefaults: userDefaults, fileURL: playbackFileURL).save(
+            PersistedPlaybackState(
+                serverKey: profile.serverKey,
+                queue: [removedEntry, availableEntry],
+                currentQueueEntryID: removedEntry.id,
+                currentSong: removedSong,
+                position: 37,
+                isPlaying: true
+            )
+        )
+
+        let session = StubURLProtocol.session { request in
+            switch apiMethod(in: request) {
+            case "ping":
+                return envelope(#"{"status":"ok"}"#)
+            case "getSong":
+                if queryValue("id", in: request) == removedSong.id {
+                    return envelope(#"{"status":"failed","error":{"message":"Song not found"}}"#)
+                }
+                return envelope(#"{"status":"ok","song":{"id":"available-song","title":"Available","artist":"Artist","album":"Album","duration":185,"albumId":"album-1","artistId":"artist-1"}}"#)
+            default:
+                return StubURLProtocol.Response(statusCode: 500, json: "{}")
+            }
+        }
+        let (viewModel, _, _) = makeViewModel(
+            session: session,
+            userDefaults: userDefaults,
+            playbackFileURL: playbackFileURL
+        )
+
+        await viewModel.connect(profile)
+
+        #expect(viewModel.playbackQueue.map(\.song.id) == [availableSong.id])
+        #expect(viewModel.currentPlaybackQueueEntryID == nil)
+        #expect(viewModel.audioPlayer.currentSong == nil)
+        #expect(!viewModel.audioPlayer.isPlaying)
+        #expect(
+            PlaybackPersistence(userDefaults: userDefaults, fileURL: playbackFileURL)
+                .load()?.queue.map(\.song.id) == [availableSong.id]
+        )
+    }
+
+    @Test func failedCurrentPlaybackRemovesSongAndStartsNextAvailableTrack() async throws {
+        let suiteName = "MissingActivePlaybackTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        let playbackFileURL = temporaryPlaybackFileURL()
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        defer { try? FileManager.default.removeItem(at: playbackFileURL) }
+
+        let removedSong = makeSong(id: "removed-song")
+        let availableSong = makeSong(id: "available-song", title: "Available")
+        let removedEntry = PlaybackQueueEntry(song: removedSong)
+        let availableEntry = PlaybackQueueEntry(song: availableSong)
+        let profile = makeProfile()
+        let session = StubURLProtocol.session { request in
+            guard apiMethod(in: request) == "getSong" else {
+                return StubURLProtocol.Response(statusCode: 500, json: "{}")
+            }
+            if queryValue("id", in: request) == removedSong.id {
+                return envelope(#"{"status":"failed","error":{"message":"Song not found"}}"#)
+            }
+            return envelope(#"{"status":"ok","song":{"id":"available-song","title":"Available","artist":"Artist","album":"Album","duration":185,"albumId":"album-1","artistId":"artist-1"}}"#)
+        }
+        let (viewModel, _, _) = makeViewModel(
+            session: session,
+            userDefaults: userDefaults,
+            playbackFileURL: playbackFileURL
+        )
+        viewModel.activeServer = profile
+        viewModel.client = NavidromeClient(profile: profile, session: session)
+        viewModel.isOnline = true
+        viewModel.playbackQueue = [removedEntry, availableEntry]
+        viewModel.currentPlaybackQueueEntryID = removedEntry.id
+        viewModel.audioPlayer.restore(song: removedSong, at: 12)
+
+        viewModel.audioPlayer.onSongFailed?(removedSong)
+
+        let recovered = await eventually {
+            viewModel.playbackQueue.map(\.song.id) == [availableSong.id]
+                && viewModel.currentPlaybackQueueEntryID == availableEntry.id
+                && viewModel.audioPlayer.currentSong?.id == availableSong.id
+        }
+
+        #expect(recovered)
+        #expect(viewModel.audioPlayer.hasPlayableItem)
+        #expect(
+            PlaybackPersistence(userDefaults: userDefaults, fileURL: playbackFileURL)
+                .load()?.queue.map(\.song.id) == [availableSong.id]
+        )
+    }
+
     @Test func disconnectedActionsReturnUsefulMessagesAndIgnoreUnavailableWork() async {
         let (viewModel, _, _) = makeViewModel()
         #expect(!viewModel.isConnected)
