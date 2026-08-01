@@ -539,60 +539,86 @@ struct PlayerQueueView: View {
                 ContentUnavailableView("Queue is empty", systemImage: "music.note.list")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(viewModel.playbackQueue) { entry in
-                            let song = entry.song
-                            let isCurrent = audioPlayer.currentSong != nil
-                                && viewModel.currentPlaybackQueueEntryID == entry.id
-                            Button {
-                                viewModel.play(entry)
-                            } label: {
-                                HStack(spacing: 10) {
-                                    CoverArtView(resource: viewModel.coverArtResource(for: song, size: 96), size: 42)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(viewModel.playbackQueue) { entry in
+                                let song = entry.song
+                                let isCurrent = audioPlayer.currentSong != nil
+                                    && viewModel.currentPlaybackQueueEntryID == entry.id
+                                Button {
+                                    viewModel.play(entry)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        CoverArtView(resource: viewModel.coverArtResource(for: song, size: 96), size: 42)
 
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(song.title)
-                                            .fontWeight(isCurrent ? .semibold : .regular)
-                                            .lineLimit(1)
-                                        Text(song.artist ?? song.album ?? "Unknown artist")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(song.title)
+                                                .fontWeight(isCurrent ? .semibold : .regular)
+                                                .lineLimit(1)
+                                            Text(song.artist ?? song.album ?? "Unknown artist")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+
+                                        Spacer()
+
+                                        if isCurrent {
+                                            Image(systemName: audioPlayer.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
+                                                .foregroundStyle(.tint)
+                                        } else {
+                                            Text(song.durationText)
+                                                .font(.caption.monospacedDigit())
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
-
-                                    Spacer()
-
-                                    if isCurrent {
-                                        Image(systemName: audioPlayer.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
-                                            .foregroundStyle(.tint)
-                                    } else {
-                                        Text(song.durationText)
-                                            .font(.caption.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                    }
+                                    .padding(8)
+                                    .background(
+                                        isCurrent ? Color.accentColor.opacity(0.13) : .clear,
+                                        in: RoundedRectangle(cornerRadius: 8)
+                                    )
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(8)
-                                .background(
-                                    isCurrent ? Color.accentColor.opacity(0.13) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 8)
-                                )
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
+                                .disabled(!viewModel.isOnline)
+                                .id(entry.id)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(!viewModel.isOnline)
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 12)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
+                    .onAppear {
+                        scrollToCurrentEntry(with: proxy, animated: false)
+                    }
+                    .onChange(of: viewModel.currentPlaybackQueueEntryID) { _, _ in
+                        scrollToCurrentEntry(with: proxy, animated: true)
+                    }
+                    .onScrollPhaseChange { _, newPhase in
+                        isScrolling = newPhase.isScrolling
+                    }
+                    .environment(\.libraryGridIsScrolling, isScrolling)
                 }
-                .onScrollPhaseChange { _, newPhase in
-                    isScrolling = newPhase.isScrolling
-                }
-                .environment(\.libraryGridIsScrolling, isScrolling)
             }
         }
         .background(.ultraThinMaterial)
+    }
+
+    private func scrollToCurrentEntry(with proxy: ScrollViewProxy, animated: Bool) {
+        guard audioPlayer.currentSong != nil,
+              let currentEntryID = viewModel.currentPlaybackQueueEntryID,
+              viewModel.playbackQueue.contains(where: { $0.id == currentEntryID }) else {
+            return
+        }
+
+        let scroll = {
+            proxy.scrollTo(currentEntryID, anchor: .center)
+        }
+        if animated {
+            withAnimation(.easeOut(duration: 0.3), scroll)
+        } else {
+            scroll()
+        }
     }
 }
 
@@ -646,6 +672,10 @@ struct PlayerLyricsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 22)
                 .padding(.bottom, 28)
+            }
+            .onAppear {
+                guard let highlightedLine else { return }
+                proxy.scrollTo(highlightedLine, anchor: .center)
             }
             .onChange(of: highlightedLine) { _, index in
                 guard let index else { return }
