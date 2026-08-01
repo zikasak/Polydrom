@@ -7,6 +7,7 @@
 
 import CryptoKit
 import Foundation
+import OSLog
 
 struct NavidromeClient: Sendable {
     let profile: ServerProfile
@@ -190,6 +191,32 @@ struct NavidromeClient: Sendable {
         queryItems: [URLQueryItem] = [],
         timeoutInterval: TimeInterval? = nil
     ) async throws -> Response {
+        let startedAt = Date()
+        AppLog.network.debug("Request started: \(method, privacy: .public)")
+
+        do {
+            return try await performRequest(
+                method,
+                queryItems: queryItems,
+                timeoutInterval: timeoutInterval,
+                startedAt: startedAt
+            )
+        } catch {
+            let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+            AppLog.network.error(
+                "Request failed: \(method, privacy: .public), \(elapsedMilliseconds, privacy: .public) ms"
+            )
+            AppLog.network.debug("Request failure reason: \(error.localizedDescription, privacy: .private)")
+            throw error
+        }
+    }
+
+    private func performRequest<Response: Decodable>(
+        _ method: String,
+        queryItems: [URLQueryItem],
+        timeoutInterval: TimeInterval?,
+        startedAt: Date
+    ) async throws -> Response {
         let url = try apiURL(method, queryItems: queryItems)
         let data: Data
         let response: URLResponse
@@ -203,10 +230,18 @@ struct NavidromeClient: Sendable {
         }
 
         if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
+            AppLog.network.warning(
+                "Request returned HTTP \(httpResponse.statusCode, privacy: .public): \(method, privacy: .public)"
+            )
             throw NavidromeError.server(message: "HTTP \(httpResponse.statusCode)")
         }
 
-        return try JSONDecoder().decode(Response.self, from: data)
+        let decodedResponse = try JSONDecoder().decode(Response.self, from: data)
+        let elapsedMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+        AppLog.network.info(
+            "Request completed: \(method, privacy: .public) in \(elapsedMilliseconds, privacy: .public) ms (\(data.count, privacy: .public) bytes)"
+        )
+        return decodedResponse
     }
 
     private func apiURL(_ method: String, includeResponseFormat: Bool = true, queryItems: [URLQueryItem] = []) throws -> URL {

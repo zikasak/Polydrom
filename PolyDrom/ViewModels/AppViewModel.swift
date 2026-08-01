@@ -7,6 +7,7 @@
 
 import Combine
 import Foundation
+import OSLog
 
 @MainActor
 final class AppCoordinator: ObservableObject {
@@ -166,6 +167,9 @@ final class AppCoordinator: ObservableObject {
         configureAudioPlayer()
         loadServers()
         if let initializationError = store.initializationError {
+            AppLog.persistence.error(
+                "Library store initialized with an error: \(initializationError.localizedDescription, privacy: .private)"
+            )
             statusMessage = initializationError.localizedDescription
         }
     }
@@ -179,7 +183,9 @@ final class AppCoordinator: ObservableObject {
                 username = latest.username
                 password = latest.password
             }
+            AppLog.app.info("Loaded \(self.servers.count, privacy: .public) server profiles")
         } catch {
+            AppLog.app.error("Failed to load server profiles: \(error.localizedDescription, privacy: .private)")
             statusMessage = error.localizedDescription
         }
     }
@@ -187,8 +193,10 @@ final class AppCoordinator: ObservableObject {
     func connectFromForm() async {
         do {
             let profile = try serverRegistry.save(address: serverAddress, username: username, password: password)
+            AppLog.app.info("Connecting using the server profile saved from settings")
             await connect(profile)
         } catch {
+            AppLog.app.error("Could not save server profile: \(error.localizedDescription, privacy: .private)")
             statusMessage = error.localizedDescription
         }
     }
@@ -202,6 +210,7 @@ final class AppCoordinator: ObservableObject {
         }
 
         guard let latest = servers.first else { return }
+        AppLog.app.info("Attempting automatic connection to the latest server")
         statusMessage = "Connecting to \(latest.displayName)..."
         await connect(latest)
     }
@@ -214,12 +223,16 @@ final class AppCoordinator: ObservableObject {
 
     func connect(_ profile: ServerProfile) async {
         guard let nextClient = clientFactory(profile) else {
+            AppLog.app.error("Could not create a client for the configured server")
             statusMessage = "Enter a valid server address."
             return
         }
 
         sessionGeneration &+= 1
         let generation = sessionGeneration
+        AppLog.app.info(
+            "Connecting to server \(profile.serverKey, privacy: .private(mask: .hash)) (session \(generation, privacy: .public))"
+        )
         let previousServerKey = activeServer?.serverKey
         cancelMetadataRefresh()
         scanRetryTask?.cancel()
@@ -241,12 +254,16 @@ final class AppCoordinator: ObservableObject {
             try await nextClient.ping()
             guard isCurrentSession(generation, serverKey: profile.serverKey) else { return }
             isOnline = true
+            AppLog.app.info("Connected to server (session \(generation, privacy: .public))")
             try serverRegistry.touch(profile)
             loadServers()
             await refreshMetadata(for: generation)
         } catch {
             guard isCurrentSession(generation, serverKey: profile.serverKey) else { return }
             isOnline = false
+            AppLog.app.error(
+                "Connection failed for server \(profile.serverKey, privacy: .private(mask: .hash)): \(error.localizedDescription, privacy: .private)"
+            )
             statusMessage = hasCachedLibrary
                 ? "Offline — showing cached library. \(error.localizedDescription)"
                 : error.localizedDescription
@@ -254,6 +271,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     func deleteServer(_ profile: ServerProfile) {
+        AppLog.app.info("Deleting server profile \(profile.id.uuidString, privacy: .public)")
         let refreshToDrain: Task<MetadataSyncOutcome, Error>?
         if activeServer?.id == profile.id {
             sessionGeneration &+= 1
@@ -288,6 +306,7 @@ final class AppCoordinator: ObservableObject {
                 }
             }
         } catch {
+            AppLog.app.error("Failed to delete server profile: \(error.localizedDescription, privacy: .private)")
             statusMessage = error.localizedDescription
         }
     }
@@ -304,9 +323,11 @@ final class AppCoordinator: ObservableObject {
 
         do {
             try store.purgeAllLibraryCache()
+            AppLog.persistence.info("Cleared the library cache")
             clearRemoteLibraryState()
             statusMessage = "Library cache cleared. Refresh metadata to rebuild it."
         } catch {
+            AppLog.persistence.error("Failed to clear the library cache: \(error.localizedDescription, privacy: .private)")
             statusMessage = error.localizedDescription
         }
     }
@@ -321,13 +342,16 @@ final class AppCoordinator: ObservableObject {
 
         do {
             try await coverArtCache.clear()
+            AppLog.cache.info("Cleared the cover art cache")
             statusMessage = "Cover art cache cleared."
         } catch {
+            AppLog.cache.error("Failed to clear the cover art cache: \(error.localizedDescription, privacy: .private)")
             statusMessage = error.localizedDescription
         }
     }
 
     func selectSection(_ section: LibrarySection) {
+        AppLog.app.debug("Selected library section: \(section.rawValue, privacy: .public)")
         selectedSection = section
         Task { await refreshSelectedSection() }
     }
@@ -618,6 +642,7 @@ final class AppCoordinator: ObservableObject {
     func play(_ songs: [NavidromeSong], startingAt index: Int) {
         guard songs.indices.contains(index) else { return }
 
+        AppLog.playback.info("Queued \(songs.count, privacy: .public) songs for playback")
         let queue = songs.map { PlaybackQueueEntry(song: $0) }
         let shouldHydrateSong = selectedSection == .random
         Task {
@@ -697,6 +722,7 @@ final class AppCoordinator: ObservableObject {
         shouldHydrateSong: Bool
     ) async {
         guard isOnline, let client, let serverKey else {
+            AppLog.playback.warning("Playback requested while the app is offline")
             statusMessage = "Connect to the server to play music."
             return
         }
@@ -722,6 +748,7 @@ final class AppCoordinator: ObservableObject {
             }
             updateNowPlayingQueueState()
             audioPlayer.play(song: songToPlay, url: url)
+            AppLog.playback.debug("Playback URL prepared for song \(songToPlay.id, privacy: .private(mask: .hash))")
             updateNowPlayingArtwork(for: songToPlay)
             let queueToWarm = playbackQueue.map(\.song)
             Task { [weak self] in
@@ -733,6 +760,7 @@ final class AppCoordinator: ObservableObject {
             try await refreshRecentSongs()
             statusMessage = "Playing \(songToPlay.title)"
         } catch {
+            AppLog.playback.error("Could not start playback: \(error.localizedDescription, privacy: .private)")
             statusMessage = error.localizedDescription
         }
     }
@@ -774,6 +802,7 @@ final class AppCoordinator: ObservableObject {
                     addToQueue(songs)
                 }
             } catch {
+                AppLog.playback.error("Queue action failed: \(error.localizedDescription, privacy: .private)")
                 statusMessage = error.localizedDescription
             }
         }
@@ -842,10 +871,14 @@ final class AppCoordinator: ObservableObject {
             guard lyricsSongID == song.id, isCurrentSession(generation, serverKey: serverKey) else { return }
             currentLyrics = availableLyrics.first(where: \.synced) ?? availableLyrics.first
             lyricsMessage = currentLyrics == nil ? "No lyrics are available for this song." : ""
+            AppLog.network.debug(
+                "Loaded \(availableLyrics.count, privacy: .public) lyric entries for song \(song.id, privacy: .private(mask: .hash))"
+            )
         } catch {
             guard lyricsSongID == song.id, isCurrentSession(generation, serverKey: serverKey) else { return }
             currentLyrics = nil
             lyricsMessage = "Lyrics could not be loaded: \(error.localizedDescription)"
+            AppLog.network.error("Could not load lyrics: \(error.localizedDescription, privacy: .private)")
         }
     }
 
@@ -1055,6 +1088,9 @@ final class AppCoordinator: ObservableObject {
         guard generation == sessionGeneration, metadataRefreshID == nil, let client, let serverKey else { return }
         let wasOnline = isOnline
         let refreshID = UUID()
+        AppLog.sync.info(
+            "Metadata refresh requested (session \(generation, privacy: .public), cached library: \(self.hasCachedLibrary, privacy: .public))"
+        )
         metadataRefreshID = refreshID
         isRefreshingMetadata = true
         defer {
@@ -1083,22 +1119,27 @@ final class AppCoordinator: ObservableObject {
             guard isCurrentSession(generation, serverKey: serverKey) else { return }
             switch outcome {
             case .full:
+                AppLog.sync.info("Metadata refresh completed with a full catalog sync")
                 await reloadCachedLibrary(for: generation)
                 statusMessage = metadataCompletionMessage(prefix: "Library metadata updated")
             case .metadataOnly:
+                AppLog.sync.info("Metadata refresh completed with a metadata-only sync")
                 await reloadCachedLibrary(for: generation)
                 statusMessage = metadataCompletionMessage(prefix: "Library metadata is up to date")
             case .deferredForScan:
+                AppLog.sync.info("Metadata refresh deferred because Navidrome is scanning")
                 statusMessage = "Navidrome is scanning. Refresh will retry shortly."
                 scheduleScanRetry(serverKey: serverKey, generation: generation)
             }
         } catch is CancellationError {
+            AppLog.sync.debug("Metadata refresh canceled")
             return
         } catch {
             guard isCurrentSession(generation, serverKey: serverKey) else { return }
             if !wasOnline || error is URLError {
                 isOnline = false
             }
+            AppLog.sync.error("Metadata refresh failed: \(error.localizedDescription, privacy: .private)")
             statusMessage = hasCachedLibrary
                 ? "Refresh failed — showing cached library. \(error.localizedDescription)"
                 : error.localizedDescription

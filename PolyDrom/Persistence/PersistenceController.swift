@@ -7,6 +7,7 @@
 
 import CoreData
 import Foundation
+import OSLog
 
 @MainActor
 final class PersistenceController {
@@ -37,6 +38,9 @@ final class PersistenceController {
 
         description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
         description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
+        AppLog.persistence.info(
+            "Opening Core Data store (in-memory: \(inMemory, privacy: .public), recovery enabled: \(recoverDisposableCache, privacy: .public))"
+        )
         openStore(
             description: description,
             cacheURL: recoverDisposableCache ? resolvedStoreURL : nil
@@ -67,7 +71,11 @@ final class PersistenceController {
                 at: description.url,
                 options: description.options
             )
+            AppLog.persistence.info("Core Data store opened")
         } catch {
+            AppLog.persistence.error(
+                "Core Data store failed to open: \(error.localizedDescription, privacy: .private)"
+            )
             guard let cacheURL else {
                 loadFailure = .unavailable(error.localizedDescription)
                 return
@@ -81,7 +89,11 @@ final class PersistenceController {
                     at: cacheURL,
                     options: description.options
                 )
+                AppLog.persistence.warning("Disposable Core Data cache was removed and recreated")
             } catch {
+                AppLog.persistence.fault(
+                    "Core Data cache recovery failed: \(error.localizedDescription, privacy: .private)"
+                )
                 loadFailure = .unavailable(error.localizedDescription)
             }
         }

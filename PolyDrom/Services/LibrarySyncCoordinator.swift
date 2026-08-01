@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 enum MetadataSyncOutcome: Equatable {
     case full
@@ -32,6 +33,7 @@ final class LibrarySyncCoordinator {
 
     func synchronize(client: NavidromeClient, serverKey: String) async throws -> MetadataSyncOutcome {
         if let existing = inFlight[serverKey] {
+            AppLog.sync.debug("Joining in-flight metadata sync for server \(serverKey, privacy: .private(mask: .hash))")
             return try await withTaskCancellationHandler {
                 try await existing.task.value
             } onCancel: {
@@ -40,6 +42,7 @@ final class LibrarySyncCoordinator {
         }
 
         let id = UUID()
+        AppLog.sync.info("Metadata sync started for server \(serverKey, privacy: .private(mask: .hash))")
         let task = Task {
             try await performSynchronization(client: client, serverKey: serverKey, retryCount: 0)
         }
@@ -50,7 +53,18 @@ final class LibrarySyncCoordinator {
             }
         }
         return try await withTaskCancellationHandler {
-            try await task.value
+            do {
+                let outcome = try await task.value
+                AppLog.sync.info(
+                    "Metadata sync finished for server \(serverKey, privacy: .private(mask: .hash)): \(String(describing: outcome), privacy: .public)"
+                )
+                return outcome
+            } catch {
+                AppLog.sync.error(
+                    "Metadata sync failed for server \(serverKey, privacy: .private(mask: .hash)): \(error.localizedDescription, privacy: .private)"
+                )
+                throw error
+            }
         } onCancel: {
             task.cancel()
         }
@@ -63,7 +77,10 @@ final class LibrarySyncCoordinator {
     ) async throws -> MetadataSyncOutcome {
         try Task.checkCancellation()
         let changeState = try await client.catalogChangeState()
-        guard !changeState.isScanning else { return .deferredForScan }
+        guard !changeState.isScanning else {
+            AppLog.sync.notice("Metadata sync deferred because the server is scanning")
+            return .deferredForScan
+        }
 
         async let playlistsRequest = client.playlists()
         async let starredRequest = client.starredItems()
@@ -73,6 +90,7 @@ final class LibrarySyncCoordinator {
             || syncState.catalogToken != changeState.token
 
         if requiresFullCatalog {
+            AppLog.sync.info("Performing full catalog sync")
             async let artistsRequest = loadAllArtists(client: client)
             async let albumsRequest = loadAllAlbums(client: client)
             async let songsRequest = loadAllSongs(client: client)
@@ -88,7 +106,11 @@ final class LibrarySyncCoordinator {
             let finalChangeState = try await client.catalogChangeState()
 
             guard !finalChangeState.isScanning, finalChangeState.token == changeState.token else {
-                guard retryCount == 0 else { throw LibrarySyncError.catalogChangedDuringSync }
+                guard retryCount == 0 else {
+                    AppLog.sync.error("Catalog changed during metadata sync after retry")
+                    throw LibrarySyncError.catalogChangedDuringSync
+                }
+                AppLog.sync.warning("Catalog changed during metadata sync; retrying once")
                 return try await performSynchronization(
                     client: client,
                     serverKey: serverKey,
@@ -116,6 +138,13 @@ final class LibrarySyncCoordinator {
                 ),
                 serverKey: serverKey
             )
+            AppLog.sync.info("Full catalog sync applied")
+            AppLog.sync.debug(
+                "Full sync counts: \(artists.count, privacy: .public) artists, \(albums.count, privacy: .public) albums"
+            )
+            AppLog.sync.debug(
+                "Full sync counts: \(songs.count, privacy: .public) songs, \(playlistSnapshots.count, privacy: .public) playlists"
+            )
             return .full
         }
 
@@ -127,6 +156,9 @@ final class LibrarySyncCoordinator {
             guard let changed = playlist.changed, let cachedChanged = cached.changed else { return true }
             return changed != cachedChanged || playlist.songCount != cached.songCount
         }
+        AppLog.sync.info(
+            "Metadata-only sync: \(playlists.count, privacy: .public) playlists, \(changedPlaylists.count, privacy: .public) changed"
+        )
         let refreshed = try await loadPlaylistSnapshots(changedPlaylists, client: client)
         try Task.checkCancellation()
         try await store.applyUserMetadata(
@@ -159,6 +191,7 @@ final class LibrarySyncCoordinator {
             let page = try await client.artistPage(size: pageSize, offset: offset)
             let additions = page.filter { seen.insert($0.id).inserted }
             values.append(contentsOf: additions)
+            AppLog.sync.debug("Loaded artist page at offset \(offset, privacy: .public): \(additions.count, privacy: .public) new records")
             guard page.count == pageSize, !additions.isEmpty else { return values }
             offset += pageSize
         }
@@ -173,6 +206,7 @@ final class LibrarySyncCoordinator {
             let page = try await client.albumMetadataPage(size: pageSize, offset: offset)
             let additions = page.filter { seen.insert($0.id).inserted }
             values.append(contentsOf: additions)
+            AppLog.sync.debug("Loaded album page at offset \(offset, privacy: .public): \(additions.count, privacy: .public) new records")
             guard page.count == pageSize, !additions.isEmpty else { return values }
             offset += pageSize
         }
@@ -187,6 +221,7 @@ final class LibrarySyncCoordinator {
             let page = try await client.songMetadataPage(size: pageSize, offset: offset)
             let additions = page.filter { seen.insert($0.id).inserted }
             values.append(contentsOf: additions)
+            AppLog.sync.debug("Loaded song page at offset \(offset, privacy: .public): \(additions.count, privacy: .public) new records")
             guard page.count == pageSize, !additions.isEmpty else { return values }
             offset += pageSize
         }

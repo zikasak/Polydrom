@@ -52,3 +52,14 @@ warnings-as-errors; then runs the unit suite, SwiftLint in strict mode, and two
 Periphery scans. The production scan is deliberately independent of tests so a
 test-only use cannot hide a dead production API. Do not add these tools to Xcode
 build phases.
+
+## Viewing logs
+
+PolyDrom uses Apple unified logging. Stream its logs from Terminal with:
+
+```sh
+log stream --style compact --predicate 'subsystem == "uk.zikasak.PolyDrom"'
+```
+
+The `network` category records request methods, status, latency, and response
+size without recording authentication parameters or passwords.

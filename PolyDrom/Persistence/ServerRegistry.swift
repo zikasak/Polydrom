@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Stores server metadata separately from the disposable music cache. Passwords
 /// are deliberately never encoded here; their Keychain identifiers are retained
@@ -55,6 +56,7 @@ final class ServerRegistry {
         self.fileURL = fileURL
         self.keychain = keychain
         self.storedServers = (try? Self.read(from: fileURL)) ?? []
+        AppLog.registry.debug("Loaded \(self.storedServers.count, privacy: .public) saved server profiles")
     }
 
     func servers() throws -> [ServerProfile] {
@@ -105,6 +107,8 @@ final class ServerRegistry {
             storedServers.append(stored)
         }
         try persist()
+        AppLog.registry.info("Saved server profile for \(trimmedUsername, privacy: .private(mask: .hash))")
+        AppLog.registry.debug("Saved server profile count: \(self.storedServers.count, privacy: .public)")
         return try profile(from: stored)
     }
 
@@ -120,8 +124,12 @@ final class ServerRegistry {
         do {
             try keychain.delete(credentialID: removed.credentialID)
             try persist()
+            AppLog.registry.info("Deleted server profile \(profile.id.uuidString, privacy: .public)")
         } catch {
             storedServers.insert(removed, at: index)
+            AppLog.registry.error(
+                "Failed to delete server profile \(profile.id.uuidString, privacy: .public): \(error.localizedDescription, privacy: .private)"
+            )
             throw error
         }
     }
@@ -135,6 +143,7 @@ final class ServerRegistry {
         guard !legacyProfiles.isEmpty else { return }
         storedServers = legacyProfiles.map(StoredServer.init)
         try persist()
+        AppLog.registry.info("Imported \(legacyProfiles.count, privacy: .public) server profiles from the legacy store")
     }
 
     private func profile(from stored: StoredServer) throws -> ServerProfile {

@@ -8,6 +8,7 @@
 import AVFoundation
 import Combine
 import Foundation
+import OSLog
 
 @MainActor
 final class AudioPlayer: ObservableObject {
@@ -66,6 +67,9 @@ final class AudioPlayer: ObservableObject {
     }
 
     func play(song: NavidromeSong, url: URL) {
+        AppLog.playback.info(
+            "Starting playback for song \(song.id, privacy: .private(mask: .hash))"
+        )
         playbackGeneration += 1
         removeTimeObserver()
         removeStallCheckTimer()
@@ -98,6 +102,7 @@ final class AudioPlayer: ObservableObject {
     func playCurrentSong() {
         guard currentSong != nil else { return }
 
+        AppLog.playback.debug("Resuming current song")
         resetStallTracking(at: currentTime)
         startStallCheckTimer()
         isPlaying = true
@@ -109,6 +114,7 @@ final class AudioPlayer: ObservableObject {
     func pauseCurrentSong() {
         guard currentSong != nil else { return }
 
+        AppLog.playback.debug("Pausing current song at \(self.currentTime, privacy: .public) seconds")
         player.pause()
         removeStallCheckTimer()
         isPlaying = false
@@ -117,6 +123,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     func stop() {
+        AppLog.playback.info("Stopping playback")
         playbackGeneration += 1
         removeTimeObserver()
         removeSongFinishedObserver()
@@ -137,6 +144,7 @@ final class AudioPlayer: ObservableObject {
     func seek(to seconds: Double) {
         guard currentSong != nil else { return }
         let clampedSeconds = min(max(seconds, 0), max(duration, 0))
+        AppLog.playback.debug("Seeking to \(clampedSeconds, privacy: .public) seconds")
         currentTime = clampedSeconds
         lastObservedPlaybackTime = clampedSeconds
         lastPlaybackProgressAt = Date()
@@ -224,9 +232,11 @@ final class AudioPlayer: ObservableObject {
 
         let stalledFor = Date().timeIntervalSince(lastPlaybackProgressAt)
         if stalledFor >= 18 {
+            AppLog.playback.warning("Playback stalled for 18 seconds; advancing to the next track")
             statusMessage = "Skipping stalled track"
             finishCurrentSong()
         } else if stalledFor >= 8, !didAttemptStallRecovery {
+            AppLog.playback.warning("Playback stalled for 8 seconds; attempting recovery")
             didAttemptStallRecovery = true
             statusMessage = "Recovering playback..."
             player.play()
@@ -374,6 +384,7 @@ final class AudioPlayer: ObservableObject {
 
     private func recoverFromPlaybackStall() {
         guard isPlaying, currentSong != nil, !hasFinishedCurrentSong else { return }
+        AppLog.playback.warning("AVPlayer reported a playback stall; attempting recovery")
         didAttemptStallRecovery = true
         lastPlaybackProgressAt = Date()
         statusMessage = "Recovering playback..."
@@ -383,6 +394,7 @@ final class AudioPlayer: ObservableObject {
 
     private func finishCurrentSong() {
         guard !hasFinishedCurrentSong else { return }
+        AppLog.playback.info("Playback finished")
         hasFinishedCurrentSong = true
         removeStallCheckTimer()
         currentTime = duration
@@ -394,6 +406,14 @@ final class AudioPlayer: ObservableObject {
 
     private func failCurrentSong(error: Error?) {
         guard !hasFinishedCurrentSong else { return }
+        if let error {
+            let nsError = error as NSError
+            AppLog.playback.error(
+                "Playback failed (domain: \(nsError.domain, privacy: .public), code: \(nsError.code, privacy: .public))"
+            )
+        } else {
+            AppLog.playback.error("Playback failed with no error details")
+        }
         hasFinishedCurrentSong = true
         removeStallCheckTimer()
         isPlaying = false
