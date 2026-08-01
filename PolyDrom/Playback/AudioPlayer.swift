@@ -24,6 +24,7 @@ final class AudioPlayer: ObservableObject {
     var onSongFinished: (() -> Void)?
     var onSongFailed: ((NavidromeSong) -> Void)?
     var onPlaybackStateChanged: (() -> Void)?
+    var onVolumeChanged: ((Double) -> Void)?
 
     var hasPlayableItem: Bool {
         player.currentItem != nil
@@ -213,6 +214,7 @@ final class AudioPlayer: ObservableObject {
         let clampedVolume = min(max(nextVolume, 0), 1)
         volume = clampedVolume
         player.volume = Float(clampedVolume)
+        onVolumeChanged?(clampedVolume)
     }
 
     func setNowPlayingQueueState(canPlayPrevious: Bool, canPlayNext: Bool) {

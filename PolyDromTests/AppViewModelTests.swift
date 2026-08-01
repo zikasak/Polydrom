@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Synchronization
 import Testing
@@ -55,6 +56,20 @@ struct AppCoordinatorTests {
             "Every 30 minutes",
             "Every hour"
         ])
+    }
+
+    @Test func selectedVolumePersistsAcrossCoordinatorRecreation() {
+        let suiteName = "SelectedVolumeTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+
+        let (viewModel, _, _) = makeViewModel(userDefaults: userDefaults)
+        viewModel.audioPlayer.setVolume(0.35)
+
+        let (reloadedViewModel, _, _) = makeViewModel(userDefaults: userDefaults)
+
+        #expect(reloadedViewModel.audioPlayer.volume == 0.35)
+        #expect(reloadedViewModel.audioPlayer.player.volume == Float(0.35))
     }
 
     @Test func playbackQueueSongAndPositionSurviveCoordinatorRecreation() {

@@ -17,6 +17,7 @@ struct PersistedPlaybackState: Codable, Equatable, Sendable {
 
 struct PlaybackPersistence {
     static let userDefaultsKey = "persistedPlaybackState"
+    private static let selectedVolumeKey = "selectedVolume"
 
     private let userDefaults: UserDefaults
     private let fileURL: URL?
@@ -80,6 +81,14 @@ struct PlaybackPersistence {
         userDefaults.removeObject(forKey: Self.userDefaultsKey)
     }
 
+    func loadSelectedVolume() -> Double? {
+        (userDefaults.object(forKey: Self.selectedVolumeKey) as? NSNumber)?.doubleValue
+    }
+
+    func saveSelectedVolume(_ volume: Double) {
+        userDefaults.set(volume, forKey: Self.selectedVolumeKey)
+    }
+
     private func decode(_ data: Data) throws -> PersistedPlaybackState {
         try JSONDecoder().decode(PersistedPlaybackState.self, from: data)
     }
@@ -129,6 +138,9 @@ extension AppCoordinator {
     }
 
     func configureAudioPlayer() {
+        if let selectedVolume = playbackPersistence.loadSelectedVolume() {
+            audioPlayer.setVolume(selectedVolume)
+        }
         audioPlayer.onSongFinished = { [weak self] in
             self?.playNextTrackAfterCurrentSongFinished()
         }
@@ -137,6 +149,9 @@ extension AppCoordinator {
         }
         audioPlayer.onPlaybackStateChanged = { [weak self] in
             self?.persistPlaybackState()
+        }
+        audioPlayer.onVolumeChanged = { [weak self] volume in
+            self?.playbackPersistence.saveSelectedVolume(volume)
         }
         audioPlayer.configureRemotePlaybackCommands(
             onPreviousTrack: { [weak self] in
