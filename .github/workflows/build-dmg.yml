@@ -192,7 +192,7 @@ jobs:
           ! grep -Fq "/releases/tag/" "$ARTIFACTS_PATH/appcast.xml"
 
           feed_url="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app_path/Contents/Info.plist")"
-          test "$feed_url" = "https://github.com/zikasak/Polydrom/releases/latest/download/appcast.xml"
+          test "$feed_url" = "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/appcast.xml"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
