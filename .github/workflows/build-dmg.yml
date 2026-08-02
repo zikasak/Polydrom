@@ -8,6 +8,17 @@ on:
       - 'v*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: Create a GitHub release from this run's DMG
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: Optional tag to create (defaults to the app marketing version)
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -19,6 +30,10 @@ concurrency:
 jobs:
   build:
     runs-on: macos-26
+    permissions:
+      contents: read
+    outputs:
+      default_release_tag: ${{ steps.app_version.outputs.default_release_tag }}
 
     steps:
       - name: Check out source
@@ -28,6 +43,24 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode_26.6.app
           xcodebuild -version
+
+      - name: Determine default release tag
+        id: app_version
+        run: |
+          set -euo pipefail
+
+          marketing_version="$(
+            awk '
+              /^[[:space:]]*MARKETING_VERSION = / {
+                sub(/^[[:space:]]*MARKETING_VERSION = /, "")
+                sub(/;.*/, "")
+                print
+                exit
+              }
+            ' PolyDrom.xcodeproj/project.pbxproj
+          )"
+          test -n "$marketing_version"
+          echo "default_release_tag=v${marketing_version}" >> "$GITHUB_OUTPUT"
 
       - name: Run unit and rendering tests
         env:
@@ -89,3 +122,42 @@ jobs:
           path: ${{ runner.temp }}/PolyDrom-artifacts/
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    if: inputs.create_release == true
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download DMG artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: PolyDrom-dmg
+          path: release-assets
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          DEFAULT_RELEASE_TAG: ${{ needs.build.outputs.default_release_tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "$RELEASE_TAG_INPUT" ]]; then
+            release_tag="$RELEASE_TAG_INPUT"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="$DEFAULT_RELEASE_TAG"
+          fi
+          [[ "$release_tag" == v* ]] || { echo "Release tags must start with v." >&2; exit 1; }
+
+          gh release create "$release_tag" \
+            release-assets/PolyDrom.dmg \
+            release-assets/PolyDrom.dmg.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "PolyDrom $release_tag" \
+            --generate-notes
