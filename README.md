@@ -5,6 +5,12 @@ state at the application boundary: `AppCoordinator` owns the active session, whi
 server registry, library cache, synchronization, and playback have narrow,
 independently testable responsibilities.
 
+## License
+
+Original source code and project files are licensed under the [MIT License](LICENSE).
+Third-party names, trademarks, and assets are excluded from that license; see
+[NOTICE](NOTICE) for details.
+
 ## Architecture
 
 - `ServerRegistry` atomically stores non-secret server metadata in Application

@@ -1,0 +1,19 @@
+Licensing and third-party marks
+
+Unless otherwise noted, the original source code and project files in this
+repository are licensed under the MIT License in LICENSE.
+
+The MIT License does not grant rights to third-party names, logos, trademarks,
+service marks, or other assets. In particular:
+
+* Spotify and its brand elements, including the Spotify icon depicted by
+  PolyDrom/Assets.xcassets/SpotifyIcon.imageset/spotify.svg, remain the
+  property of Spotify and are not licensed under the MIT License.
+* The Navidrome name and related marks remain the property of their respective
+  owners and are not licensed under the MIT License.
+* The provenance and licensing of the PNG files in
+  PolyDrom/Assets.xcassets/AppIcon.appiconset/ should be confirmed separately
+  before redistributing those assets.
+
+Use of third-party marks and assets remains subject to the applicable owner's
+terms and permissions.
