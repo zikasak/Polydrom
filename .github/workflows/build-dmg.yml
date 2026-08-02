@@ -1,0 +1,91 @@
+name: Build DMG
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-dmg-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Select Xcode 26.6
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
+
+      - name: Run unit and rendering tests
+        env:
+          TEST_DERIVED_DATA_PATH: ${{ runner.temp }}/PolyDrom-TestData
+        run: |
+          xcodebuild test \
+            -project PolyDrom.xcodeproj \
+            -scheme PolyDrom \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$TEST_DERIVED_DATA_PATH" \
+            -only-testing:PolyDromTests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Build release archive
+        env:
+          ARCHIVE_PATH: ${{ runner.temp }}/PolyDrom.xcarchive
+        run: |
+          xcodebuild archive \
+            -project PolyDrom.xcodeproj \
+            -scheme PolyDrom \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            ARCHS=arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Package DMG
+        env:
+          ARCHIVE_PATH: ${{ runner.temp }}/PolyDrom.xcarchive
+          ARTIFACTS_PATH: ${{ runner.temp }}/PolyDrom-artifacts
+        run: |
+          set -euo pipefail
+
+          app_path="$ARCHIVE_PATH/Products/Applications/PolyDrom.app"
+          test -d "$app_path"
+
+          staging_path="$(mktemp -d "$RUNNER_TEMP/PolyDrom-dmg.XXXXXX")"
+          ditto "$app_path" "$staging_path/PolyDrom.app"
+          ln -s /Applications "$staging_path/Applications"
+
+          mkdir -p "$ARTIFACTS_PATH"
+          hdiutil create \
+            -volname "PolyDrom" \
+            -srcfolder "$staging_path" \
+            -ov \
+            -format UDZO \
+            "$ARTIFACTS_PATH/PolyDrom.dmg"
+          hdiutil verify "$ARTIFACTS_PATH/PolyDrom.dmg"
+          (cd "$ARTIFACTS_PATH" && shasum -a 256 PolyDrom.dmg > PolyDrom.dmg.sha256)
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PolyDrom-dmg
+          path: ${{ runner.temp }}/PolyDrom-artifacts/
+          if-no-files-found: error
+          retention-days: 14
