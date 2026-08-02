@@ -1,102 +1,256 @@
-# PolyDrom
+<p align="center">
+  <img src="PolyDrom/Assets.xcassets/AppIcon.appiconset/icon_128x128.png" width="128" height="128" alt="PolyDrom app icon">
+</p>
 
-PolyDrom is a native macOS client for Navidrome. The UI keeps its feature-oriented
-state at the application boundary: `AppCoordinator` owns the active session, while
-server registry, library cache, synchronization, and playback have narrow,
-independently testable responsibilities.
+<h1 align="center">PolyDrom</h1>
 
-## License
+<p align="center">
+  A fast, native Navidrome music player for macOS.
+</p>
 
-Original source code and project files are licensed under the [MIT License](LICENSE).
-Third-party names, trademarks, and assets are excluded from that license; see
-[NOTICE](NOTICE) for details.
+<p align="center">
+  <a href="https://github.com/zikasak/Polydrom/releases/latest">Latest release</a>
+  ·
+  <a href="https://github.com/zikasak/Polydrom/issues">Report an issue</a>
+  ·
+  <a href="LICENSE">MIT license</a>
+</p>
 
-## Architecture
+PolyDrom brings a full desktop listening experience to a self-hosted Navidrome library. It is built entirely with SwiftUI and AVFoundation, connects through the Subsonic API, and keeps each server's library available for browsing when the server is offline.
 
-- `ServerRegistry` atomically stores non-secret server metadata in Application
-  Support. Passwords are stored only through `CredentialStoring` (Keychain in the
-  app). It imports identifiers and credential associations from the legacy store
-  once.
-- `LibraryStore` is a disposable, server-scoped Core Data cache for catalog data,
-  favorites, and local playback history. A failed migration or open removes only
-  that cache and retries; saved servers and Keychain entries are unaffected.
-- `LibrarySyncCoordinator` reconciles Navidrome metadata with the cache.
-- `AppCoordinator` guards asynchronous work with a session generation so a
-  canceled connection, deleted server, or stale response cannot alter the active
-  library or player state.
-- UI and AVFoundation state are isolated to the main actor. Domain and transport
-  values are `Sendable`; cache work uses Core Data background contexts.
+## Highlights
+
+- **Native macOS experience** — a responsive SwiftUI interface with compact and expanded players, system Now Playing integration, keyboard-friendly controls, and an AirPlay route picker.
+- **A library built for discovery** — featured, recently added, recently played, and random albums; quick mixes of 10, 25, or 50 tracks; full-library shuffle; and search across titles, artists, and albums.
+- **Complete library navigation** — browse albums, artists, playlists, favorites, recent history, and detailed album or artist pages with cached artwork.
+- **Real queue management** — play immediately, play next, append to the queue, jump between tracks, seek, change volume, and resume the current queue and position after relaunching.
+- **Synced listening state** — star songs, albums, and artists; create, rename, update, and delete editable Navidrome playlists; and display plain or time-synced lyrics.
+- **Multi-server support** — save multiple accounts, switch from the sidebar, reconnect automatically to the most recently used server, and maintain isolated caches for every server and user.
+- **Offline library browsing** — cached metadata, favorites, playlists, play history, and artwork remain available without a server connection. Streaming and server mutations still require connectivity.
+- **Spotify discovery links** — open an artist or album search on Spotify directly from its page or context menu.
+- **Built-in updates** — Sparkle checks the signed release feed and downloads new DMGs from GitHub Releases.
 
 ## Requirements
 
-Xcode with Swift 6 is required. Install the repository tooling once:
+| | Requirement |
+| --- | --- |
+| Mac | Apple silicon (`arm64`) |
+| macOS | 26.5 or later |
+| Server | A reachable [Navidrome](https://www.navidrome.org/) server and user account |
+| Developer build | Xcode 26.6 or later with Swift 6 |
+
+PolyDrom uses Navidrome's Subsonic-compatible API. No additional server-side plugin is required.
+
+## Install PolyDrom
+
+1. Download [the latest PolyDrom DMG](https://github.com/zikasak/Polydrom/releases/latest/download/PolyDrom.dmg).
+2. Open `PolyDrom.dmg` and drag **PolyDrom** into **Applications**.
+3. Launch PolyDrom, then enter the full address of your Navidrome server, your username, and your password in the Settings window.
+
+Release builds are currently distributed without an Apple Developer signature or notarization. On first launch, macOS may block the app. If it does, open **System Settings → Privacy & Security**, find the PolyDrom message, choose **Open Anyway**, and confirm the launch. Only install a DMG downloaded from this repository's Releases page; each release also includes a SHA-256 checksum.
+
+### Connect for the first time
+
+The Settings window opens automatically when there is no saved server.
+
+- Enter an absolute server URL including `https://` or `http://`, for example `https://music.example.com`.
+- HTTPS is strongly recommended whenever the server is reached outside a trusted local network.
+- Select **Save & Connect**. PolyDrom stores the profile, validates the connection, downloads the library metadata, and opens the Home view.
+- Add another account or server from **PolyDrom → Settings**. Use the server picker in the sidebar to switch later.
+
+## Using the app
+
+### Home and library
+
+Home combines featured albums, recent additions, listening history, random albums, and one-click mixes. The sidebar provides dedicated views for search, random songs, albums, artists, playlists, favorites, and recent tracks.
+
+Most songs, albums, and artists expose the same actions from their context menus:
+
+- Play, play next, or add to the end of the queue.
+- Add to or remove from favorites.
+- Add songs to an editable playlist or create a new playlist from the selection.
+- Open the related album or artist.
+- Search for an album or artist on Spotify.
+
+### Playback
+
+The compact player stays available while browsing. Open it to see the expanded Now Playing experience with large artwork, elapsed time, seeking, volume, favorite and stop controls, AirPlay, the current queue, and lyrics.
+
+PolyDrom publishes track metadata and artwork to macOS Now Playing and supports the system play, pause, stop, previous, next, and seek commands. The queue, selected track, playback position, and volume are persisted locally so an interrupted session can be resumed after relaunch.
+
+### Playlists and favorites
+
+Favorites are synchronized with Navidrome for songs, albums, and artists. Playlist changes are written back to the server. Read-only playlists can be played and browsed but cannot be renamed, edited, or deleted.
+
+### Metadata and offline behavior
+
+PolyDrom keeps a disposable, server-scoped metadata cache. The first successful connection performs a full catalog synchronization. Later checks compare the server's catalog state and refresh only user metadata when the catalog has not changed. If Navidrome is scanning, PolyDrom defers the refresh and retries after the scan.
+
+Automatic checks run only while the app is active. Choose **Manually**, **Every 5 minutes**, **Every 15 minutes**, **Every 30 minutes**, or **Every hour** in Settings; 15 minutes is the default. The refresh button in the library toolbar always starts a manual check.
+
+When a server cannot be reached, PolyDrom loads its cached library automatically. Offline mode supports browsing and searching cached content and history, but not audio streaming, favorites changes, or playlist mutations. PolyDrom does not download audio for offline playback.
+
+## Data and security
+
+- Passwords are stored in the macOS Keychain and are not written to the library database or server registry.
+- Non-secret server profiles are stored atomically in Application Support.
+- Catalog metadata, favorites, playlists, and local playback history are stored in a server-scoped Core Data cache.
+- Cover art is cached separately on disk and in memory.
+- Deleting a saved server removes its Keychain credential and cached library from the Mac.
+- Clearing **Library metadata** removes all cached libraries and local play history but preserves saved servers and passwords.
+- Clearing **Cover art** removes downloaded and decoded images; they are fetched again on demand.
+- Network logs record request method, status, latency, and response size, but not passwords or authentication query values.
+
+Plain HTTP is supported for local Navidrome installations, so transport security ultimately depends on the URL you configure. Prefer HTTPS for any connection that crosses an untrusted network.
+
+## Build from source
+
+Clone the repository and open the shared Xcode scheme:
 
 ```sh
-brew bundle
+git clone https://github.com/zikasak/Polydrom.git
+cd Polydrom
+open PolyDrom.xcodeproj
 ```
 
-## Releases and updates
-
-Release builds use Sparkle 2 to check for updates from the appcast published as
-the `appcast.xml` asset of the latest GitHub release. Sparkle downloads the DMG
-directly from the release asset; it does not open the GitHub release page. The
-workflow uses Sparkle's `sign_update` tool because `generate_appcast` requires
-Apple-issued distribution signatures, while this project uses an ad-hoc
-signature that does not require a paid Apple Developer account.
-
-Before creating the first release, generate an Ed25519 key with the Sparkle
-tools resolved by Xcode. Keep the private key out of the repository:
+Or build from Terminal without code signing:
 
 ```sh
-generate_keys --account uk.zikasak.PolyDrom
-generate_keys --account uk.zikasak.PolyDrom -x /private/tmp/polydrom-sparkle-private-key
-gh secret set SPARKLE_ED_PRIVATE_KEY < /private/tmp/polydrom-sparkle-private-key
-rm /private/tmp/polydrom-sparkle-private-key
+xcodebuild build \
+  -project PolyDrom.xcodeproj \
+  -scheme PolyDrom \
+  -destination 'platform=macOS,arch=arm64' \
+  CODE_SIGNING_ALLOWED=NO
 ```
 
-The public key is stored in `Config/Info.plist`; the private key is used only by
-GitHub Actions when generating signed appcasts. A `v*` tag push creates a
-release automatically. A manual workflow dispatch can also create a release
-with `create_release` enabled.
+Xcode resolves the only application dependency, [Sparkle 2](https://github.com/sparkle-project/Sparkle), through Swift Package Manager.
 
-The release workflow uses an ad-hoc signature (`codesign -s -`) for the app and
-its nested Sparkle helpers. This makes the app bundle internally verifiable but
-does not identify the developer to Gatekeeper. The DMG and app are not
-notarized or stapled, so macOS may require the user to approve the first launch
-through Gatekeeper or Privacy & Security. Sparkle's Ed25519 signature still
-authenticates update archives independently of Apple's code-signing identity.
+## Test and quality checks
 
-## Build and test
+Run the complete Xcode test plan:
 
 ```sh
-xcodebuild build -project PolyDrom.xcodeproj -scheme PolyDrom \
-  -destination 'platform=macOS,arch=arm64' CODE_SIGNING_ALLOWED=NO
-
 bash scripts/test.sh
 ```
 
-The UI tests need an unsandboxed macOS test runner. The unit and rendering suite
-can run through the command above when the local test service is available.
+This includes the unit, persistence, networking, playback, rendering, and UI test targets. UI tests require a logged-in macOS session with permission to run the test host.
 
-## Quality gate
+Install the repository's static-analysis tools and run the full quality gate:
 
 ```sh
+brew bundle
 bash scripts/quality.sh
 ```
 
-The quality gate compiles with Swift 6, complete concurrency checking, and
-warnings-as-errors; then runs the unit suite, SwiftLint in strict mode, and two
-Periphery scans. The production scan is deliberately independent of tests so a
-test-only use cannot hide a dead production API. Do not add these tools to Xcode
-build phases.
+The quality gate:
 
-## Viewing logs
+1. Builds the project and tests with Swift 6 complete concurrency checking and warnings as errors.
+2. Runs the `PolyDromTests` unit and rendering suite.
+3. Runs SwiftLint in strict mode.
+4. Scans production and test code separately with Periphery so test-only references cannot hide unused production APIs.
 
-PolyDrom uses Apple unified logging. Stream its logs from Terminal with:
+SwiftLint and Periphery intentionally run outside Xcode build phases to keep normal app builds deterministic and fast.
+
+## Architecture
+
+PolyDrom keeps application coordination at the boundary and gives networking, storage, synchronization, artwork, and playback narrow responsibilities:
+
+```text
+SwiftUI views
+    │
+    ▼
+AppCoordinator ─────────────── AudioPlayer / Now Playing / AirPlay
+    │
+    ├── NavidromeClient ────── Subsonic API, streams, lyrics, artwork
+    ├── LibrarySyncCoordinator
+    ├── ServerRegistry ─────── Application Support + Keychain
+    ├── LibraryStore ───────── server-scoped Core Data cache
+    ├── PlaybackPersistence ── queue, position, and volume
+    └── CoverArtCache ──────── bounded memory and disk caches
+```
+
+- `AppCoordinator` uses a session generation to prevent a canceled connection, deleted server, or stale asynchronous response from changing the active library or player.
+- `LibrarySyncCoordinator` performs paged catalog synchronization, coalesces concurrent refreshes, retries a catalog that changes mid-sync, and applies updates atomically.
+- `LibraryStore` is disposable by design. If its cache cannot be migrated or opened, only the affected local cache is rebuilt; saved server profiles and Keychain credentials remain intact.
+- UI and AVFoundation state stay on the main actor. Transport and domain values are `Sendable`, while Core Data work runs on background contexts.
+- `CoverArtCache` deduplicates in-flight downloads, bounds network and decode concurrency, and prevents an old request from repopulating a cache after it has been cleared.
+
+### Repository layout
+
+```text
+PolyDrom/
+├── Models/          Domain and metadata models
+├── Persistence/     Core Data, server registry, Keychain, playback state
+├── Playback/        AVPlayer, Now Playing, and AirPlay integration
+├── Services/        Navidrome API, synchronization, updates, cover art
+├── ViewModels/      Application and playlist coordination
+└── Views/           SwiftUI library, settings, and player views
+PolyDromTests/       Unit, integration, persistence, and rendering tests
+PolyDromUITests/     End-to-end macOS UI tests
+Config/              Info.plist and sandbox entitlements
+scripts/             Test, quality, and release helpers
+```
+
+## Diagnostics
+
+PolyDrom uses Apple unified logging. Stream all app logs from Terminal:
 
 ```sh
 log stream --style compact --predicate 'subsystem == "uk.zikasak.PolyDrom"'
 ```
 
-The `network` category records request methods, status, latency, and response
-size without recording authentication parameters or passwords.
+Useful categories include `app`, `network`, `persistence`, `sync`, and `playback`.
+
+If the app behaves unexpectedly:
+
+- **Cannot connect:** verify that the address includes its scheme, is reachable from the Mac, and accepts the supplied Navidrome credentials.
+- **Library looks out of date:** wait for any Navidrome scan to finish, then select **Refresh Library**.
+- **Artwork is stale or missing:** clear **Cover art** in Settings and revisit the item while online.
+- **Cached library is inconsistent:** clear **Library metadata**, reconnect, and let PolyDrom rebuild it. Saved server credentials are preserved.
+- **A release will not open:** use **Open Anyway** in Privacy & Security after confirming that the DMG came from this repository.
+
+When reporting a bug, include the macOS version, PolyDrom version, Navidrome version, reproduction steps, and relevant redacted logs. Never post credentials or complete authenticated request URLs.
+
+## Releases and updates
+
+GitHub Actions builds and tests every pull request and push to `main`, then produces an unsigned Apple-silicon DMG. A `v*` tag, or a manual workflow run with `create_release` enabled, publishes:
+
+- `PolyDrom.dmg`
+- `PolyDrom.dmg.sha256`
+- `appcast.xml`
+
+Sparkle verifies update archives with Ed25519 before offering them to the user. Automatic checks are enabled, but installation remains user initiated. The app also provides **Check for Updates…** in its application menu.
+
+### Maintainer release setup
+
+Before the first release, generate the Sparkle key with the tools resolved by Xcode. Keep the exported private key out of the repository:
+
+```sh
+generate_keys --account uk.zikasak.PolyDrom
+generate_keys --account uk.zikasak.PolyDrom \
+  -x /private/tmp/polydrom-sparkle-private-key
+gh secret set SPARKLE_ED_PRIVATE_KEY \
+  < /private/tmp/polydrom-sparkle-private-key
+rm /private/tmp/polydrom-sparkle-private-key
+```
+
+The public key belongs in `Config/Info.plist`; the private key is used only by the release workflow. Before tagging a release, update `MARKETING_VERSION` in the Xcode project and make the tag match it, for example `v1.1` for version `1.1`.
+
+The release workflow intentionally does not perform Apple Developer signing, notarization, or stapling. Adding those steps requires an Apple Developer identity and corresponding GitHub secrets.
+
+## Contributing
+
+Issues and focused pull requests are welcome. Before opening a PR:
+
+1. Keep changes scoped and preserve server isolation, Keychain handling, and session-generation guards.
+2. Add or update tests for behavior changes.
+3. Run `bash scripts/quality.sh` and resolve every warning.
+4. Do not commit credentials, private Sparkle keys, derived data, build products, or local library caches.
+
+Use [GitHub Issues](https://github.com/zikasak/Polydrom/issues) for bugs and feature proposals.
+
+## License and third-party marks
+
+Original source code and project files are available under the [MIT License](LICENSE).
+
+Third-party names, trademarks, and assets—including Navidrome and Spotify marks—are not granted by the MIT License. The app icon assets also require separate provenance confirmation before redistribution. See [NOTICE](NOTICE) for the complete attribution and asset notice.
