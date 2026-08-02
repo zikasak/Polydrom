@@ -126,6 +126,15 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             COMPILER_INDEX_STORE_ENABLE=NO
 
+      - name: Ad-hoc sign release app
+        env:
+          ARCHIVE_PATH: ${{ runner.temp }}/PolyDrom.xcarchive
+        run: |
+          set -euo pipefail
+
+          app_path="$ARCHIVE_PATH/Products/Applications/PolyDrom.app"
+          bash scripts/sign-app.sh "$app_path"
+
       - name: Package DMG
         env:
           ARCHIVE_PATH: ${{ runner.temp }}/PolyDrom.xcarchive
@@ -174,9 +183,9 @@ jobs:
           bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Contents/Info.plist")"
           test "$bundle_version" = "$GITHUB_RUN_NUMBER"
 
-          # Sparkle's generate_appcast rejects this intentionally unsigned app.
-          # The helper uses Sparkle's sign_update to create the same appcast
-          # metadata while leaving the distributed app and DMG unsigned.
+          # Sparkle's generate_appcast requires an Apple-issued distribution
+          # signature. This build uses an ad-hoc signature, so the helper uses
+          # Sparkle's sign_update to create the appcast metadata instead.
           RELEASE_TAG="$RELEASE_TAG" \
             GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
             SPARKLE_ED_PRIVATE_KEY="$SPARKLE_ED_PRIVATE_KEY" \
@@ -215,6 +224,11 @@ jobs:
         with:
           name: PolyDrom-dmg
           path: release-assets
+
+      - name: Install XML validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libxml2-utils
 
       - name: Create GitHub release
         env:
