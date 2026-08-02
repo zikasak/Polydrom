@@ -35,6 +35,33 @@ Xcode with Swift 6 is required. Install the repository tooling once:
 brew bundle
 ```
 
+## Releases and updates
+
+Release builds use Sparkle 2 to check for updates from the appcast published as
+the `appcast.xml` asset of the latest GitHub release. Sparkle downloads the DMG
+directly from the release asset; it does not open the GitHub release page. The
+workflow uses Sparkle's `sign_update` tool because `generate_appcast` requires
+Apple-signed application bundles, which are unavailable for this unsigned build.
+
+Before creating the first release, generate an Ed25519 key with the Sparkle
+tools resolved by Xcode. Keep the private key out of the repository:
+
+```sh
+generate_keys --account uk.zikasak.PolyDrom
+generate_keys --account uk.zikasak.PolyDrom -x /private/tmp/polydrom-sparkle-private-key
+gh secret set SPARKLE_ED_PRIVATE_KEY < /private/tmp/polydrom-sparkle-private-key
+rm /private/tmp/polydrom-sparkle-private-key
+```
+
+The public key is stored in `Config/Info.plist`; the private key is used only by
+GitHub Actions when generating signed appcasts. A `v*` tag push creates a
+release automatically. A manual workflow dispatch can also create a release
+with `create_release` enabled.
+
+The release workflow intentionally skips Apple Developer signing, notarization,
+and stapling. The distributed DMG is therefore unsigned; macOS may require the
+user to approve the first launch through Gatekeeper or Privacy & Security.
+
 ## Build and test
 
 ```sh
