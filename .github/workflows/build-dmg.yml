@@ -216,6 +216,11 @@ jobs:
           name: PolyDrom-dmg
           path: release-assets
 
+      - name: Install XML validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libxml2-utils
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
