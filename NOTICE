@@ -14,6 +14,8 @@ service marks, or other assets. In particular:
 * The provenance and licensing of the PNG files in
   PolyDrom/Assets.xcassets/AppIcon.appiconset/ should be confirmed separately
   before redistributing those assets.
+* Sparkle is included under the MIT License. Its source and license are
+  available at https://github.com/sparkle-project/Sparkle.
 
 Use of third-party marks and assets remains subject to the applicable owner's
 terms and permissions.

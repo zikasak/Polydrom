@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		93F8A0012DFF000100A3CFF /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 93F8A0022DFF000100A3CFF /* Sparkle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		932B37F52FFD6365004A3CFF /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				93F8A0012DFF000100A3CFF /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = PolyDrom;
 			packageProductDependencies = (
+				93F8A0022DFF000100A3CFF /* Sparkle */,
 			);
 			productName = PolyDrom;
 			productReference = 932B37E52FFD6364004A3CFF /* PolyDrom.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = 932B37DC2FFD6364004A3CFF;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				93F8A0032DFF000100A3CFF /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 932B37E62FFD6364004A3CFF /* Products */;
 			projectDirPath = "";
@@ -577,6 +586,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		93F8A0032DFF000100A3CFF /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		93F8A0022DFF000100A3CFF /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 93F8A0032DFF000100A3CFF /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 932B37DD2FFD6364004A3CFF /* Project object */;
 }

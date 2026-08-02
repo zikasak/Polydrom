@@ -9,8 +9,10 @@ import AppKit
 import SwiftUI
 
 @main
+@MainActor
 struct PolyDromApp: App {
     @StateObject private var viewModel = AppCoordinator()
+    private let updater = AppUpdater()
 
     var body: some Scene {
         WindowGroup {
@@ -18,6 +20,13 @@ struct PolyDromApp: App {
                 .background(MacOSWindowConfigurator())
         }
         .windowStyle(.hiddenTitleBar)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updater.checkForUpdates()
+                }
+            }
+        }
 
         Settings {
             SettingsView(viewModel: viewModel)
