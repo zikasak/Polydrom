@@ -150,6 +150,9 @@ extension AppCoordinator {
         audioPlayer.onPlaybackStateChanged = { [weak self] in
             self?.persistPlaybackState()
         }
+        audioPlayer.onPlaybackEvent = { [weak self] event in
+            self?.playbackReporter.handle(event)
+        }
         audioPlayer.onVolumeChanged = { [weak self] volume in
             self?.playbackPersistence.saveSelectedVolume(volume)
         }

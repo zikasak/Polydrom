@@ -30,6 +30,12 @@ struct NavidromeClient: Sendable {
         try response.subsonicResponse.throwIfNeeded()
     }
 
+    func openSubsonicExtensions() async throws -> [OpenSubsonicExtension] {
+        let response: OpenSubsonicExtensionsEnvelope = try await request("getOpenSubsonicExtensions")
+        try response.subsonicResponse.throwIfNeeded()
+        return response.subsonicResponse.openSubsonicExtensions ?? []
+    }
+
     func songMetadata(for songID: String) async throws -> NavidromeSong? {
         let response: SongEnvelope = try await request(
             "getSong",
@@ -173,6 +179,36 @@ struct NavidromeClient: Sendable {
         try response.subsonicResponse.throwIfNeeded()
     }
 
+    func reportPlayback(
+        songID: String,
+        positionMilliseconds: Int64,
+        state: NavidromePlaybackState
+    ) async throws {
+        let response: PingEnvelope = try await request(
+            "reportPlayback",
+            queryItems: [
+                URLQueryItem(name: "mediaId", value: songID),
+                URLQueryItem(name: "mediaType", value: "song"),
+                URLQueryItem(name: "positionMs", value: String(max(positionMilliseconds, 0))),
+                URLQueryItem(name: "state", value: state.rawValue),
+                URLQueryItem(name: "playbackRate", value: "1.0"),
+                URLQueryItem(name: "ignoreScrobble", value: "false")
+            ]
+        )
+        try response.subsonicResponse.throwIfNeeded()
+    }
+
+    func scrobble(songID: String, submission: Bool) async throws {
+        let response: PingEnvelope = try await request(
+            "scrobble",
+            queryItems: [
+                URLQueryItem(name: "id", value: songID),
+                URLQueryItem(name: "submission", value: String(submission))
+            ]
+        )
+        try response.subsonicResponse.throwIfNeeded()
+    }
+
     func streamURL(for song: NavidromeSong) throws -> URL {
         try apiURL(
             "stream",
@@ -300,6 +336,13 @@ struct NavidromeClient: Sendable {
 
         return URL(string: "http://\(trimmedAddress)")
     }
+}
+
+enum NavidromePlaybackState: String, Sendable {
+    case starting
+    case playing
+    case paused
+    case stopped
 }
 
 enum NavidromeError: LocalizedError {

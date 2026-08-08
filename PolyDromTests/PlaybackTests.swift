@@ -32,6 +32,8 @@ struct PlaybackTests {
     @Test func audioPlayerPlayPauseSeekToggleAndStopLifecycle() {
         let player = AudioPlayer()
         let song = makeSong(duration: 120)
+        var playbackEvents: [AudioPlaybackEvent] = []
+        player.onPlaybackEvent = { playbackEvents.append($0) }
         player.play(song: song, url: URL(fileURLWithPath: "/dev/null"))
         #expect(player.currentSong == song)
         #expect(player.duration == 120)
@@ -59,11 +61,19 @@ struct PlaybackTests {
         #expect(player.currentTime == 0)
         #expect(player.duration == 0)
         #expect(!player.isPlaying)
+        #expect(playbackEvents.map(\.trigger).contains(.started))
+        #expect(playbackEvents.map(\.trigger).contains(.paused))
+        #expect(playbackEvents.map(\.trigger).contains(.resumed))
+        #expect(playbackEvents.map(\.trigger).contains(.seeked))
+        #expect(playbackEvents.map(\.trigger).contains(.stopped))
+        #expect(playbackEvents.last?.snapshot.song == song)
     }
 
     @Test func audioPlayerCanStartAtAPersistedPositionWithoutAutoplaying() {
         let player = AudioPlayer()
         let song = makeSong(duration: 120)
+        var playbackEvents: [AudioPlaybackEvent] = []
+        player.onPlaybackEvent = { playbackEvents.append($0) }
 
         player.play(
             song: song,
@@ -77,6 +87,32 @@ struct PlaybackTests {
         #expect(player.duration == 120)
         #expect(!player.isPlaying)
         #expect(player.hasPlayableItem)
+        #expect(playbackEvents.first?.trigger == .prepared)
+        player.stop()
+    }
+
+    @Test func stalledTrackSkipEmitsFailureAtActualPositionAndAdvancesQueue() throws {
+        let player = AudioPlayer()
+        let song = makeSong(duration: 120)
+        var playbackEvents: [AudioPlaybackEvent] = []
+        var finishedCount = 0
+        var failedCount = 0
+        player.onPlaybackEvent = { playbackEvents.append($0) }
+        player.onSongFinished = { finishedCount += 1 }
+        player.onSongFailed = { _ in failedCount += 1 }
+
+        player.play(song: song, url: URL(fileURLWithPath: "/dev/null"))
+        player.seek(to: 37)
+        player.skipCurrentSongAfterStall()
+
+        let event = try #require(playbackEvents.last)
+        #expect(event.trigger == .failed)
+        #expect(event.snapshot.position == 37)
+        #expect(event.snapshot.duration == 120)
+        #expect(player.currentTime == 37)
+        #expect(player.statusMessage == "Skipping stalled track")
+        #expect(finishedCount == 1)
+        #expect(failedCount == 0)
     }
 
     @Test func nowPlayingControllerBuildsAndClearsMetadataAcrossBranches() throws {

@@ -41,6 +41,8 @@ struct NavidromeClientTests {
             switch apiMethod(in: request) {
             case "ping":
                 return envelope(#"{"status":"ok"}"#)
+            case "getOpenSubsonicExtensions":
+                return envelope(#"{"status":"ok","openSubsonicExtensions":[{"name":"playbackReport","versions":[1]}]}"#)
             case "getScanStatus":
                 return envelope(#"{"status":"ok","scanStatus":{"scanning":false,"count":"4","lastScan":"scan-token"}}"#)
             case "getRandomSongs":
@@ -90,6 +92,19 @@ struct NavidromeClientTests {
                 return envelope(#"{"status":"ok","starred2":{"artist":{"id":"star-a","name":"Star Artist"},"album":{"id":"star-b","name":"Star Album"},"song":{"id":"star-s","title":"Star Song"}}}"#)
             case "star", "unstar":
                 return envelope(#"{"status":"ok"}"#)
+            case "reportPlayback":
+                #expect(queryValue("mediaId", in: request) == "playing-song")
+                #expect(queryValue("mediaType", in: request) == "song")
+                #expect(queryValue("positionMs", in: request) == "12500")
+                #expect(queryValue("state", in: request) == "paused")
+                #expect(queryValue("playbackRate", in: request) == "1.0")
+                #expect(queryValue("ignoreScrobble", in: request) == "false")
+                return envelope(#"{"status":"ok"}"#)
+            case "scrobble":
+                #expect(queryValue("id", in: request) == "playing-song")
+                #expect(["false", "true"].contains(queryValue("submission", in: request)))
+                #expect(queryValue("position", in: request) == nil)
+                return envelope(#"{"status":"ok"}"#)
             default:
                 return StubURLProtocol.Response(statusCode: 404, json: "{}")
             }
@@ -98,6 +113,10 @@ struct NavidromeClientTests {
 
         let client = try #require(NavidromeClient(profile: makeProfile(), session: session))
         try await client.ping()
+        let extensions = try await client.openSubsonicExtensions()
+        #expect(extensions == [OpenSubsonicExtension(name: "playbackReport", versions: [1])])
+        #expect(extensions[0].supports(version: 1))
+        #expect(!extensions[0].supports(version: 2))
         let changeState = try await client.catalogChangeState()
         #expect(changeState.token == "scan-token")
         #expect(!changeState.isScanning)
@@ -129,6 +148,13 @@ struct NavidromeClientTests {
         #expect(starred.songs.map(\.id) == ["star-s"])
         try await client.setStarred(true, itemID: "star-s")
         try await client.setStarred(false, itemID: "star-s")
+        try await client.reportPlayback(
+            songID: "playing-song",
+            positionMilliseconds: 12_500,
+            state: .paused
+        )
+        try await client.scrobble(songID: "playing-song", submission: false)
+        try await client.scrobble(songID: "playing-song", submission: true)
     }
 
     @Test func optionalContainersReturnEmptyCollections() async throws {
@@ -155,6 +181,7 @@ struct NavidromeClientTests {
             NavidromeClient(profile: makeProfile(), session: StubURLProtocol.session(handler: handler))
         )
         #expect(try await client.catalogChangeState().token == nil)
+        #expect(try await client.openSubsonicExtensions().isEmpty)
         #expect(try await client.artistPage(size: 1, offset: 0).isEmpty)
         #expect(try await client.albumMetadataPage(size: 1, offset: 0).isEmpty)
         #expect(try await client.songMetadataPage(size: 1, offset: 0).isEmpty)

@@ -23,6 +23,7 @@ typealias PlaylistEnvelope = SubsonicEnvelope<PlaylistResponse>
 typealias LyricsEnvelope = SubsonicEnvelope<LyricsResponse>
 typealias StarredEnvelope = SubsonicEnvelope<StarredResponse>
 typealias ScanStatusEnvelope = SubsonicEnvelope<ScanStatusResponse>
+typealias OpenSubsonicExtensionsEnvelope = SubsonicEnvelope<OpenSubsonicExtensionsResponse>
 
 protocol SubsonicResponse: Decodable {
     var status: String { get }
@@ -82,6 +83,21 @@ struct ScanStatusResponse: SubsonicResponse {
     let status: String
     let error: SubsonicServerError?
     let scanStatus: ScanStatus?
+}
+
+struct OpenSubsonicExtensionsResponse: SubsonicResponse {
+    let status: String
+    let error: SubsonicServerError?
+    let openSubsonicExtensions: [OpenSubsonicExtension]?
+}
+
+struct OpenSubsonicExtension: Decodable, Equatable, Sendable {
+    let name: String
+    let versions: [Int]
+
+    func supports(version: Int) -> Bool {
+        versions.contains(version)
+    }
 }
 
 struct ScanStatus: Decodable, Sendable {
