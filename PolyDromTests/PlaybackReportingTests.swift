@@ -149,6 +149,45 @@ struct PlaybackReportingTests {
         #expect(captured.map { queryValue("submission", in: $0) } == ["false", "true"])
     }
 
+    @Test func stalledSkipStopsAtActualPositionWithoutLegacySubmission() async throws {
+        let modernRequests = Mutex<[URLRequest]>([])
+        let legacyRequests = Mutex<[URLRequest]>([])
+        let modernClient = try #require(NavidromeClient(
+            profile: makeProfile(),
+            session: StubURLProtocol.session { request in
+                modernRequests.withLock { $0.append(request) }
+                return envelope(#"{"status":"ok"}"#)
+            }
+        ))
+        let legacyClient = try #require(NavidromeClient(
+            profile: makeProfile(),
+            session: StubURLProtocol.session { request in
+                legacyRequests.withLock { $0.append(request) }
+                return envelope(#"{"status":"ok"}"#)
+            }
+        ))
+        let song = makeSong(duration: 120)
+        let origin = Date(timeIntervalSince1970: 6_000)
+
+        let modernReporter = PlaybackReporter()
+        modernReporter.connect(client: modernClient, serverKey: "modern", mode: .modern)
+        modernReporter.handle(event(song, position: 0, isPlaying: true, trigger: .started, at: origin))
+        modernReporter.handle(event(song, position: 37, isPlaying: false, trigger: .failed, at: origin + 1))
+        await modernReporter.finishForApplicationTermination(at: origin + 2)
+
+        let legacyReporter = PlaybackReporter()
+        legacyReporter.connect(client: legacyClient, serverKey: "legacy", mode: .legacy)
+        legacyReporter.handle(event(song, position: 0, isPlaying: true, trigger: .started, at: origin))
+        legacyReporter.handle(event(song, position: 37, isPlaying: false, trigger: .failed, at: origin + 1))
+        await legacyReporter.finishForApplicationTermination(at: origin + 2)
+
+        let capturedModern = modernRequests.withLock { $0 }
+        #expect(capturedModern.map { queryValue("state", in: $0) } == ["starting", "playing", "stopped"])
+        #expect(capturedModern.map { queryValue("positionMs", in: $0) } == ["0", "0", "37000"])
+        let capturedLegacy = legacyRequests.withLock { $0 }
+        #expect(capturedLegacy.map { queryValue("submission", in: $0) } == ["false"])
+    }
+
     private func event(
         _ song: NavidromeSong,
         position: Double,

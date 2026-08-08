@@ -301,9 +301,7 @@ final class AudioPlayer: ObservableObject {
 
         let stalledFor = Date().timeIntervalSince(lastPlaybackProgressAt)
         if stalledFor >= 18 {
-            AppLog.playback.warning("Playback stalled for 18 seconds; advancing to the next track")
-            statusMessage = "Skipping stalled track"
-            finishCurrentSong()
+            skipCurrentSongAfterStall()
         } else if stalledFor >= 8, !didAttemptStallRecovery {
             AppLog.playback.warning("Playback stalled for 8 seconds; attempting recovery")
             didAttemptStallRecovery = true
@@ -475,6 +473,19 @@ final class AudioPlayer: ObservableObject {
         statusMessage = "Finished"
         updateNowPlayingInfo()
         notifyPlaybackStateChanged(event: .finished)
+        onSongFinished?()
+    }
+
+    func skipCurrentSongAfterStall() {
+        guard !hasFinishedCurrentSong, currentSong != nil else { return }
+        AppLog.playback.warning("Playback stalled for 18 seconds; advancing to the next track")
+        hasFinishedCurrentSong = true
+        removeStallCheckTimer()
+        player.pause()
+        isPlaying = false
+        statusMessage = "Skipping stalled track"
+        updateNowPlayingInfo()
+        notifyPlaybackStateChanged(event: .failed)
         onSongFinished?()
     }
 

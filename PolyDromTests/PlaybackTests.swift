@@ -91,6 +91,30 @@ struct PlaybackTests {
         player.stop()
     }
 
+    @Test func stalledTrackSkipEmitsFailureAtActualPositionAndAdvancesQueue() throws {
+        let player = AudioPlayer()
+        let song = makeSong(duration: 120)
+        var playbackEvents: [AudioPlaybackEvent] = []
+        var finishedCount = 0
+        var failedCount = 0
+        player.onPlaybackEvent = { playbackEvents.append($0) }
+        player.onSongFinished = { finishedCount += 1 }
+        player.onSongFailed = { _ in failedCount += 1 }
+
+        player.play(song: song, url: URL(fileURLWithPath: "/dev/null"))
+        player.seek(to: 37)
+        player.skipCurrentSongAfterStall()
+
+        let event = try #require(playbackEvents.last)
+        #expect(event.trigger == .failed)
+        #expect(event.snapshot.position == 37)
+        #expect(event.snapshot.duration == 120)
+        #expect(player.currentTime == 37)
+        #expect(player.statusMessage == "Skipping stalled track")
+        #expect(finishedCount == 1)
+        #expect(failedCount == 0)
+    }
+
     @Test func nowPlayingControllerBuildsAndClearsMetadataAcrossBranches() throws {
         let controller = NowPlayingController()
         let song = makeSong(title: "Title", artist: "Artist", album: "Album", duration: 200)
