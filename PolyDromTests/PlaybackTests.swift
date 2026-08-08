@@ -32,6 +32,8 @@ struct PlaybackTests {
     @Test func audioPlayerPlayPauseSeekToggleAndStopLifecycle() {
         let player = AudioPlayer()
         let song = makeSong(duration: 120)
+        var playbackEvents: [AudioPlaybackEvent] = []
+        player.onPlaybackEvent = { playbackEvents.append($0) }
         player.play(song: song, url: URL(fileURLWithPath: "/dev/null"))
         #expect(player.currentSong == song)
         #expect(player.duration == 120)
@@ -59,11 +61,19 @@ struct PlaybackTests {
         #expect(player.currentTime == 0)
         #expect(player.duration == 0)
         #expect(!player.isPlaying)
+        #expect(playbackEvents.map(\.trigger).contains(.started))
+        #expect(playbackEvents.map(\.trigger).contains(.paused))
+        #expect(playbackEvents.map(\.trigger).contains(.resumed))
+        #expect(playbackEvents.map(\.trigger).contains(.seeked))
+        #expect(playbackEvents.map(\.trigger).contains(.stopped))
+        #expect(playbackEvents.last?.snapshot.song == song)
     }
 
     @Test func audioPlayerCanStartAtAPersistedPositionWithoutAutoplaying() {
         let player = AudioPlayer()
         let song = makeSong(duration: 120)
+        var playbackEvents: [AudioPlaybackEvent] = []
+        player.onPlaybackEvent = { playbackEvents.append($0) }
 
         player.play(
             song: song,
@@ -77,6 +87,8 @@ struct PlaybackTests {
         #expect(player.duration == 120)
         #expect(!player.isPlaying)
         #expect(player.hasPlayableItem)
+        #expect(playbackEvents.first?.trigger == .prepared)
+        player.stop()
     }
 
     @Test func nowPlayingControllerBuildsAndClearsMetadataAcrossBranches() throws {

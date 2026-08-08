@@ -24,7 +24,7 @@ PolyDrom brings a full desktop listening experience to a self-hosted Navidrome l
 - **A library built for discovery** — featured, recently added, recently played, and random albums; quick mixes of 10, 25, or 50 tracks; full-library shuffle; and search across titles, artists, and albums.
 - **Complete library navigation** — browse albums, artists, playlists, favorites, recent history, and detailed album or artist pages with cached artwork.
 - **Real queue management** — play immediately, play next, append to the queue, jump between tracks, seek, change volume, and resume the current queue and position after relaunching.
-- **Synced listening state** — star songs, albums, and artists; create, rename, update, and delete editable Navidrome playlists; and display plain or time-synced lyrics.
+- **Synced listening state** — report Now Playing and completed listens to Navidrome; star songs, albums, and artists; create, rename, update, and delete editable playlists; and display plain or time-synced lyrics.
 - **Multi-server support** — save multiple accounts, switch from the sidebar, reconnect automatically to the most recently used server, and maintain isolated caches for every server and user.
 - **Offline library browsing** — cached metadata, favorites, playlists, play history, and artwork remain available without a server connection. Streaming and server mutations still require connectivity.
 - **Spotify discovery links** — open an artist or album search on Spotify directly from its page or context menu.
@@ -77,6 +77,10 @@ Most songs, albums, and artists expose the same actions from their context menus
 The compact player stays available while browsing. Open it to see the expanded Now Playing experience with large artwork, elapsed time, seeking, volume, favorite and stop controls, AirPlay, the current queue, and lyrics.
 
 PolyDrom publishes track metadata and artwork to macOS Now Playing and supports the system play, pause, stop, previous, next, and seek commands. The queue, selected track, playback position, and volume are persisted locally so an interrupted session can be resumed after relaunch.
+
+While connected, PolyDrom also reports the current track to Navidrome so its **Now Playing** view identifies PolyDrom, the song, and—on servers supporting [OpenSubsonic playback reporting](https://opensubsonic.netlify.app/docs/endpoints/reportplayback/)—the current play, pause, and position state. Older servers receive compatible [Subsonic scrobble](https://opensubsonic.netlify.app/docs/endpoints/scrobble/) now-playing notifications instead. Qualifying listens are recorded in Navidrome's history and play counts and can be forwarded to scrobbling services configured there. On a normal app quit, PolyDrom briefly waits for its final server update without clearing the locally saved queue or playback position.
+
+Navidrome must have **Enable Now Playing** enabled, and scrobbling must be enabled for the PolyDrom player. Both are enabled by default. A legacy server cannot clear or pause a now-playing notification immediately, so that entry may remain visible until it expires.
 
 ### Playlists and favorites
 

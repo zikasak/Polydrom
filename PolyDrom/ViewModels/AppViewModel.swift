@@ -65,17 +65,18 @@ final class AppCoordinator: ObservableObject {
     let audioPlayer: AudioPlayer
 
     let store: LibraryStore
-    private let serverRegistry: ServerRegistry
-    private let clientFactory: @MainActor (ServerProfile) -> NavidromeClient?
+    let serverRegistry: ServerRegistry
+    let clientFactory: @MainActor (ServerProfile) -> NavidromeClient?
     private let coverArtCache: CoverArtCache
     private let syncCoordinator: LibrarySyncCoordinator
+    let playbackReporter: PlaybackReporter
     private let userDefaults: UserDefaults
     let playbackPersistence: PlaybackPersistence
     var client: NavidromeClient?
     private var metadataMonitorTask: Task<Void, Never>?
     private var metadataSyncTask: Task<MetadataSyncOutcome, Error>?
     private var metadataRefreshID: UUID?
-    private var scanRetryTask: Task<Void, Never>?
+    var scanRetryTask: Task<Void, Never>?
     private var isApplicationActive = false
     private var lyricsSongID: String?
     private var albumCoverPrefetchTask: Task<Void, Never>?
@@ -145,6 +146,7 @@ final class AppCoordinator: ObservableObject {
         self.clientFactory = clientFactory
         self.coverArtCache = coverArtCache
         self.syncCoordinator = LibrarySyncCoordinator(store: store)
+        self.playbackReporter = PlaybackReporter()
         self.userDefaults = userDefaults
         self.playbackPersistence = PlaybackPersistence(userDefaults: userDefaults, fileURL: playbackFileURL)
         if userDefaults.object(forKey: Self.metadataRefreshIntervalKey) == nil {
@@ -226,61 +228,6 @@ final class AppCoordinator: ObservableObject {
         return true
     }
 
-    func connect(_ profile: ServerProfile) async {
-        guard let nextClient = clientFactory(profile) else {
-            AppLog.app.error("Could not create a client for the configured server")
-            statusMessage = "Enter a valid server address."
-            return
-        }
-
-        sessionGeneration &+= 1
-        let generation = sessionGeneration
-        AppLog.app.info(
-            "Connecting to server \(profile.serverKey, privacy: .private(mask: .hash)) (session \(generation, privacy: .public))"
-        )
-        let previousServerKey = activeServer?.serverKey
-        cancelMetadataRefresh()
-        scanRetryTask?.cancel()
-        if previousServerKey != profile.serverKey {
-            clearRemoteLibraryState()
-            if previousServerKey != nil
-                || (pendingPlaybackRestore?.serverKey != nil
-                    && pendingPlaybackRestore?.serverKey != profile.serverKey) {
-                clearPlaybackState()
-            }
-        }
-        activeServer = profile
-        client = nextClient
-        isOnline = false
-        serverAddress = profile.address
-        username = profile.username
-        password = profile.password
-        await reloadCachedLibrary(for: generation)
-
-        isBusy = true
-        defer { isBusy = false }
-
-        do {
-            try await nextClient.ping()
-            guard isCurrentSession(generation, serverKey: profile.serverKey) else { return }
-            isOnline = true
-            AppLog.app.info("Connected to server (session \(generation, privacy: .public))")
-            try serverRegistry.touch(profile)
-            loadServers()
-            await restorePersistedPlaybackIfNeeded(for: generation)
-            await refreshMetadata(for: generation)
-        } catch {
-            guard isCurrentSession(generation, serverKey: profile.serverKey) else { return }
-            isOnline = false
-            AppLog.app.error(
-                "Connection failed for server \(profile.serverKey, privacy: .private(mask: .hash)): \(error.localizedDescription, privacy: .private)"
-            )
-            statusMessage = hasCachedLibrary
-                ? "Offline — showing cached library. \(error.localizedDescription)"
-                : error.localizedDescription
-        }
-    }
-
     func deleteServer(_ profile: ServerProfile) {
         AppLog.app.info("Deleting server profile \(profile.id.uuidString, privacy: .public)")
         let refreshToDrain: Task<MetadataSyncOutcome, Error>?
@@ -298,11 +245,12 @@ final class AppCoordinator: ObservableObject {
             try serverRegistry.delete(profile)
             try store.purgeLibrary(serverKey: profile.serverKey)
             if activeServer?.id == profile.id {
+                clearPlaybackState()
+                playbackReporter.disconnect()
                 activeServer = nil
                 client = nil
                 isOnline = false
                 hasCachedLibrary = false
-                clearPlaybackState()
                 clearRemoteLibraryState()
             }
             loadServers()
@@ -1213,7 +1161,7 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    private func cancelMetadataRefresh() {
+    func cancelMetadataRefresh() {
         metadataSyncTask?.cancel()
         metadataSyncTask = nil
         metadataRefreshID = nil
@@ -1225,7 +1173,7 @@ final class AppCoordinator: ObservableObject {
         return "\(prefix) at \(completedAt.formatted(date: .omitted, time: .shortened))"
     }
 
-    private func reloadCachedLibrary(for requestedGeneration: UInt? = nil) async {
+    func reloadCachedLibrary(for requestedGeneration: UInt? = nil) async {
         let generation = requestedGeneration ?? sessionGeneration
         guard let serverKey else { return }
         do {
@@ -1353,7 +1301,7 @@ final class AppCoordinator: ObservableObject {
         return song
     }
 
-    private func clearRemoteLibraryState() {
+    func clearRemoteLibraryState() {
         hasCachedLibrary = false
         lastMetadataCheckAt = nil
         searchResults = []
