@@ -14,6 +14,37 @@ test -d "$app_path"
 test -f "$app_path/Contents/Info.plist"
 test -f "$entitlements_path"
 
+bundle_identifier="$(
+  /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+    "$app_path/Contents/Info.plist"
+)"
+[[ "$bundle_identifier" =~ ^[A-Za-z0-9.-]+$ ]] || {
+  echo "Invalid CFBundleIdentifier: $bundle_identifier" >&2
+  exit 1
+}
+
+# Xcode expands build-setting placeholders in entitlement files, but codesign
+# does not. The release archive is built with signing disabled and signed here,
+# so materialize Sparkle's Mach service names before applying the entitlements.
+resolved_entitlements="$(
+  mktemp "${TMPDIR:-/tmp}/PolyDrom-entitlements.XXXXXX"
+)"
+signed_entitlements="$(
+  mktemp "${TMPDIR:-/tmp}/PolyDrom-signed-entitlements.XXXXXX"
+)"
+cleanup() {
+  rm -f "$resolved_entitlements" "$signed_entitlements"
+}
+trap cleanup EXIT
+
+sed "s|\$(PRODUCT_BUNDLE_IDENTIFIER)|${bundle_identifier}|g" \
+  "$entitlements_path" > "$resolved_entitlements"
+plutil -lint "$resolved_entitlements" >/dev/null
+if grep -Fq "\$(PRODUCT_BUNDLE_IDENTIFIER)" "$resolved_entitlements"; then
+  echo "Failed to resolve PRODUCT_BUNDLE_IDENTIFIER in entitlements." >&2
+  exit 1
+fi
+
 sparkle_framework="$app_path/Contents/Frameworks/Sparkle.framework"
 sparkle_version="$sparkle_framework/Versions/B"
 test -d "$sparkle_framework"
@@ -44,7 +75,14 @@ codesign --force --sign "$signing_identity" --options runtime \
 # cannot use the same library-validation setup as a Developer ID build, while
 # Sparkle's nested helpers retain the runtime configuration they ship with.
 codesign --force --sign "$signing_identity" \
-  --entitlements "$entitlements_path" \
+  --entitlements "$resolved_entitlements" \
   "$app_path"
 
 codesign --verify --deep --strict --verbose=2 "$app_path"
+codesign -d --entitlements - "$app_path" > "$signed_entitlements" 2>/dev/null
+grep -Fq "${bundle_identifier}-spks" "$signed_entitlements"
+grep -Fq "${bundle_identifier}-spki" "$signed_entitlements"
+if grep -Fq "\$(PRODUCT_BUNDLE_IDENTIFIER)" "$signed_entitlements"; then
+  echo "Signed application contains unresolved entitlement placeholders." >&2
+  exit 1
+fi
