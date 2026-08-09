@@ -262,6 +262,31 @@ final class LibraryStore {
         }
     }
 
+    func songsShuffledByAlbum(serverKey: String) async throws -> [NavidromeSong] {
+        try await performBackground { context in
+            let request = Self.songFetchRequest()
+            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
+            request.sortDescriptors = [
+                NSSortDescriptor(key: "discNumber", ascending: true),
+                NSSortDescriptor(key: "track", ascending: true),
+                NSSortDescriptor(
+                    key: "title",
+                    ascending: true,
+                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+                )
+            ]
+
+            let songs = try context.fetch(request).map(Self.song(from:))
+            let albumGroups = Dictionary(grouping: songs) { song in
+                if let albumID = song.albumId, !albumID.isEmpty {
+                    return "album:\(albumID)"
+                }
+                return "song:\(song.id)"
+            }
+            return albumGroups.values.shuffled().flatMap { $0 }
+        }
+    }
+
     func homeMetadata(serverKey: String) async throws -> CachedHomeMetadata {
         try await performBackground { context in
             let request = NSFetchRequest<NSManagedObject>(entityName: "VDAlbum")

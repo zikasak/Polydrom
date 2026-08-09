@@ -21,7 +21,7 @@ PolyDrom brings a full desktop listening experience to a self-hosted Navidrome l
 ## Highlights
 
 - **Native macOS experience** — a responsive SwiftUI interface with compact and expanded players, system Now Playing integration, keyboard-friendly controls, and an AirPlay route picker.
-- **A library built for discovery** — featured, recently added, recently played, and random albums; quick mixes of 10, 25, or 50 tracks; full-library shuffle; and search across titles, artists, and albums.
+- **A library built for discovery** — featured, recently added, recently played, and random albums; quick mixes of 10, 25, or 50 tracks; song- and album-grouped full-library shuffle; and search across titles, artists, and albums.
 - **Complete library navigation** — browse albums, artists, playlists, favorites, recent history, and detailed album or artist pages with cached artwork.
 - **Real queue management** — play immediately, play next, append to the queue, jump between tracks, seek, change volume, and resume the current queue and position after relaunching.
 - **Synced listening state** — report Now Playing and completed listens to Navidrome; star songs, albums, and artists; create, rename, update, and delete editable playlists; and display plain or time-synced lyrics.

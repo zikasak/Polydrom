@@ -268,6 +268,8 @@ struct AppCoordinatorTests {
         await viewModel.loadRandomSongs()
         await viewModel.loadHome()
         await viewModel.playRandomSongs(count: 10)
+        await viewModel.playSongsShuffledByAlbum()
+        #expect(viewModel.statusMessage == "Select a library first.")
         await viewModel.loadAlbums()
         await viewModel.loadArtists()
         await viewModel.loadPlaylists()
@@ -281,6 +283,88 @@ struct AppCoordinatorTests {
         #expect(!viewModel.canPlayNextTrack())
         #expect(viewModel.coverArtResource(for: makeSong()) == nil)
         #expect(viewModel.coverArtResource(for: try! JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"a","name":"A"}"#.utf8))) == nil)
+    }
+
+    @Test func albumShuffleHandlesEmptyLibraryAndStartsTheGroupedQueue() async throws {
+        let profile = makeProfile()
+        let session = StubURLProtocol.session { request in
+            if apiMethod(in: request) == "getCoverArt" {
+                return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+            }
+            return envelope(#"{"status":"ok"}"#)
+        }
+        let (emptyViewModel, _, _) = makeViewModel(session: session)
+        emptyViewModel.activeServer = profile
+
+        await emptyViewModel.playSongsShuffledByAlbum()
+
+        #expect(emptyViewModel.statusMessage == "No cached songs available.")
+        #expect(emptyViewModel.playbackQueue.isEmpty)
+        #expect(!emptyViewModel.isBusy)
+
+        let (viewModel, store, _) = makeViewModel(session: session)
+        let songs = [
+            NavidromeSong(id: "a-2", title: "Second", albumId: "album-a", track: 2),
+            NavidromeSong(id: "a-1", title: "First", albumId: "album-a", track: 1),
+            NavidromeSong(id: "b-1", title: "Other Album", albumId: "album-b", track: 1)
+        ]
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: songs,
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "album-shuffle",
+                checkedAt: Date()
+            ),
+            serverKey: profile.serverKey
+        )
+        viewModel.activeServer = profile
+        viewModel.isOnline = true
+        viewModel.client = NavidromeClient(profile: profile, session: session)
+        viewModel.audioPlayer.onSongFailed = nil
+
+        await viewModel.playSongsShuffledByAlbum()
+
+        #expect(await eventually { viewModel.audioPlayer.currentSong != nil })
+        #expect(viewModel.playbackQueue.count == songs.count)
+        #expect(Set(viewModel.playbackQueue.map(\.song.id)) == Set(songs.map(\.id)))
+        #expect(viewModel.audioPlayer.currentSong?.id == viewModel.playbackQueue.first?.song.id)
+        #expect(!viewModel.isBusy)
+    }
+
+    @Test func albumShuffleDoesNotStartQueuedPlaybackAfterTheServerSessionChanges() async throws {
+        let firstProfile = makeProfile(username: "first")
+        let secondProfile = makeProfile(username: "second")
+        let session = StubURLProtocol.session { _ in envelope(#"{"status":"ok"}"#) }
+        let (viewModel, store, _) = makeViewModel(session: session)
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [NavidromeSong(id: "first-song", title: "First")],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "first-session",
+                checkedAt: Date()
+            ),
+            serverKey: firstProfile.serverKey
+        )
+        viewModel.activeServer = firstProfile
+        viewModel.isOnline = true
+        viewModel.client = NavidromeClient(profile: firstProfile, session: session)
+
+        await viewModel.playSongsShuffledByAlbum()
+        viewModel.sessionGeneration &+= 1
+        viewModel.activeServer = secondProfile
+        viewModel.client = NavidromeClient(profile: secondProfile, session: session)
+        viewModel.statusMessage = "Second session"
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(viewModel.playbackQueue.isEmpty)
+        #expect(viewModel.audioPlayer.currentSong == nil)
+        #expect(viewModel.statusMessage == "Second session")
     }
 
     @Test func clearingCachesResetsCoordinatorStateWithoutRemovingServerConnection() async throws {

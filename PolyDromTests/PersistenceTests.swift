@@ -146,6 +146,71 @@ struct PersistenceTests {
         #expect(try await store.recentSongsAsync(serverKey: "server-b").map(\.title) == ["Other Server"])
     }
 
+    @Test func albumShuffleKeepsAlbumsOrderedAndContiguous() async throws {
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: MemoryCredentialStore()
+        )
+        let songs = [
+            NavidromeSong(id: "a-2", title: "Second", albumId: "album-a", track: 2, discNumber: 1),
+            NavidromeSong(id: "b-2", title: "Second Disc", albumId: "album-b", track: 1, discNumber: 2),
+            NavidromeSong(id: "standalone-1", title: "Standalone One", albumId: nil),
+            NavidromeSong(id: "a-1", title: "First", albumId: "album-a", track: 1, discNumber: 1),
+            NavidromeSong(id: "b-1", title: "First Disc", albumId: "album-b", track: 4, discNumber: 1),
+            NavidromeSong(id: "c-2", title: "Zulu", albumId: "album-c"),
+            NavidromeSong(id: "c-1", title: "Alpha", albumId: "album-c"),
+            NavidromeSong(id: "standalone-2", title: "Standalone Two", albumId: "")
+        ]
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: songs,
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "album-shuffle",
+                checkedAt: Date()
+            ),
+            serverKey: "server-a"
+        )
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [NavidromeSong(id: "other-server", title: "Other")],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "other-server",
+                checkedAt: Date()
+            ),
+            serverKey: "server-b"
+        )
+
+        let shuffled = try await store.songsShuffledByAlbum(serverKey: "server-a")
+
+        #expect(shuffled.count == songs.count)
+        #expect(Set(shuffled.map(\.id)) == Set(songs.map(\.id)))
+        #expect(shuffled.filter { $0.albumId == "album-a" }.map(\.id) == ["a-1", "a-2"])
+        #expect(shuffled.filter { $0.albumId == "album-b" }.map(\.id) == ["b-1", "b-2"])
+        #expect(shuffled.filter { $0.albumId == "album-c" }.map(\.id) == ["c-1", "c-2"])
+        let albumAPositions = albumPositions("album-a", in: shuffled)
+        let albumBPositions = albumPositions("album-b", in: shuffled)
+        let albumCPositions = albumPositions("album-c", in: shuffled)
+        #expect(albumAPositions.count == 2)
+        let albumAFirst = try #require(albumAPositions.first)
+        let albumALast = try #require(albumAPositions.last)
+        #expect(albumALast - albumAFirst == 1)
+        #expect(albumBPositions.count == 2)
+        let albumBFirst = try #require(albumBPositions.first)
+        let albumBLast = try #require(albumBPositions.last)
+        #expect(albumBLast - albumBFirst == 1)
+        #expect(albumCPositions.count == 2)
+        let albumCFirst = try #require(albumCPositions.first)
+        let albumCLast = try #require(albumCPositions.last)
+        #expect(albumCLast - albumCFirst == 1)
+        #expect(Set(shuffled.filter { ($0.albumId ?? "").isEmpty }.map(\.id)) == ["standalone-1", "standalone-2"])
+    }
+
     @Test func keychainErrorsExposeStatusCode() {
         #expect(KeychainError.unexpectedStatus(-50).localizedDescription == "Keychain error -50")
         #expect(NavidromeError.invalidURL.localizedDescription == "The server address is not a valid URL.")
@@ -474,6 +539,10 @@ struct PersistenceTests {
         )
         #expect(try await rebuiltCache.recentSongsAsync(serverKey: "https://legacy.example|user").isEmpty)
         #expect(!(try await rebuiltCache.metadataSyncState(serverKey: "https://legacy.example|user").isComplete))
+    }
+
+    private func albumPositions(_ albumID: String, in songs: [NavidromeSong]) -> [Int] {
+        songs.indices.filter { songs[$0].albumId == albumID }
     }
 }
 
