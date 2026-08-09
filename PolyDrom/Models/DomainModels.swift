@@ -117,6 +117,11 @@ struct PlaybackQueueEntry: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+struct PlaybackSessionIdentity: Sendable {
+    let generation: UInt
+    let serverKey: String
+}
+
 struct NavidromeAlbum: Decodable, Identifiable, Hashable, Sendable {
     let id: String
     let name: String

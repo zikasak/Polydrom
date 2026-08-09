@@ -392,17 +392,14 @@ final class AppCoordinator: ObservableObject {
             statusMessage = "Select a library first."
             return
         }
-
         isBusy = true
         defer { isBusy = false }
-
         do {
             let songs = try await store.randomSongs(serverKey: serverKey, count: count)
             guard !songs.isEmpty else {
                 statusMessage = "No cached songs available."
                 return
             }
-
             await warmCachedSongCovers(songs)
             prefetchSongCovers(songs)
             play(songs, startingAt: 0)
@@ -412,6 +409,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     func playSongsShuffledByAlbum() async {
+        let generation = sessionGeneration
         guard let serverKey else {
             statusMessage = "Select a library first."
             return
@@ -422,15 +420,18 @@ final class AppCoordinator: ObservableObject {
 
         do {
             let songs = try await store.songsShuffledByAlbum(serverKey: serverKey)
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             guard !songs.isEmpty else {
                 statusMessage = "No cached songs available."
                 return
             }
 
             await warmCachedSongCovers(songs)
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             prefetchSongCovers(songs)
-            play(songs, startingAt: 0)
+            play(songs, startingAt: 0, expectedSession: .init(generation: generation, serverKey: serverKey))
         } catch {
+            guard isCurrentSession(generation, serverKey: serverKey) else { return }
             statusMessage = error.localizedDescription
         }
     }
@@ -622,14 +623,23 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    func play(_ songs: [NavidromeSong], startingAt index: Int) {
+    func play(
+        _ songs: [NavidromeSong],
+        startingAt index: Int,
+        expectedSession: PlaybackSessionIdentity? = nil
+    ) {
         guard songs.indices.contains(index) else { return }
 
         AppLog.playback.info("Queued \(songs.count, privacy: .public) songs for playback")
         let queue = songs.map { PlaybackQueueEntry(song: $0) }
         let shouldHydrateSong = selectedSection == .random
         Task {
-            await play(queue[index], replacingQueueWith: queue, shouldHydrateSong: shouldHydrateSong)
+            await play(
+                queue[index],
+                replacingQueueWith: queue,
+                shouldHydrateSong: shouldHydrateSong,
+                expectedSession: expectedSession
+            )
         }
     }
 
@@ -704,18 +714,31 @@ final class AppCoordinator: ObservableObject {
     func play(
         _ entry: PlaybackQueueEntry,
         replacingQueueWith queue: [PlaybackQueueEntry]? = nil,
-        shouldHydrateSong: Bool
+        shouldHydrateSong: Bool,
+        expectedSession: PlaybackSessionIdentity? = nil
     ) async {
-        guard isOnline, let client, let serverKey else {
+        let playbackSession: PlaybackSessionIdentity
+        if let expectedSession {
+            guard isCurrentSession(expectedSession.generation, serverKey: expectedSession.serverKey) else { return }
+            playbackSession = expectedSession
+        } else if let serverKey {
+            playbackSession = .init(generation: sessionGeneration, serverKey: serverKey)
+        } else {
             AppLog.playback.warning("Playback requested while the app is offline")
             statusMessage = "Connect to the server to play music."
             return
         }
-
+        guard isOnline, let client else {
+            AppLog.playback.warning("Playback requested while the app is offline")
+            statusMessage = "Connect to the server to play music."
+            return
+        }
         do {
             let songToPlay = try await resolvedSongForPlayback(entry.song, shouldHydrateSong: shouldHydrateSong)
+            guard isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
             let url = try client.streamURL(for: songToPlay)
             await warmCachedSongCovers([songToPlay])
+            guard isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
 
             if var queue {
                 guard let index = queue.firstIndex(where: { $0.id == entry.id }) else { return }
@@ -741,13 +764,18 @@ final class AppCoordinator: ObservableObject {
             let queueToWarm = playbackQueue.map(\.song)
             Task { [weak self] in
                 guard let self else { return }
+                guard self.isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
                 await warmCachedSongCovers(queueToWarm)
+                guard self.isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
                 prefetchSongCovers(queueToWarm)
             }
-            try store.markPlayed(songToPlay, serverKey: serverKey)
+            guard isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
+            try store.markPlayed(songToPlay, serverKey: playbackSession.serverKey)
             try await refreshRecentSongs()
+            guard isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
             statusMessage = "Playing \(songToPlay.title)"
         } catch {
+            guard isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
             AppLog.playback.error("Could not start playback: \(error.localizedDescription, privacy: .private)")
             statusMessage = error.localizedDescription
         }

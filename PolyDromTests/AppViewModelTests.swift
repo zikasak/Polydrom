@@ -323,6 +323,7 @@ struct AppCoordinatorTests {
         viewModel.activeServer = profile
         viewModel.isOnline = true
         viewModel.client = NavidromeClient(profile: profile, session: session)
+        viewModel.audioPlayer.onSongFailed = nil
 
         await viewModel.playSongsShuffledByAlbum()
 
@@ -331,6 +332,39 @@ struct AppCoordinatorTests {
         #expect(Set(viewModel.playbackQueue.map(\.song.id)) == Set(songs.map(\.id)))
         #expect(viewModel.audioPlayer.currentSong?.id == viewModel.playbackQueue.first?.song.id)
         #expect(!viewModel.isBusy)
+    }
+
+    @Test func albumShuffleDoesNotStartQueuedPlaybackAfterTheServerSessionChanges() async throws {
+        let firstProfile = makeProfile(username: "first")
+        let secondProfile = makeProfile(username: "second")
+        let session = StubURLProtocol.session { _ in envelope(#"{"status":"ok"}"#) }
+        let (viewModel, store, _) = makeViewModel(session: session)
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [NavidromeSong(id: "first-song", title: "First")],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "first-session",
+                checkedAt: Date()
+            ),
+            serverKey: firstProfile.serverKey
+        )
+        viewModel.activeServer = firstProfile
+        viewModel.isOnline = true
+        viewModel.client = NavidromeClient(profile: firstProfile, session: session)
+
+        await viewModel.playSongsShuffledByAlbum()
+        viewModel.sessionGeneration &+= 1
+        viewModel.activeServer = secondProfile
+        viewModel.client = NavidromeClient(profile: secondProfile, session: session)
+        viewModel.statusMessage = "Second session"
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(viewModel.playbackQueue.isEmpty)
+        #expect(viewModel.audioPlayer.currentSong == nil)
+        #expect(viewModel.statusMessage == "Second session")
     }
 
     @Test func clearingCachesResetsCoordinatorStateWithoutRemovingServerConnection() async throws {
