@@ -217,7 +217,7 @@ When reporting a bug, include the macOS version, PolyDrom version, Navidrome ver
 
 ## Releases and updates
 
-GitHub Actions builds and tests every pull request and push to `main`, then produces an unsigned Apple-silicon DMG. A `v*` tag, or a manual workflow run with `create_release` enabled, publishes:
+GitHub Actions builds and tests every pull request and push to `main`, then produces an unsigned Apple-silicon DMG. Pushing a stable semantic version tag in the form `vMAJOR.MINOR.PATCH` publishes:
 
 - `PolyDrom.dmg`
 - `PolyDrom.dmg.sha256`
@@ -238,7 +238,14 @@ gh secret set SPARKLE_ED_PRIVATE_KEY \
 rm /private/tmp/polydrom-sparkle-private-key
 ```
 
-The public key belongs in `Config/Info.plist`; the private key is used only by the release workflow. Before tagging a release, update `MARKETING_VERSION` in the Xcode project and make the tag match it, for example `v1.1` for version `1.1`.
+The public key belongs in `Config/Info.plist`; the private key is used only by the release workflow. To publish a release, create and push a stable semantic version tag:
+
+```sh
+git tag v1.4.0
+git push origin v1.4.0
+```
+
+The workflow validates the tag, strips the `v` prefix, and stamps the archived app with `MARKETING_VERSION=1.4.0`. The Xcode project's marketing version remains the fallback for local, pull-request, branch, and manual workflow builds; it does not need to be changed for releases. Manual workflow runs build artifacts but never publish a GitHub release.
 
 The release workflow intentionally does not perform Apple Developer signing, notarization, or stapling. Adding those steps requires an Apple Developer identity and corresponding GitHub secrets.
 
