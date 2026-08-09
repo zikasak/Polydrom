@@ -411,6 +411,30 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
+    func playSongsShuffledByAlbum() async {
+        guard let serverKey else {
+            statusMessage = "Select a library first."
+            return
+        }
+
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            let songs = try await store.songsShuffledByAlbum(serverKey: serverKey)
+            guard !songs.isEmpty else {
+                statusMessage = "No cached songs available."
+                return
+            }
+
+            await warmCachedSongCovers(songs)
+            prefetchSongCovers(songs)
+            play(songs, startingAt: 0)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
     func search() async {
         let generation = sessionGeneration
         guard let serverKey else {

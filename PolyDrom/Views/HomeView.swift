@@ -75,7 +75,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 12) {
             HomeSectionHeader(title: "Start Something Random", systemImage: "shuffle")
 
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 RandomPlayButton(title: "Quick Mix", subtitle: "10 songs", systemImage: "bolt.fill") {
                     await viewModel.playRandomSongs(count: 10)
                 }
@@ -87,6 +87,9 @@ struct HomeView: View {
                 }
                 RandomPlayButton(title: "Shuffle All", subtitle: "Entire library", systemImage: "music.note.list") {
                     await viewModel.playRandomSongs()
+                }
+                RandomPlayButton(title: "Shuffle Albums", subtitle: "By album", systemImage: "rectangle.stack") {
+                    await viewModel.playSongsShuffledByAlbum()
                 }
             }
             .disabled(viewModel.isBusy || !viewModel.isOnline)
@@ -239,26 +242,30 @@ private struct RandomPlayButton: View {
         Button {
             Task { await action() }
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Image(systemName: systemImage)
-                    .font(.title3)
-                    .frame(width: 28, height: 28)
+                    .font(.body)
+                    .frame(width: 22, height: 22)
                     .foregroundStyle(.tint)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.headline)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
+                .layoutPriority(1)
 
-                Spacer(minLength: 8)
-                Image(systemName: "play.fill")
-                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 54, maxHeight: 54, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
