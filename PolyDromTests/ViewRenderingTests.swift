@@ -180,6 +180,27 @@ struct ViewRenderingTests {
         #expect(values.libraryGridIsScrolling == true)
     }
 
+    @Test func mainWindowConfigurationSupportsSmoothLiveResize() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1120, height: 720),
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.collectionBehavior = [.fullScreenPrimary]
+        window.contentResizeIncrements = NSSize(width: 20, height: 20)
+        window.preservesContentDuringLiveResize = false
+
+        WindowConfiguration.apply(to: window)
+
+        #expect(window.collectionBehavior.contains(.fullScreenNone))
+        #expect(!window.collectionBehavior.contains(.fullScreenPrimary))
+        #expect(!window.collectionBehavior.contains(.fullScreenAuxiliary))
+        #expect(window.contentResizeIncrements == NSSize(width: 1, height: 1))
+        #expect(window.preservesContentDuringLiveResize)
+        #expect(window.standardWindowButton(.zoomButton)?.isEnabled == false)
+    }
+
     private func render<V: View>(_ rootView: V, size: CGSize = CGSize(width: 800, height: 600)) async {
         let host = NSHostingView(rootView: rootView)
         host.frame = NSRect(origin: .zero, size: size)
