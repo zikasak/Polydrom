@@ -81,17 +81,35 @@ final class PolyDromApplicationDelegate: NSObject, NSApplicationDelegate {
 
 private struct MacOSWindowConfigurator: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
-        NSView()
+        WindowConfigurationView()
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            guard let window = nsView.window else { return }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
 
-            window.collectionBehavior.remove(.fullScreenPrimary)
-            window.collectionBehavior.remove(.fullScreenAuxiliary)
-            window.collectionBehavior.insert(.fullScreenNone)
-            window.standardWindowButton(.zoomButton)?.isEnabled = false
-        }
+private final class WindowConfigurationView: NSView {
+    private weak var configuredWindow: NSWindow?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        guard let window, window !== configuredWindow else { return }
+        WindowConfiguration.apply(to: window)
+        configuredWindow = window
+    }
+}
+
+enum WindowConfiguration {
+    @MainActor
+    static func apply(to window: NSWindow) {
+        window.collectionBehavior.remove(.fullScreenPrimary)
+        window.collectionBehavior.remove(.fullScreenAuxiliary)
+        window.collectionBehavior.insert(.fullScreenNone)
+        window.standardWindowButton(.zoomButton)?.isEnabled = false
+
+        // Keep interactive resizing at the native one-point granularity and let
+        // AppKit reuse unchanged content instead of redrawing the whole window.
+        window.contentResizeIncrements = NSSize(width: 1, height: 1)
+        window.preservesContentDuringLiveResize = true
     }
 }
