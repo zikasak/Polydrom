@@ -179,6 +179,17 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_26.6.app
           xcodebuild -version
 
+      - name: Resolve release Swift packages
+        timeout-minutes: 5
+        env:
+          SPM_PATH: ${{ runner.temp }}/PolyDrom-SourcePackages
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project PolyDrom.xcodeproj \
+            -scheme PolyDrom \
+            -clonedSourcePackagesDirPath "$SPM_PATH"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
