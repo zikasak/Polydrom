@@ -4,8 +4,9 @@ build/
 .build/
 .swiftpm/
 .periphery/
+node_modules/
+release-assets/
 *.xcresult
 xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
-
