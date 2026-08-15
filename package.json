@@ -1,0 +1,16 @@
+{
+  "name": "polydrom-release-automation",
+  "private": true,
+  "description": "Release automation for the PolyDrom macOS app",
+  "scripts": {
+    "release": "semantic-release"
+  },
+  "engines": {
+    "node": "^22.14.0 || >=24.10.0"
+  },
+  "devDependencies": {
+    "@semantic-release/exec": "7.1.0",
+    "conventional-changelog-conventionalcommits": "10.3.0",
+    "semantic-release": "25.0.9"
+  }
+}

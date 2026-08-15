@@ -1,11 +1,9 @@
-name: Build DMG
+name: Build and Release
 
 on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
   pull_request:
   workflow_dispatch:
 
@@ -14,16 +12,14 @@ permissions:
 
 concurrency:
   group: build-dmg-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Never interrupt a main-branch release after semantic-release starts.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: macos-26
     permissions:
       contents: read
-    outputs:
-      release_tag: ${{ steps.app_version.outputs.release_tag }}
-
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -33,39 +29,24 @@ jobs:
           sudo xcode-select -s /Applications/Xcode_26.6.app
           xcodebuild -version
 
-      - name: Determine release metadata
+      - name: Determine app version
         id: app_version
         run: |
           set -euo pipefail
 
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_TYPE" == "tag" ]]; then
-            release_tag="$GITHUB_REF_NAME"
-            stable_semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-
-            if [[ ! "$release_tag" =~ $stable_semver ]]; then
-              echo "Release tag '$release_tag' must match vMAJOR.MINOR.PATCH without leading zeros." >&2
-              exit 1
-            fi
-
-            marketing_version="${release_tag#v}"
-          else
-            release_tag=""
-            project_marketing_version="$(
-              awk '
-                /^[[:space:]]*MARKETING_VERSION = / {
-                  sub(/^[[:space:]]*MARKETING_VERSION = /, "")
-                  sub(/;.*/, "")
-                  print
-                  exit
-                }
-              ' PolyDrom.xcodeproj/project.pbxproj
-            )"
-            test -n "$project_marketing_version"
-            marketing_version="$project_marketing_version"
-          fi
+          marketing_version="$(
+            awk '
+              /^[[:space:]]*MARKETING_VERSION = / {
+                sub(/^[[:space:]]*MARKETING_VERSION = /, "")
+                sub(/;.*/, "")
+                print
+                exit
+              }
+            ' PolyDrom.xcodeproj/project.pbxproj
+          )"
+          test -n "$marketing_version"
 
           echo "marketing_version=$marketing_version" >> "$GITHUB_OUTPUT"
-          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
 
       - name: Resolve Swift packages
         env:
@@ -171,49 +152,6 @@ jobs:
           hdiutil verify "$ARTIFACTS_PATH/PolyDrom.dmg"
           (cd "$ARTIFACTS_PATH" && shasum -a 256 PolyDrom.dmg > PolyDrom.dmg.sha256)
 
-      - name: Generate signed Sparkle appcast
-        if: github.event_name == 'push' && github.ref_type == 'tag'
-        env:
-          ARCHIVE_PATH: ${{ runner.temp }}/PolyDrom.xcarchive
-          ARTIFACTS_PATH: ${{ runner.temp }}/PolyDrom-artifacts
-          EXPECTED_MARKETING_VERSION: ${{ steps.app_version.outputs.marketing_version }}
-          RELEASE_TAG: ${{ steps.app_version.outputs.release_tag }}
-          SPM_PATH: ${{ runner.temp }}/PolyDrom-SourcePackages
-          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-
-          test -n "$SPARKLE_ED_PRIVATE_KEY" || {
-            echo "SPARKLE_ED_PRIVATE_KEY is required for release builds." >&2
-            exit 1
-          }
-
-          sign_update="$(find "$SPM_PATH" -type f -path '*/Sparkle/bin/sign_update' -print -quit)"
-          test -x "$sign_update"
-
-          app_path="$ARCHIVE_PATH/Products/Applications/PolyDrom.app"
-
-          # Sparkle's generate_appcast requires an Apple-issued distribution
-          # signature. This build uses an ad-hoc signature, so the helper uses
-          # Sparkle's sign_update to create the appcast metadata instead.
-          RELEASE_TAG="$RELEASE_TAG" \
-            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
-            SPARKLE_ED_PRIVATE_KEY="$SPARKLE_ED_PRIVATE_KEY" \
-            bash scripts/generate-appcast.sh \
-              "$app_path" \
-              "$ARTIFACTS_PATH/PolyDrom.dmg" \
-              "$sign_update" \
-              "$ARTIFACTS_PATH/appcast.xml"
-
-          xmllint --noout "$ARTIFACTS_PATH/appcast.xml"
-          grep -Eq 'sparkle:edSignature="[^"]+"' "$ARTIFACTS_PATH/appcast.xml"
-          grep -Fq "<sparkle:shortVersionString>${EXPECTED_MARKETING_VERSION}</sparkle:shortVersionString>" "$ARTIFACTS_PATH/appcast.xml"
-          grep -Fq "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/PolyDrom.dmg" "$ARTIFACTS_PATH/appcast.xml"
-          ! grep -Fq "/releases/tag/" "$ARTIFACTS_PATH/appcast.xml"
-
-          feed_url="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app_path/Contents/Info.plist")"
-          test "$feed_url" = "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/appcast.xml"
-
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
@@ -223,41 +161,49 @@ jobs:
           retention-days: 14
 
   release:
-    if: github.event_name == 'push' && github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: macos-26
     permissions:
       contents: write
 
     steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
+      - name: Check out source and tags
+        uses: actions/checkout@v4
         with:
-          name: PolyDrom-dmg
-          path: release-assets
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Install XML validation tools
+      - name: Select Xcode 26.6
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends libxml2-utils
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version
 
-      - name: Create GitHub release
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install release dependencies
+        run: npm ci
+
+      - name: Run semantic-release
+        id: semantic_release
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: npm run release
+
+      - name: Verify published Sparkle appcast
+        if: steps.semantic_release.outputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ steps.semantic_release.outputs.release_tag }}
         run: |
           set -euo pipefail
 
-          gh release create "$RELEASE_TAG" \
-            release-assets/PolyDrom.dmg \
-            release-assets/PolyDrom.dmg.sha256 \
-            release-assets/appcast.xml \
-            --target "$GITHUB_SHA" \
-            --title "PolyDrom $RELEASE_TAG" \
-            --generate-notes
-
           appcast_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/appcast.xml"
-          curl --fail --location --silent --show-error "$appcast_url" > /tmp/PolyDrom-appcast.xml
-          xmllint --noout /tmp/PolyDrom-appcast.xml
-          grep -Fq "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/PolyDrom.dmg" /tmp/PolyDrom-appcast.xml
+          appcast_path="$RUNNER_TEMP/PolyDrom-appcast.xml"
+          curl --fail --location --silent --show-error --output "$appcast_path" "$appcast_url"
+          xmllint --noout "$appcast_path"
+          grep -Fq "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/PolyDrom.dmg" "$appcast_path"
