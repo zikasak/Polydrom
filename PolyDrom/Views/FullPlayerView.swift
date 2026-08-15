@@ -657,15 +657,17 @@ struct PlayerLyricsView: View {
     }
 
     private func lyricsScrollView(_ lyrics: SongLyrics) -> some View {
-        let highlightedLine = currentLineIndex(in: lyrics)
+        let highlightedLine = lyrics.lineIndex(at: audioPlayer.currentTime)
 
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { index, line in
-                        Text(line.value.isEmpty ? " " : line.value)
-                            .font(.title3.weight(index == highlightedLine ? .semibold : .regular))
-                            .foregroundStyle(index == highlightedLine ? .primary : .secondary)
+                        lyricRow(
+                            line,
+                            isHighlighted: index == highlightedLine,
+                            playbackTime: lyrics.playbackTime(for: line)
+                        )
                             .id(index)
                     }
                 }
@@ -686,10 +688,32 @@ struct PlayerLyricsView: View {
         }
     }
 
-    private func currentLineIndex(in lyrics: SongLyrics) -> Int? {
-        guard lyrics.synced else { return nil }
-        let currentMilliseconds = Int(audioPlayer.currentTime * 1_000) + (lyrics.offset ?? 0)
-        return lyrics.lines.lastIndex { ($0.start ?? Int.max) <= currentMilliseconds }
+    @ViewBuilder
+    private func lyricRow(
+        _ line: SongLyricsLine,
+        isHighlighted: Bool,
+        playbackTime: Double?
+    ) -> some View {
+        if let playbackTime {
+            Button {
+                audioPlayer.seek(to: playbackTime)
+            } label: {
+                lyricText(line, isHighlighted: isHighlighted)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Jump to this lyric")
+            .accessibilityHint("Jumps playback to this lyric in the song")
+        } else {
+            lyricText(line, isHighlighted: isHighlighted)
+        }
+    }
+
+    private func lyricText(_ line: SongLyricsLine, isHighlighted: Bool) -> some View {
+        Text(line.value.isEmpty ? " " : line.value)
+            .font(.title3.weight(isHighlighted ? .semibold : .regular))
+            .foregroundStyle(isHighlighted ? .primary : .secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
