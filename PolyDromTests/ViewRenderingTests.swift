@@ -163,6 +163,10 @@ struct ViewRenderingTests {
         await render(PlayerLyricsView(viewModel: viewModel), size: CGSize(width: 360, height: 600))
         viewModel.currentLyrics = try JSONDecoder().decode(SongLyrics.self, from: Data(#"{"lang":"en","synced":true,"offset":10,"line":[{"start":0,"value":"First"},{"start":5000,"value":"Second"}]}"#.utf8))
         await render(PlayerLyricsView(viewModel: viewModel), size: CGSize(width: 360, height: 600))
+        viewModel.currentLyrics = try JSONDecoder().decode(SongLyrics.self, from: Data(#"{"lang":"en","synced":false,"line":[{"value":"Plain lyric"}]}"#.utf8))
+        await render(PlayerLyricsView(viewModel: viewModel), size: CGSize(width: 360, height: 600))
+        viewModel.currentLyrics = try JSONDecoder().decode(SongLyrics.self, from: Data(#"{"lang":"en","synced":true,"line":[{"value":"Missing timestamp"}]}"#.utf8))
+        await render(PlayerLyricsView(viewModel: viewModel), size: CGSize(width: 360, height: 600))
 
         #expect(PlayerDetailPanel.queue.title == "Queue")
         #expect(PlayerDetailPanel.queue.systemImage == "text.line.last.and.arrowtriangle.forward")

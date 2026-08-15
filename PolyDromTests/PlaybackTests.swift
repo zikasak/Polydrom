@@ -91,6 +91,22 @@ struct PlaybackTests {
         player.stop()
     }
 
+    @Test func audioPlayerSeekPreservesPlaybackState() {
+        let player = AudioPlayer()
+        let song = makeSong(duration: 120)
+        player.play(song: song, url: URL(fileURLWithPath: "/dev/null"))
+
+        player.seek(to: 20)
+        #expect(player.currentTime == 20)
+        #expect(player.isPlaying)
+
+        player.pauseCurrentSong()
+        player.seek(to: 30)
+        #expect(player.currentTime == 30)
+        #expect(!player.isPlaying)
+        player.stop()
+    }
+
     @Test func stalledTrackSkipEmitsFailureAtActualPositionAndAdvancesQueue() throws {
         let player = AudioPlayer()
         let song = makeSong(duration: 120)

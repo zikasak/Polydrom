@@ -339,6 +339,19 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
         return language.uppercased()
     }
 
+    func playbackTime(for line: SongLyricsLine) -> Double? {
+        guard synced, let start = line.start else { return nil }
+        return max((Double(start) - Double(offset ?? 0)) / 1_000, 0)
+    }
+
+    func lineIndex(at playbackTime: Double) -> Int? {
+        guard synced else { return nil }
+        return lines.lastIndex { line in
+            guard let lineTime = self.playbackTime(for: line) else { return false }
+            return lineTime <= playbackTime
+        }
+    }
+
     enum CodingKeys: String, CodingKey {
         case displayArtist
         case displayTitle

@@ -77,6 +77,35 @@ struct DomainModelTests {
         #expect(try JSONDecoder().decode(SongLyrics.self, from: data).displayLanguage == nil)
     }
 
+    @Test func syncedLyricsConvertLineTimestampsToPlaybackTimes() throws {
+        let positiveOffset = try JSONDecoder().decode(
+            SongLyrics.self,
+            from: Data(#"{"offset":250,"synced":true,"line":[{"start":100,"value":"Before start"},{"start":1250,"value":"Timed"},{"value":"Missing"}]}"#.utf8)
+        )
+        let negativeOffset = try JSONDecoder().decode(
+            SongLyrics.self,
+            from: Data(#"{"offset":-500,"synced":true,"line":{"start":1000,"value":"Delayed"}}"#.utf8)
+        )
+        let missingOffset = try JSONDecoder().decode(
+            SongLyrics.self,
+            from: Data(#"{"synced":true,"line":{"start":1000,"value":"No offset"}}"#.utf8)
+        )
+        let plainLyrics = try JSONDecoder().decode(
+            SongLyrics.self,
+            from: Data(#"{"synced":false,"line":{"start":1000,"value":"Plain"}}"#.utf8)
+        )
+
+        #expect(positiveOffset.playbackTime(for: positiveOffset.lines[0]) == 0)
+        #expect(positiveOffset.playbackTime(for: positiveOffset.lines[1]) == 1)
+        #expect(positiveOffset.playbackTime(for: positiveOffset.lines[2]) == nil)
+        #expect(positiveOffset.lineIndex(at: 0) == 0)
+        #expect(positiveOffset.lineIndex(at: 1) == 1)
+        #expect(negativeOffset.playbackTime(for: negativeOffset.lines[0]) == 1.5)
+        #expect(missingOffset.playbackTime(for: missingOffset.lines[0]) == 1)
+        #expect(plainLyrics.playbackTime(for: plainLyrics.lines[0]) == nil)
+        #expect(plainLyrics.lineIndex(at: 1) == nil)
+    }
+
     @Test func missingRequiredFlexibleStringThrows() {
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"name":"Artist"}"#.utf8))
