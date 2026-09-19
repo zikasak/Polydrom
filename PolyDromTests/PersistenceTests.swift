@@ -412,8 +412,13 @@ struct PersistenceTests {
                 artists: [],
                 albums: [],
                 songs: [zebra, alpha, untagged],
-                playlists: [],
-                favorites: FavoriteMetadata(),
+                playlists: [
+                    PlaylistMetadataSnapshot(
+                        playlist: NavidromePlaylist(id: "mix", name: "Mix", songCount: 1),
+                        songs: [makeSong(id: "alpha", title: "Alpha", albumId: "album-b", genres: ["rock"])]
+                    )
+                ],
+                favorites: FavoriteMetadata(songIDs: [alpha.id]),
                 catalogToken: "scan-1",
                 checkedAt: Date()
             ),
@@ -433,9 +438,20 @@ struct PersistenceTests {
         )
 
         let genres = try await store.genres(serverKey: "server-a")
+        let expectedAlphaGenres = ["rock", "Ambient"]
         #expect(genres.map(\.name) == ["Alternative", "Ambient", "Rock"])
         #expect(genres.map(\.songCount) == [1, 1, 2])
-        #expect(try await store.songs(serverKey: "server-a", genreID: "rock").map(\.id) == ["alpha", "zebra"])
+        let rockSongs = try await store.songs(serverKey: "server-a", genreID: "rock")
+        #expect(rockSongs.map(\.id) == ["alpha", "zebra"])
+        #expect(rockSongs.first(where: { $0.id == alpha.id })?.genres == expectedAlphaGenres)
+        #expect(try await store.songs(serverKey: "server-a", albumID: "album-b").first?.genres == expectedAlphaGenres)
+        #expect(try await store.songs(serverKey: "server-a", playlistID: "mix").first?.genres == expectedAlphaGenres)
+        #expect(try await store.favoriteSongs(serverKey: "server-a").first?.genres == expectedAlphaGenres)
+        #expect(try await store.searchSongs("Alpha", serverKey: "server-a").first?.genres == expectedAlphaGenres)
+        #expect(try await store.randomSongs(serverKey: "server-a").first(where: { $0.id == alpha.id })?.genres == expectedAlphaGenres)
+        #expect(try await store.songsShuffledByAlbum(serverKey: "server-a").first(where: { $0.id == alpha.id })?.genres == expectedAlphaGenres)
+        try store.markPlayed(alpha, serverKey: "server-a")
+        #expect(try await store.recentSongsAsync(serverKey: "server-a").first?.genres == expectedAlphaGenres)
         #expect(try await store.genres(serverKey: "server-b").map(\.name) == ["Jazz"])
         #expect(try await store.metadataSyncState(serverKey: "server-a").catalogVersion == MetadataSyncState.currentCatalogVersion)
 

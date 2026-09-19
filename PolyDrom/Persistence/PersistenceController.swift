@@ -158,6 +158,7 @@ final class PersistenceController {
             attribute("discNumber", .integer64AttributeType),
             attribute("created", .dateAttributeType),
             attribute("serverPlayedAt", .dateAttributeType),
+            attribute("genresData", .binaryDataAttributeType),
             attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false),
             attribute("lastPlayedAt", .dateAttributeType)
         ]

@@ -460,6 +460,7 @@ final class LibraryStore {
                     song,
                     serverKey: serverKey,
                     isFavorite: favoriteSongs.contains(song.id),
+                    replaceGenres: true,
                     existing: existingSongs[song.id],
                     existingObjectsArePreloaded: true,
                     in: context
@@ -824,6 +825,7 @@ final class LibraryStore {
         _ song: NavidromeSong,
         serverKey: String,
         isFavorite: Bool?,
+        replaceGenres: Bool = false,
         existing: NSManagedObject? = nil,
         existingObjectsArePreloaded: Bool = false,
         in context: NSManagedObjectContext
@@ -851,6 +853,10 @@ final class LibraryStore {
         object.setValue(song.discNumber.map { Int64($0) }, forKey: "discNumber")
         object.setValue(song.created, forKey: "created")
         object.setValue(song.played, forKey: "serverPlayedAt")
+        if replaceGenres || object.value(forKey: "genresData") == nil,
+           let genresData = try? JSONEncoder().encode(song.genres) {
+            object.setValue(genresData, forKey: "genresData")
+        }
         if let isFavorite { object.setValue(isFavorite, forKey: "isFavorite") }
         return object
     }
@@ -969,8 +975,14 @@ final class LibraryStore {
             track: int(object.value(forKey: "track")),
             discNumber: int(object.value(forKey: "discNumber")),
             created: object.value(forKey: "created") as? Date,
-            played: object.value(forKey: "serverPlayedAt") as? Date
+            played: object.value(forKey: "serverPlayedAt") as? Date,
+            genres: decodedGenres(from: object)
         )
+    }
+
+    private nonisolated static func decodedGenres(from object: NSManagedObject) -> [String] {
+        guard let data = object.value(forKey: "genresData") as? Data else { return [] }
+        return (try? JSONDecoder().decode([String].self, from: data)) ?? []
     }
 
     private nonisolated static func album(from object: NSManagedObject) -> NavidromeAlbum {
