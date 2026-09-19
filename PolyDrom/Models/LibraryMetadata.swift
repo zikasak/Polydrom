@@ -35,9 +35,16 @@ struct CatalogChangeState: Equatable, Sendable {
 }
 
 struct MetadataSyncState: Equatable, Sendable {
+    static let currentCatalogVersion: Int64 = 1
+
     let catalogToken: String?
     let lastCheckedAt: Date?
     let isComplete: Bool
+    let catalogVersion: Int64
+
+    var requiresCatalogUpgrade: Bool {
+        catalogVersion < Self.currentCatalogVersion
+    }
 }
 
 struct FavoriteMetadata: Equatable, Sendable {

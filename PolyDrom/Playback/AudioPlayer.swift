@@ -341,7 +341,7 @@ final class AudioPlayer: ObservableObject {
             forName: .AVPlayerItemFailedToPlayToEndTime,
             object: item,
             queue: .main
-        ) { [weak self] notification in
+        ) { [weak self, weak item] notification in
             let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
             Task { @MainActor [weak self, weak item] in
                 guard let self, self.isCurrentPlayback(item, generation: generation) else { return }

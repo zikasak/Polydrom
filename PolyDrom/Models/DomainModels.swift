@@ -27,6 +27,30 @@ struct ServerProfile: Identifiable, Hashable, Sendable {
     }
 }
 
+struct NavidromeGenre: Identifiable, Hashable, Sendable {
+    let id: String
+    let name: String
+    let songCount: Int
+
+    init(name: String, songCount: Int) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.id = Self.normalizedID(for: trimmedName)
+        self.name = trimmedName
+        self.songCount = songCount
+    }
+
+    static func normalizedID(for name: String) -> String {
+        name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+            .lowercased(with: Locale(identifier: "en_US_POSIX"))
+    }
+
+    var subtitle: String {
+        "\(songCount) \(songCount == 1 ? "song" : "songs")"
+    }
+}
+
 struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
     let id: String
     let title: String
@@ -40,6 +64,7 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
     let discNumber: Int?
     let created: Date?
     let played: Date?
+    let genres: [String]
 
     init(
         id: String,
@@ -53,7 +78,8 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         track: Int? = nil,
         discNumber: Int? = nil,
         created: Date? = nil,
-        played: Date? = nil
+        played: Date? = nil,
+        genres: [String] = []
     ) {
         self.id = id
         self.title = title
@@ -67,6 +93,7 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         self.discNumber = discNumber
         self.created = created
         self.played = played
+        self.genres = Self.normalizedGenres(genres)
     }
 
     enum CodingKeys: String, CodingKey {
@@ -75,6 +102,8 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         case discNumber
         case created
         case played
+        case genre
+        case genres
     }
 
     init(from decoder: Decoder) throws {
@@ -91,6 +120,31 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         discNumber = container.decodeIntIfPresent(forKey: .discNumber)
         created = container.decodeDateIfPresent(forKey: .created)
         played = container.decodeDateIfPresent(forKey: .played)
+        let modernGenres = (try? container.decode([SongGenreValue].self, forKey: .genres)) ?? []
+        let singleModernGenre = try? container.decode(SongGenreValue.self, forKey: .genres)
+        let legacyGenre = container.decodeStringIfPresent(forKey: .genre)
+        genres = Self.normalizedGenres(
+            modernGenres.map(\.name) + [singleModernGenre?.name, legacyGenre].compactMap { $0 }
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(artist, forKey: .artist)
+        try container.encodeIfPresent(album, forKey: .album)
+        try container.encodeIfPresent(duration, forKey: .duration)
+        try container.encodeIfPresent(coverArt, forKey: .coverArt)
+        try container.encodeIfPresent(albumId, forKey: .albumId)
+        try container.encodeIfPresent(artistId, forKey: .artistId)
+        try container.encodeIfPresent(track, forKey: .track)
+        try container.encodeIfPresent(discNumber, forKey: .discNumber)
+        try container.encodeIfPresent(created, forKey: .created)
+        try container.encodeIfPresent(played, forKey: .played)
+        if !genres.isEmpty {
+            try container.encode(genres.map(SongGenreValue.init(name:)), forKey: .genres)
+        }
     }
 
     var subtitle: String {
@@ -105,6 +159,21 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         guard let duration else { return "--:--" }
         return "\(duration / 60):\(String(format: "%02d", duration % 60))"
     }
+
+    private static func normalizedGenres(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.compactMap { value in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let id = NavidromeGenre.normalizedID(for: trimmed)
+            guard seen.insert(id).inserted else { return nil }
+            return trimmed
+        }
+    }
+}
+
+private struct SongGenreValue: Codable {
+    let name: String
 }
 
 struct PlaybackQueueEntry: Codable, Identifiable, Hashable, Sendable {
@@ -461,6 +530,7 @@ enum LibrarySection: String, CaseIterable, Identifiable, Sendable {
     case random = "Random"
     case albums = "Albums"
     case artists = "Artists"
+    case genres = "Genres"
     case playlists = "Playlists"
     case favorites = "Favorites"
     case recent = "Recently Played"
@@ -474,6 +544,7 @@ enum LibrarySection: String, CaseIterable, Identifiable, Sendable {
         case .random: "shuffle"
         case .albums: "rectangle.stack"
         case .artists: "music.mic"
+        case .genres: "guitars"
         case .playlists: "music.note.list"
         case .favorites: "heart"
         case .recent: "clock"

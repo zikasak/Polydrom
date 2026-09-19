@@ -1,3 +1,4 @@
+import CoreData
 import Foundation
 import Synchronization
 import Testing
@@ -27,7 +28,7 @@ struct LibrarySyncCoordinatorTests {
                 if queryValue("albumCount", in: request) != "0" {
                     return envelope(#"{"status":"ok","searchResult3":{"album":[{"id":"album","name":"Album","artistId":"artist"}]}}"#)
                 }
-                return envelope(#"{"status":"ok","searchResult3":{"song":[{"id":"song","title":"Song","albumId":"album","artistId":"artist"}]}}"#)
+                return envelope(#"{"status":"ok","searchResult3":{"song":[{"id":"song","title":"Song","albumId":"album","artistId":"artist","genre":"Rock","genres":[{"name":"Alternative"}]}]}}"#)
             case "getPlaylists":
                 return envelope(#"{"status":"ok","playlists":{"playlist":[{"id":"playlist","name":"Mix","songCount":1,"changed":"2026-07-30T12:00:00Z"}]}}"#)
             case "getPlaylist":
@@ -40,10 +41,8 @@ struct LibrarySyncCoordinatorTests {
             }
         }
 
-        let store = LibraryStore(
-            persistence: PersistenceController(inMemory: true),
-            keychain: MemoryCredentialStore()
-        )
+        let persistence = PersistenceController(inMemory: true)
+        let store = LibraryStore(persistence: persistence, keychain: MemoryCredentialStore())
         let coordinator = LibrarySyncCoordinator(store: store, pageSize: 10)
         let client = try #require(
             NavidromeClient(profile: makeProfile(), session: StubURLProtocol.session(handler: handler))
@@ -53,15 +52,25 @@ struct LibrarySyncCoordinatorTests {
         #expect(state.withLock { $0.searchRequests } == 3)
         #expect(state.withLock { $0.playlistDetailRequests } == 1)
         #expect(try await store.favoriteSongs(serverKey: "server").map(\.id) == ["song"])
+        #expect(try await store.genres(serverKey: "server").map(\.name) == ["Alternative", "Rock"])
 
-        #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .metadataOnly)
-        #expect(state.withLock { $0.searchRequests } == 3)
-        #expect(state.withLock { $0.playlistDetailRequests } == 1)
+        let request = NSFetchRequest<NSManagedObject>(entityName: "VDMetadataSyncState")
+        let syncState = try #require(persistence.container.viewContext.fetch(request).first)
+        syncState.setValue(Int64(0), forKey: "catalogVersion")
+        try persistence.container.viewContext.save()
 
-        state.withLock { $0.scanToken = "scan-2" }
         #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .full)
         #expect(state.withLock { $0.searchRequests } == 6)
         #expect(state.withLock { $0.playlistDetailRequests } == 2)
+
+        #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .metadataOnly)
+        #expect(state.withLock { $0.searchRequests } == 6)
+        #expect(state.withLock { $0.playlistDetailRequests } == 2)
+
+        state.withLock { $0.scanToken = "scan-2" }
+        #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .full)
+        #expect(state.withLock { $0.searchRequests } == 9)
+        #expect(state.withLock { $0.playlistDetailRequests } == 3)
         #expect(try await store.metadataSyncState(serverKey: "server").catalogToken == "scan-2")
     }
 

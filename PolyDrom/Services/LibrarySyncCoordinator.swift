@@ -86,6 +86,7 @@ final class LibrarySyncCoordinator {
         async let starredRequest = client.starredItems()
         let syncState = try await store.metadataSyncState(serverKey: serverKey)
         let requiresFullCatalog = !syncState.isComplete
+            || syncState.requiresCatalogUpgrade
             || changeState.token == nil
             || syncState.catalogToken != changeState.token
 

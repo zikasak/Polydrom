@@ -399,6 +399,40 @@ struct AppCoordinatorTests {
         #expect(!viewModel.isClearingCache)
     }
 
+    @Test func cachedGenresAndTheirSongsLoadOfflineAndClearWithLibraryState() async throws {
+        let (viewModel, store, _) = makeViewModel()
+        let profile = makeProfile()
+        let song = makeSong(id: "genre-song", title: "Genre Song", genres: ["Ambient", "Electronic"])
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [song],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "genres",
+                checkedAt: Date()
+            ),
+            serverKey: profile.serverKey
+        )
+        viewModel.activeServer = profile
+        viewModel.isOnline = false
+
+        await viewModel.reloadCachedLibrary()
+        #expect(viewModel.hasCachedLibrary)
+        #expect(viewModel.genres.map(\.name) == ["Ambient", "Electronic"])
+
+        let genre = try #require(viewModel.genres.first)
+        await viewModel.loadSongs(for: genre)
+        #expect(viewModel.selectedGenre == genre)
+        #expect(viewModel.genreSongs.map(\.id) == [song.id])
+
+        viewModel.clearRemoteLibraryState()
+        #expect(viewModel.genres.isEmpty)
+        #expect(viewModel.selectedGenre == nil)
+        #expect(viewModel.genreSongs.isEmpty)
+    }
+
     @Test func invalidClientFactoryAndFailedPingCoverConnectionFailures() async throws {
         let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: MemoryCredentialStore())
         let invalid = AppCoordinator(store: store, audioPlayer: AudioPlayer(), clientFactory: { _ in nil })

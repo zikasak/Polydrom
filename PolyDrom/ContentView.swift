@@ -108,6 +108,14 @@ struct ContentView: View {
                                 }
                             )
                         }
+                    case .genre(let genre):
+                        withPlayerBar {
+                            GenreDetailView(
+                                viewModel: viewModel,
+                                genre: genre,
+                                openRoute: openLibraryRoute
+                            )
+                        }
                     case .playlist(let playlist):
                         withPlayerBar {
                             PlaylistDetailView(
@@ -173,6 +181,8 @@ private extension LibraryRoute {
         case (.album(let lhs), .album(let rhs)):
             return lhs.id == rhs.id
         case (.artist(let lhs), .artist(let rhs)):
+            return lhs.id == rhs.id
+        case (.genre(let lhs), .genre(let rhs)):
             return lhs.id == rhs.id
         case (.playlist(let lhs), .playlist(let rhs)):
             return lhs.id == rhs.id
