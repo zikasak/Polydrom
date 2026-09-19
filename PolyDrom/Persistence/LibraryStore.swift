@@ -65,12 +65,18 @@ final class LibraryStore {
     func metadataSyncState(serverKey: String) async throws -> MetadataSyncState {
         try await performBackground { context in
             guard let object = try Self.syncStateObject(serverKey: serverKey, in: context) else {
-                return MetadataSyncState(catalogToken: nil, lastCheckedAt: nil, isComplete: false)
+                return MetadataSyncState(
+                    catalogToken: nil,
+                    lastCheckedAt: nil,
+                    isComplete: false,
+                    catalogVersion: 0
+                )
             }
             return MetadataSyncState(
                 catalogToken: object.value(forKey: "catalogToken") as? String,
                 lastCheckedAt: object.value(forKey: "lastCheckedAt") as? Date,
-                isComplete: object.value(forKey: "isComplete") as? Bool ?? false
+                isComplete: object.value(forKey: "isComplete") as? Bool ?? false,
+                catalogVersion: Self.int(object.value(forKey: "catalogVersion")).map(Int64.init) ?? 0
             )
         }
     }
@@ -121,6 +127,64 @@ final class LibraryStore {
                 NSSortDescriptor(key: "discNumber", ascending: true),
                 NSSortDescriptor(key: "track", ascending: true),
                 NSSortDescriptor(key: "title", ascending: true, selector: #selector(NSString.localizedCaseInsensitiveCompare(_:)))
+            ]
+            return try context.fetch(request).map(Self.song(from:))
+        }
+    }
+
+    func genres(serverKey: String) async throws -> [NavidromeGenre] {
+        try await performBackground { context in
+            let request = NSFetchRequest<NSManagedObject>(entityName: "VDGenre")
+            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
+            request.sortDescriptors = [
+                NSSortDescriptor(
+                    key: "name",
+                    ascending: true,
+                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+                )
+            ]
+            return try context.fetch(request).map(Self.genre(from:))
+        }
+    }
+
+    func songs(serverKey: String, genreID: String) async throws -> [NavidromeSong] {
+        try await performBackground { context in
+            let membershipRequest = NSFetchRequest<NSManagedObject>(entityName: "VDGenreSong")
+            membershipRequest.predicate = NSPredicate(
+                format: "serverKey == %@ AND genreID == %@",
+                serverKey,
+                genreID
+            )
+            let songIDs = try context.fetch(membershipRequest).compactMap {
+                $0.value(forKey: "songID") as? String
+            }
+            guard !songIDs.isEmpty else { return [] }
+
+            let request = Self.songFetchRequest()
+            request.predicate = NSPredicate(
+                format: "serverKey == %@ AND songID IN %@",
+                serverKey,
+                songIDs
+            )
+            request.sortDescriptors = [
+                NSSortDescriptor(
+                    key: "title",
+                    ascending: true,
+                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+                ),
+                NSSortDescriptor(
+                    key: "artist",
+                    ascending: true,
+                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+                ),
+                NSSortDescriptor(
+                    key: "album",
+                    ascending: true,
+                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+                ),
+                NSSortDescriptor(key: "discNumber", ascending: true),
+                NSSortDescriptor(key: "track", ascending: true),
+                NSSortDescriptor(key: "songID", ascending: true)
             ]
             return try context.fetch(request).map(Self.song(from:))
         }
@@ -401,6 +465,7 @@ final class LibraryStore {
                     in: context
                 )
             }
+            try Self.replaceGenres(with: allSongs, serverKey: serverKey, in: context)
 
             try Self.replacePlaylists(
                 summaries: snapshot.playlists.map(\.playlist),
@@ -413,6 +478,7 @@ final class LibraryStore {
             state?.setValue(snapshot.catalogToken, forKey: "catalogToken")
             state?.setValue(now, forKey: "lastCheckedAt")
             state?.setValue(true, forKey: "isComplete")
+            state?.setValue(MetadataSyncState.currentCatalogVersion, forKey: "catalogVersion")
             try context.save()
         }
     }
@@ -514,12 +580,56 @@ final class LibraryStore {
     }
 
     private func purgeMetadata(serverKey: String?, in context: NSManagedObjectContext) throws {
-        for entityName in ["VDPlaylistEntry", "VDPlaylist", "VDSong", "VDAlbum", "VDArtist", "VDMetadataSyncState"] {
+        for entityName in [
+            "VDPlaylistEntry", "VDPlaylist", "VDGenreSong", "VDGenre", "VDSong", "VDAlbum", "VDArtist",
+            "VDMetadataSyncState"
+        ] {
             let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
             if let serverKey {
                 request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
             }
             try context.fetch(request).forEach(context.delete)
+        }
+    }
+
+    private nonisolated static func replaceGenres(
+        with songs: [NavidromeSong],
+        serverKey: String,
+        in context: NSManagedObjectContext
+    ) throws {
+        for entityName in ["VDGenreSong", "VDGenre"] {
+            let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
+            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
+            try context.fetch(request).forEach(context.delete)
+        }
+
+        var displayNames: [String: String] = [:]
+        var songIDsByGenre: [String: Set<String>] = [:]
+        for song in songs {
+            for name in song.genres {
+                let genreID = NavidromeGenre.normalizedID(for: name)
+                guard !genreID.isEmpty else { continue }
+                if displayNames[genreID] == nil {
+                    displayNames[genreID] = name
+                }
+                songIDsByGenre[genreID, default: []].insert(song.id)
+            }
+        }
+
+        for genreID in songIDsByGenre.keys.sorted() {
+            guard let name = displayNames[genreID], let songIDs = songIDsByGenre[genreID] else { continue }
+            let genre = NSEntityDescription.insertNewObject(forEntityName: "VDGenre", into: context)
+            genre.setValue(serverKey, forKey: "serverKey")
+            genre.setValue(genreID, forKey: "genreID")
+            genre.setValue(name, forKey: "name")
+            genre.setValue(Int64(songIDs.count), forKey: "songCount")
+
+            for songID in songIDs.sorted() {
+                let membership = NSEntityDescription.insertNewObject(forEntityName: "VDGenreSong", into: context)
+                membership.setValue(serverKey, forKey: "serverKey")
+                membership.setValue(genreID, forKey: "genreID")
+                membership.setValue(songID, forKey: "songID")
+            }
         }
     }
 
@@ -874,6 +984,13 @@ final class LibraryStore {
             coverArt: object.value(forKey: "coverArt") as? String,
             created: object.value(forKey: "created") as? Date,
             played: object.value(forKey: "serverPlayedAt") as? Date
+        )
+    }
+
+    private nonisolated static func genre(from object: NSManagedObject) -> NavidromeGenre {
+        NavidromeGenre(
+            name: object.value(forKey: "name") as? String ?? "",
+            songCount: int(object.value(forKey: "songCount")) ?? 0
         )
     }
 

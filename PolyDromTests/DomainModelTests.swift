@@ -23,6 +23,34 @@ struct DomainModelTests {
         #expect(makeSong(duration: 125).durationText == "2:05")
     }
 
+    @Test func songDecodingSupportsLegacyAndMultipleGenres() throws {
+        let legacy = try JSONDecoder().decode(
+            NavidromeSong.self,
+            from: Data(#"{"id":"legacy","title":"Legacy","genre":" Rock "}"#.utf8)
+        )
+        let modern = try JSONDecoder().decode(
+            NavidromeSong.self,
+            from: Data(
+                #"{"id":"modern","title":"Modern","genre":"rock","genres":[{"name":"Electronic"},{"name":" ROCK "},{"name":""},{"name":"Electronic"}]}"#.utf8
+            )
+        )
+        let missing = try JSONDecoder().decode(
+            NavidromeSong.self,
+            from: Data(#"{"id":"missing","title":"Missing"}"#.utf8)
+        )
+
+        #expect(legacy.genres == ["Rock"])
+        #expect(modern.genres == ["Electronic", "ROCK"])
+        #expect(missing.genres.isEmpty)
+        #expect(try JSONDecoder().decode(NavidromeSong.self, from: JSONEncoder().encode(modern)) == modern)
+
+        let genre = NavidromeGenre(name: "  Post-Rock  ", songCount: 1)
+        #expect(genre.id == "post-rock")
+        #expect(genre.name == "Post-Rock")
+        #expect(genre.subtitle == "1 song")
+        #expect(NavidromeGenre(name: "Ambient", songCount: 2).subtitle == "2 songs")
+    }
+
     @Test func albumDecodingSupportsFlexibleValuesAndFallbacks() throws {
         let album = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":42,"title":7,"artist":9,"artistId":10,"songCount":"3","year":"2024","coverArt":11}"#.utf8))
         let untitled = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"a"}"#.utf8))
@@ -89,7 +117,7 @@ struct DomainModelTests {
     @Test func librarySectionsExposeStableSymbols() {
         let expected: [LibrarySection: String] = [
             .home: "house", .search: "magnifyingglass", .random: "shuffle", .albums: "rectangle.stack",
-            .artists: "music.mic", .playlists: "music.note.list", .favorites: "heart",
+            .artists: "music.mic", .genres: "guitars", .playlists: "music.note.list", .favorites: "heart",
             .recent: "clock"
         ]
         #expect(LibrarySection.allCases.count == expected.count)

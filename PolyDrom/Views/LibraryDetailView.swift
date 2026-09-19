@@ -83,6 +83,8 @@ struct LibraryDetailView: View {
             AlbumBrowserView(viewModel: viewModel, albums: viewModel.albums)
         case .artists:
             ArtistBrowserView(viewModel: viewModel)
+        case .genres:
+            GenreBrowserView(viewModel: viewModel)
         case .playlists:
             PlaylistBrowserView(viewModel: viewModel)
         case .favorites:
@@ -167,5 +169,6 @@ private struct FavoriteLibraryView: View {
 enum LibraryRoute: Hashable {
     case album(NavidromeAlbum)
     case artist(NavidromeArtist)
+    case genre(NavidromeGenre)
     case playlist(NavidromePlaylist)
 }

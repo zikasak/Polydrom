@@ -40,6 +40,9 @@ final class AppCoordinator: ObservableObject {
     @Published var featuredAlbums: [NavidromeAlbum] = []
     @Published var albums: [NavidromeAlbum] = []
     @Published var artists: [NavidromeArtist] = []
+    @Published var genres: [NavidromeGenre] = []
+    @Published var selectedGenre: NavidromeGenre?
+    @Published var genreSongs: [NavidromeSong] = []
     @Published var artistAlbums: [NavidromeAlbum] = []
     @Published var selectedArtist: NavidromeArtist?
     @Published var selectedAlbum: NavidromeAlbum?
@@ -85,6 +88,7 @@ final class AppCoordinator: ObservableObject {
     private var nowPlayingArtworkTask: Task<Void, Never>?
     private var loadedArtistAlbumsID: String?
     private var loadedAlbumSongsID: String?
+    var loadedGenreSongsID: String?
     var loadedPlaylistSongsID: String?
     private let coverArtPrefetchLimit = 200
     private let thumbnailCoverSize = 96
@@ -342,6 +346,10 @@ final class AppCoordinator: ObservableObject {
             if force || artists.isEmpty {
                 await loadArtists()
             }
+        case .genres:
+            if force || genres.isEmpty {
+                await loadGenres()
+            }
         case .playlists:
             if force || playlists.isEmpty {
                 await loadPlaylists()
@@ -496,40 +504,6 @@ final class AppCoordinator: ObservableObject {
             albums = loadedAlbums
             prefetchAlbumCovers(loadedAlbums)
             statusMessage = loadedAlbums.isEmpty ? "No cached albums." : "Loaded \(loadedAlbums.count) albums"
-        } catch {
-            statusMessage = error.localizedDescription
-        }
-    }
-
-    func loadArtists() async {
-        let generation = sessionGeneration
-        guard let serverKey else { return }
-        isBusy = true
-        defer { isBusy = false }
-
-        do {
-            let loadedArtists = try await store.artists(serverKey: serverKey)
-            await warmCachedArtistCovers(loadedArtists)
-            guard isCurrentSession(generation, serverKey: serverKey) else { return }
-            artists = sortedVisibleArtists(loadedArtists)
-            prefetchArtistCovers(loadedArtists)
-            statusMessage = artists.isEmpty ? "No cached artists." : "Loaded \(artists.count) artists"
-        } catch {
-            statusMessage = error.localizedDescription
-        }
-    }
-
-    func loadPlaylists() async {
-        let generation = sessionGeneration
-        guard let serverKey else { return }
-        isBusy = true
-        defer { isBusy = false }
-
-        do {
-            let loadedPlaylists = try await store.playlists(serverKey: serverKey)
-            guard isCurrentSession(generation, serverKey: serverKey) else { return }
-            playlists = loadedPlaylists
-            statusMessage = playlists.isEmpty ? "No cached playlists." : "Loaded playlists"
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1237,6 +1211,7 @@ final class AppCoordinator: ObservableObject {
 
             async let artistsRequest = store.artists(serverKey: serverKey)
             async let albumsRequest = store.albums(serverKey: serverKey)
+            async let genresRequest = store.genres(serverKey: serverKey)
             async let playlistsRequest = store.playlists(serverKey: serverKey)
             async let homeRequest = store.homeMetadata(serverKey: serverKey)
             async let favoriteArtistsRequest = store.favoriteArtists(serverKey: serverKey)
@@ -1247,6 +1222,7 @@ final class AppCoordinator: ObservableObject {
             let (
                 loadedArtists,
                 loadedAlbums,
+                loadedGenres,
                 loadedPlaylists,
                 home,
                 loadedFavoriteArtists,
@@ -1256,6 +1232,7 @@ final class AppCoordinator: ObservableObject {
             ) = try await (
                 artistsRequest,
                 albumsRequest,
+                genresRequest,
                 playlistsRequest,
                 homeRequest,
                 favoriteArtistsRequest,
@@ -1266,6 +1243,7 @@ final class AppCoordinator: ObservableObject {
             guard isCurrentSession(generation, serverKey: serverKey) else { return }
             artists = sortedVisibleArtists(loadedArtists)
             albums = loadedAlbums
+            genres = loadedGenres
             playlists = loadedPlaylists
             recentlyAddedAlbums = home.recentlyAdded
             recentlyPlayedAlbums = home.recentlyPlayed
@@ -1291,6 +1269,10 @@ final class AppCoordinator: ObservableObject {
             if let selectedPlaylist {
                 playlistSongs = try await store.songs(serverKey: serverKey, playlistID: selectedPlaylist.id)
                 loadedPlaylistSongsID = selectedPlaylist.id
+            }
+            if let selectedGenre {
+                genreSongs = try await store.songs(serverKey: serverKey, genreID: selectedGenre.id)
+                loadedGenreSongsID = selectedGenre.id
             }
             guard isCurrentSession(generation, serverKey: serverKey) else { return }
         } catch {
@@ -1365,6 +1347,9 @@ final class AppCoordinator: ObservableObject {
         hasLoadedHome = false
         albums = []
         artists = []
+        genres = []
+        selectedGenre = nil
+        genreSongs = []
         artistAlbums = []
         selectedArtist = nil
         selectedAlbum = nil
@@ -1386,15 +1371,8 @@ final class AppCoordinator: ObservableObject {
         songFavoriteUpdatesInFlight = []
         loadedArtistAlbumsID = nil
         loadedAlbumSongsID = nil
+        loadedGenreSongsID = nil
         loadedPlaylistSongsID = nil
-    }
-
-    private func sortedVisibleArtists(_ artists: [NavidromeArtist]) -> [NavidromeArtist] {
-        artists
-            .filter { ($0.albumCount ?? 0) > 0 }
-            .sorted {
-                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-            }
     }
 
     private func coverArtResource(id: String, size: Int) -> CoverArtResource? {
@@ -1423,7 +1401,7 @@ final class AppCoordinator: ObservableObject {
         await coverArtCache.warmCachedImages(resources)
     }
 
-    private func warmCachedArtistCovers(_ artists: [NavidromeArtist]) async {
+    func warmCachedArtistCovers(_ artists: [NavidromeArtist]) async {
         let resources = artists.compactMap { coverArtResource(for: $0, size: gridCoverSize) }
         await coverArtCache.warmCachedImages(resources)
     }
@@ -1439,7 +1417,7 @@ final class AppCoordinator: ObservableObject {
         albumCoverPrefetchTask = prefetchCoverArt(resources)
     }
 
-    private func prefetchArtistCovers(_ artists: [NavidromeArtist]) {
+    func prefetchArtistCovers(_ artists: [NavidromeArtist]) {
         let resources = artists.prefix(coverArtPrefetchLimit).compactMap { coverArtResource(for: $0, size: gridCoverSize) }
         artistCoverPrefetchTask?.cancel()
         artistCoverPrefetchTask = prefetchCoverArt(resources)

@@ -22,7 +22,7 @@ PolyDrom brings a full desktop listening experience to a self-hosted Navidrome l
 
 - **Native macOS experience** — a responsive SwiftUI interface with compact and expanded players, system Now Playing integration, keyboard-friendly controls, and an AirPlay route picker.
 - **A library built for discovery** — featured, recently added, recently played, and random albums; quick mixes of 10, 25, or 50 tracks; song- and album-grouped full-library shuffle; and search across titles, artists, and albums.
-- **Complete library navigation** — browse albums, artists, playlists, favorites, recent history, and detailed album or artist pages with cached artwork.
+- **Complete library navigation** — browse albums, artists, genres, playlists, favorites, recent history, and detailed album, artist, or genre pages with cached artwork.
 - **Real queue management** — play immediately, play next, append to the queue, jump between tracks, seek, change volume, and resume the current queue and position after relaunching.
 - **Synced listening state** — report Now Playing and completed listens to Navidrome; star songs, albums, and artists; create, rename, update, and delete editable playlists; and display plain or time-synced lyrics.
 - **Multi-server support** — save multiple accounts, switch from the sidebar, reconnect automatically to the most recently used server, and maintain isolated caches for every server and user.
@@ -62,7 +62,7 @@ The Settings window opens automatically when there is no saved server.
 
 ### Home and library
 
-Home combines featured albums, recent additions, listening history, random albums, and one-click mixes. The sidebar provides dedicated views for search, random songs, albums, artists, playlists, favorites, and recent tracks.
+Home combines featured albums, recent additions, listening history, random albums, and one-click mixes. The sidebar provides dedicated views for search, random songs, albums, artists, genres, playlists, favorites, and recent tracks. Genre browsing supports both legacy single-genre tags and modern multi-genre metadata, so a song can appear under more than one genre.
 
 Most songs, albums, and artists expose the same actions from their context menus:
 
@@ -92,7 +92,7 @@ PolyDrom keeps a disposable, server-scoped metadata cache. The first successful 
 
 Automatic checks run only while the app is active. Choose **Manually**, **Every 5 minutes**, **Every 15 minutes**, **Every 30 minutes**, or **Every hour** in Settings; 15 minutes is the default. The refresh button in the library toolbar always starts a manual check.
 
-When a server cannot be reached, PolyDrom loads its cached library automatically. Offline mode supports browsing and searching cached content and history, but not audio streaming, favorites changes, or playlist mutations. PolyDrom does not download audio for offline playback.
+When a server cannot be reached, PolyDrom loads its cached library automatically. Offline mode supports browsing and searching cached content, including genres, and history, but not audio streaming, favorites changes, or playlist mutations. PolyDrom does not download audio for offline playback.
 
 ## Data and security
 

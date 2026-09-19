@@ -132,7 +132,8 @@ func makeSong(
     duration: Int? = 185,
     coverArt: String? = nil,
     albumId: String? = "album-1",
-    artistId: String? = "artist-1"
+    artistId: String? = "artist-1",
+    genres: [String] = []
 ) -> NavidromeSong {
     NavidromeSong(
         id: id,
@@ -142,7 +143,8 @@ func makeSong(
         duration: duration,
         coverArt: coverArt,
         albumId: albumId,
-        artistId: artistId
+        artistId: artistId,
+        genres: genres
     )
 }
 

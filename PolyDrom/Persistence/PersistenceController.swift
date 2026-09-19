@@ -114,10 +114,12 @@ final class PersistenceController {
         let song = songEntity()
         let artist = artistEntity()
         let album = albumEntity()
+        let genre = genreEntity()
+        let genreSong = genreSongEntity()
         let playlist = playlistEntity()
         let playlistEntry = playlistEntryEntity()
         let syncState = syncStateEntity()
-        model.entities = [server, song, artist, album, playlist, playlistEntry, syncState]
+        model.entities = [server, song, artist, album, genre, genreSong, playlist, playlistEntry, syncState]
         return model
     }
 
@@ -202,6 +204,33 @@ final class PersistenceController {
         return entity
     }
 
+    private static func genreEntity() -> NSEntityDescription {
+        let entity = NSEntityDescription()
+        entity.name = "VDGenre"
+        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
+        entity.properties = [
+            attribute("genreID", .stringAttributeType, isOptional: false),
+            attribute("serverKey", .stringAttributeType, isOptional: false),
+            attribute("name", .stringAttributeType, isOptional: false),
+            attribute("songCount", .integer64AttributeType, isOptional: false)
+        ]
+        entity.uniquenessConstraints = [["serverKey", "genreID"]]
+        return entity
+    }
+
+    private static func genreSongEntity() -> NSEntityDescription {
+        let entity = NSEntityDescription()
+        entity.name = "VDGenreSong"
+        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
+        entity.properties = [
+            attribute("serverKey", .stringAttributeType, isOptional: false),
+            attribute("genreID", .stringAttributeType, isOptional: false),
+            attribute("songID", .stringAttributeType, isOptional: false)
+        ]
+        entity.uniquenessConstraints = [["serverKey", "genreID", "songID"]]
+        return entity
+    }
+
     private static func playlistEntity() -> NSEntityDescription {
         let entity = NSEntityDescription()
         entity.name = "VDPlaylist"
@@ -241,7 +270,8 @@ final class PersistenceController {
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("catalogToken", .stringAttributeType),
             attribute("lastCheckedAt", .dateAttributeType),
-            attribute("isComplete", .booleanAttributeType, isOptional: false, defaultValue: false)
+            attribute("isComplete", .booleanAttributeType, isOptional: false, defaultValue: false),
+            attribute("catalogVersion", .integer64AttributeType, isOptional: false, defaultValue: 0)
         ]
         entity.uniquenessConstraints = [["serverKey"]]
         return entity

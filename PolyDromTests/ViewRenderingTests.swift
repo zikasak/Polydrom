@@ -11,6 +11,7 @@ struct ViewRenderingTests {
         let song = makeSong(albumId: nil, artistId: nil)
         let album = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"album","name":"Album","artist":"Artist","songCount":1,"year":2025}"#.utf8))
         let artist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"artist","name":"Artist","albumCount":1}"#.utf8))
+        let genre = NavidromeGenre(name: "Rock", songCount: 1)
         let playlist = try JSONDecoder().decode(NavidromePlaylist.self, from: Data(#"{"id":"playlist","name":"Playlist","songCount":1,"owner":"Owner"}"#.utf8))
         viewModel.searchResults = [song]
         viewModel.randomSongs = [song]
@@ -21,6 +22,9 @@ struct ViewRenderingTests {
         viewModel.homeRandomAlbums = [album]
         viewModel.featuredAlbums = [album]
         viewModel.artists = [artist]
+        viewModel.genres = [genre]
+        viewModel.selectedGenre = genre
+        viewModel.genreSongs = [song]
         viewModel.playlists = [playlist]
         viewModel.favoriteSongs = [song]
         viewModel.favoriteAlbums = [album]
@@ -38,6 +42,7 @@ struct ViewRenderingTests {
         await render(HomeView(viewModel: viewModel, openAlbum: { _ in }))
         await render(AlbumBrowserView(viewModel: viewModel, albums: [album]))
         await render(ArtistBrowserView(viewModel: viewModel))
+        await render(GenreBrowserView(viewModel: viewModel))
         await render(FavoriteArtistBrowserView(viewModel: viewModel))
         await render(PlaylistBrowserView(viewModel: viewModel))
         await render(
@@ -49,6 +54,7 @@ struct ViewRenderingTests {
         )
         await render(AlbumDetailView(viewModel: viewModel, album: album, openRoute: { _ in }))
         await render(ArtistDetailView(viewModel: viewModel, artist: artist, openAlbum: { _ in }))
+        await render(GenreDetailView(viewModel: viewModel, genre: genre, openRoute: { _ in }))
         await render(OpenInSpotifyLink(album: album))
         await render(OpenInSpotifyLink(album: album, presentation: .iconOnly))
         await render(OpenInSpotifyLink(artist: artist))
@@ -95,12 +101,14 @@ struct ViewRenderingTests {
         let song = makeSong(albumId: nil, artistId: nil)
         let album = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"album","name":"Album"}"#.utf8))
         let artist = try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"id":"artist","name":"Artist","albumCount":1}"#.utf8))
+        let genre = NavidromeGenre(name: "Rock", songCount: 1)
         let playlist = try JSONDecoder().decode(NavidromePlaylist.self, from: Data(#"{"id":"playlist","name":"Playlist"}"#.utf8))
         viewModel.searchResults = [song]
         viewModel.randomSongs = [song]
         viewModel.recentSongs = [song]
         viewModel.albums = [album]
         viewModel.artists = [artist]
+        viewModel.genres = [genre]
         viewModel.playlists = [playlist]
         viewModel.favoriteSongs = [song]
 

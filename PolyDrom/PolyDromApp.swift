@@ -16,7 +16,7 @@ struct PolyDromApp: App {
     private let updater = AppUpdater()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup { [viewModel] in
             ContentView(viewModel: viewModel)
                 .background(MacOSWindowConfigurator())
                 .onAppear {

@@ -382,9 +382,97 @@ struct PersistenceTests {
         #expect(!(try await store.metadataSyncState(serverKey: profile.serverKey).isComplete))
         #expect(try await store.artists(serverKey: profile.serverKey).isEmpty)
         #expect(try await store.albums(serverKey: profile.serverKey).isEmpty)
+        #expect(try await store.genres(serverKey: profile.serverKey).isEmpty)
         #expect(try await store.playlists(serverKey: profile.serverKey).isEmpty)
         #expect(try await store.favoriteSongs(serverKey: profile.serverKey).isEmpty)
         #expect(try await store.recentSongsAsync(serverKey: profile.serverKey).isEmpty)
+    }
+
+    @Test func genresAreIndexedOrderedScopedAndReconciled() async throws {
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: MemoryCredentialStore()
+        )
+        let zebra = makeSong(
+            id: "zebra",
+            title: "Zebra",
+            albumId: "album-a",
+            genres: [" Rock ", "Alternative"]
+        )
+        let alpha = makeSong(
+            id: "alpha",
+            title: "Alpha",
+            albumId: "album-b",
+            genres: ["rock", "Ambient"]
+        )
+        let untagged = makeSong(id: "untagged", title: "Untagged", genres: [])
+
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [zebra, alpha, untagged],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "scan-1",
+                checkedAt: Date()
+            ),
+            serverKey: "server-a"
+        )
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [makeSong(id: "other", genres: ["Jazz"])],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "scan-other",
+                checkedAt: Date()
+            ),
+            serverKey: "server-b"
+        )
+
+        let genres = try await store.genres(serverKey: "server-a")
+        #expect(genres.map(\.name) == ["Alternative", "Ambient", "Rock"])
+        #expect(genres.map(\.songCount) == [1, 1, 2])
+        #expect(try await store.songs(serverKey: "server-a", genreID: "rock").map(\.id) == ["alpha", "zebra"])
+        #expect(try await store.genres(serverKey: "server-b").map(\.name) == ["Jazz"])
+        #expect(try await store.metadataSyncState(serverKey: "server-a").catalogVersion == MetadataSyncState.currentCatalogVersion)
+
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [makeSong(id: "zebra", title: "Zebra", genres: ["Electronic"])],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "scan-2",
+                checkedAt: Date()
+            ),
+            serverKey: "server-a"
+        )
+
+        #expect(try await store.genres(serverKey: "server-a").map(\.name) == ["Electronic"])
+        #expect(try await store.songs(serverKey: "server-a", genreID: "rock").isEmpty)
+        #expect(try await store.songs(serverKey: "server-a", genreID: "electronic").map(\.id) == ["zebra"])
+    }
+
+    @Test func staleCatalogVersionRequiresAFullRefresh() {
+        let stale = MetadataSyncState(
+            catalogToken: "unchanged",
+            lastCheckedAt: Date(),
+            isComplete: true,
+            catalogVersion: MetadataSyncState.currentCatalogVersion - 1
+        )
+        let current = MetadataSyncState(
+            catalogToken: "unchanged",
+            lastCheckedAt: Date(),
+            isComplete: true,
+            catalogVersion: MetadataSyncState.currentCatalogVersion
+        )
+
+        #expect(stale.requiresCatalogUpgrade)
+        #expect(!current.requiresCatalogUpgrade)
     }
 
     @Test func clearingAllLibraryCachePreservesSavedServersAndCredentials() async throws {
@@ -416,6 +504,7 @@ struct PersistenceTests {
 
         #expect(!(try await store.metadataSyncState(serverKey: profile.serverKey).isComplete))
         #expect(try await store.artists(serverKey: profile.serverKey).isEmpty)
+        #expect(try await store.genres(serverKey: profile.serverKey).isEmpty)
         #expect(try await store.songs(serverKey: profile.serverKey, albumID: "missing").isEmpty)
         #expect(try registry.servers().map(\.id) == [profile.id])
         #expect(credentials.passwords[profile.credentialID] == "password")
