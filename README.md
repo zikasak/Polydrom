@@ -20,7 +20,7 @@ PolyDrom brings a full desktop listening experience to a self-hosted Navidrome l
 
 ## Highlights
 
-- **Native macOS experience** — a responsive SwiftUI interface with compact and expanded players, system Now Playing integration, keyboard-friendly controls, and an AirPlay route picker.
+- **Native macOS experience** — a responsive SwiftUI interface with compact and expanded players, system Now Playing integration, keyboard-friendly controls, and AirPlay and Sonos output controls.
 - **A library built for discovery** — featured, recently added, recently played, and random albums; quick mixes of 10, 25, or 50 tracks; song- and album-grouped full-library shuffle; and search across titles, artists, and albums.
 - **Complete library navigation** — browse albums, artists, playlists, favorites, recent history, and detailed album or artist pages with cached artwork.
 - **Real queue management** — play immediately, play next, append to the queue, jump between tracks, seek, change volume, and resume the current queue and position after relaunching.
@@ -74,9 +74,11 @@ Most songs, albums, and artists expose the same actions from their context menus
 
 ### Playback
 
-The compact player stays available while browsing. Open it to see the expanded Now Playing experience with large artwork, elapsed time, seeking, volume, favorite and stop controls, AirPlay, the current queue, and lyrics.
+The compact player stays available while browsing. Open it to see the expanded Now Playing experience with large artwork, elapsed time, seeking, volume, favorite and stop controls, AirPlay, Sonos output, the current queue, and lyrics.
 
-PolyDrom publishes track metadata and artwork to macOS Now Playing and supports the system play, pause, stop, previous, next, and seek commands. The queue, selected track, playback position, and volume are persisted locally so an interrupted session can be resumed after relaunch.
+Choose a Sonos room from the speaker menu in either player. PolyDrom uses the room's existing Sonos group, copies its queue to the group, and then sends the group a Navidrome MP3 URL for each song. The Sonos speakers must be on a network where they can reach the configured Navidrome address directly; `localhost`, Mac-only VPN addresses, and inaccessible HTTPS certificates will not work. Sonos app and hardware next/previous controls follow the copied queue. PolyDrom remains the source of queue edits; if another app changes the Sonos queue or source, select the group again to copy PolyDrom's queue. Large queues continue copying while the first tracks play, so only copied tracks are available in the Sonos app during that time. Switching back to Mac/AirPlay or quitting PolyDrom stops Sonos and clears PolyDrom's copied queue from the group.
+
+PolyDrom publishes track metadata and artwork to macOS Now Playing and supports the system play, pause, stop, previous, next, and seek commands. The queue, selected track, playback position, and Mac/AirPlay volume are persisted locally so an interrupted session can be resumed after relaunch. Sonos group volume stays separate, and Sonos output is not restored automatically.
 
 While connected, PolyDrom also reports the current track to Navidrome so its **Now Playing** view identifies PolyDrom, the song, and—on servers supporting [OpenSubsonic playback reporting](https://opensubsonic.netlify.app/docs/endpoints/reportplayback/)—the current play, pause, and position state. Older servers receive compatible [Subsonic scrobble](https://opensubsonic.netlify.app/docs/endpoints/scrobble/) now-playing notifications instead. Qualifying listens are recorded in Navidrome's history and play counts and can be forwarded to scrobbling services configured there. On a normal app quit, PolyDrom briefly waits for its final server update without clearing the locally saved queue or playback position.
 
@@ -104,6 +106,7 @@ When a server cannot be reached, PolyDrom loads its cached library automatically
 - Clearing **Library metadata** removes all cached libraries and local play history but preserves saved servers and passwords.
 - Clearing **Cover art** removes downloaded and decoded images; they are fetched again on demand.
 - Network logs record request method, status, latency, and response size, but not passwords or authentication query values.
+- Sonos receives authenticated Navidrome stream and artwork URLs while it plays. PolyDrom does not save those URLs, and clears its copied Sonos queue when you switch away or quit.
 
 Plain HTTP is supported for local Navidrome installations, so transport security ultimately depends on the URL you configure. Prefer HTTPS for any connection that crosses an untrusted network.
 

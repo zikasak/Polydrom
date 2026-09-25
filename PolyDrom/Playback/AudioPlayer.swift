@@ -10,6 +10,19 @@ import Combine
 import Foundation
 import OSLog
 
+enum PlaybackRoute: Equatable {
+    case local
+    case sonos(String)
+}
+
+enum SonosPlaybackCommand {
+    case play
+    case pause
+    case stop
+    case seek(Double)
+    case volume(Double)
+}
+
 @MainActor
 final class AudioPlayer: ObservableObject {
     @Published var currentSong: NavidromeSong?
@@ -18,6 +31,7 @@ final class AudioPlayer: ObservableObject {
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
     @Published var volume: Double = 1
+    @Published private(set) var route: PlaybackRoute = .local
 
     let player: AVPlayer
     let airPlayRoutePickerController: AirPlayRoutePickerController
@@ -26,9 +40,10 @@ final class AudioPlayer: ObservableObject {
     var onPlaybackStateChanged: (() -> Void)?
     var onPlaybackEvent: ((AudioPlaybackEvent) -> Void)?
     var onVolumeChanged: ((Double) -> Void)?
+    var onSonosCommand: ((SonosPlaybackCommand) -> Void)?
 
     var hasPlayableItem: Bool {
-        player.currentItem != nil
+        player.currentItem != nil || (route != .local && currentSong != nil)
     }
 
     private let nowPlayingController = NowPlayingController()
@@ -47,6 +62,8 @@ final class AudioPlayer: ObservableObject {
     private var pendingSeekTarget: Double?
     private var canPlayPreviousInNowPlaying = false
     private var canPlayNextInNowPlaying = false
+    private var localVolume: Double = 1
+    private var isHandoffInProgress = false
 
     init() {
         let player = AVPlayer()
@@ -79,8 +96,10 @@ final class AudioPlayer: ObservableObject {
         song: NavidromeSong,
         url: URL,
         startingAt startTime: Double = 0,
-        autoplay: Bool = true
+        autoplay: Bool = true,
+        reportStart: Bool = true
     ) {
+        route = .local
         AppLog.playback.info(
             "Starting playback for song \(song.id, privacy: .private(mask: .hash))"
         )
@@ -127,10 +146,100 @@ final class AudioPlayer: ObservableObject {
         }
 
         updateNowPlayingInfo()
-        notifyPlaybackStateChanged(event: autoplay ? .started : .prepared)
+        notifyPlaybackStateChanged(event: reportStart ? (autoplay ? .started : .prepared) : .progressed)
+    }
+
+    func beginSonosPlayback(
+        song: NavidromeSong,
+        groupID: String,
+        at seconds: Double,
+        isPlaying: Bool,
+        groupVolume: Double,
+        reportStart: Bool
+    ) {
+        playbackGeneration += 1
+        removeTimeObserver()
+        removeSongFinishedObserver()
+        removePlaybackFailureObserver()
+        removePlaybackStalledObserver()
+        removeStallCheckTimer()
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        isHandoffInProgress = false
+        route = .sonos(groupID)
+        currentSong = song
+        currentTime = normalizedPlaybackTime(seconds, duration: Double(song.duration ?? 0))
+        duration = Double(song.duration ?? 0)
+        self.isPlaying = isPlaying
+        volume = min(max(groupVolume, 0), 1)
+        hasFinishedCurrentSong = false
+        statusMessage = isPlaying ? "Playing on Sonos" : "Paused on Sonos"
+        updateNowPlayingInfo()
+        notifyPlaybackStateChanged(event: reportStart ? .started : .progressed)
+    }
+
+    func selectSonosRoute(groupID: String, groupVolume: Double) {
+        guard currentSong == nil else { return }
+        route = .sonos(groupID)
+        volume = min(max(groupVolume, 0), 1)
+        statusMessage = "Sonos selected"
+    }
+
+    func pauseForSonosHandoff() {
+        guard route == .local else { return }
+        isHandoffInProgress = true
+        player.pause()
+    }
+
+    func resumeAfterFailedSonosHandoff() {
+        isHandoffInProgress = false
+        guard route == .local, isPlaying else { return }
+        player.play()
+    }
+
+    func updateSonosPlayback(
+        song: NavidromeSong,
+        at seconds: Double,
+        duration: Double,
+        isPlaying: Bool,
+        event: AudioPlaybackEvent.Trigger = .progressed
+    ) {
+        guard route != .local else { return }
+        currentSong = song
+        currentTime = normalizedPlaybackTime(seconds, duration: duration)
+        self.duration = duration > 0 ? duration : Double(song.duration ?? 0)
+        self.isPlaying = isPlaying
+        statusMessage = isPlaying ? "Playing on Sonos" : "Paused on Sonos"
+        updateNowPlayingInfo()
+        notifyPlaybackStateChanged(event: event)
+    }
+
+    func endSonosTrack(finished: Bool) {
+        guard route != .local, currentSong != nil else { return }
+        if finished { currentTime = duration }
+        isPlaying = false
+        updateNowPlayingInfo()
+        notifyPlaybackStateChanged(event: finished ? .finished : .stopped)
+    }
+
+    func leaveSonosRoute(song: NavidromeSong?, url: URL?, at seconds: Double, autoplay: Bool) {
+        route = .local
+        volume = localVolume
+        player.volume = Float(localVolume)
+        if let song, let url {
+            play(song: song, url: url, startingAt: seconds, autoplay: autoplay, reportStart: false)
+        } else {
+            clearPlayback()
+        }
+    }
+
+    func setSonosVolume(_ nextVolume: Double) {
+        guard route != .local else { return }
+        volume = min(max(nextVolume, 0), 1)
     }
 
     func restore(song: NavidromeSong, at seconds: Double) {
+        route = .local
         let targetTime = normalizedPlaybackTime(seconds, duration: Double(song.duration ?? 0))
         currentSong = song
         isPlaying = false
@@ -152,6 +261,11 @@ final class AudioPlayer: ObservableObject {
     }
 
     func playCurrentSong() {
+        if route != .local {
+            guard currentSong != nil else { return }
+            onSonosCommand?(.play)
+            return
+        }
         guard currentSong != nil, player.currentItem != nil else { return }
 
         AppLog.playback.debug("Resuming current song")
@@ -165,6 +279,11 @@ final class AudioPlayer: ObservableObject {
     }
 
     func pauseCurrentSong() {
+        if route != .local {
+            guard currentSong != nil else { return }
+            onSonosCommand?(.pause)
+            return
+        }
         guard currentSong != nil else { return }
 
         AppLog.playback.debug("Pausing current song at \(self.currentTime, privacy: .public) seconds")
@@ -177,6 +296,14 @@ final class AudioPlayer: ObservableObject {
     }
 
     func stop() {
+        if route != .local {
+            onSonosCommand?(.stop)
+            return
+        }
+        clearPlayback()
+    }
+
+    func clearPlayback() {
         AppLog.playback.info("Stopping playback")
         playbackGeneration += 1
         removeTimeObserver()
@@ -203,6 +330,10 @@ final class AudioPlayer: ObservableObject {
     func seek(to seconds: Double) {
         guard currentSong != nil else { return }
         let clampedSeconds = min(max(seconds, 0), max(duration, 0))
+        if route != .local {
+            onSonosCommand?(.seek(clampedSeconds))
+            return
+        }
         AppLog.playback.debug("Seeking to \(clampedSeconds, privacy: .public) seconds")
         currentTime = clampedSeconds
         lastObservedPlaybackTime = clampedSeconds
@@ -217,6 +348,11 @@ final class AudioPlayer: ObservableObject {
     func setVolume(_ nextVolume: Double) {
         let clampedVolume = min(max(nextVolume, 0), 1)
         volume = clampedVolume
+        if route != .local {
+            onSonosCommand?(.volume(clampedVolume))
+            return
+        }
+        localVolume = clampedVolume
         player.volume = Float(clampedVolume)
         onVolumeChanged?(clampedVolume)
     }
@@ -256,7 +392,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func updatePlaybackTime(_ seconds: Double, generation: Int) {
-        guard generation == playbackGeneration, currentSong != nil else { return }
+        guard route == .local, generation == playbackGeneration, currentSong != nil else { return }
 
         if let pendingSeekTarget {
             guard seconds.isFinite, abs(seconds - pendingSeekTarget) <= 1 else { return }
@@ -288,7 +424,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func checkForPlaybackStall() {
-        guard isPlaying, currentSong != nil, !hasFinishedCurrentSong else { return }
+        guard route == .local, isPlaying, currentSong != nil, !hasFinishedCurrentSong else { return }
         guard player.timeControlStatus != .paused else {
             synchronizePlaybackStateWithPlayer()
             return
@@ -341,7 +477,7 @@ final class AudioPlayer: ObservableObject {
             forName: .AVPlayerItemFailedToPlayToEndTime,
             object: item,
             queue: .main
-        ) { [weak self] notification in
+        ) { [weak self, weak item] notification in
             let error = notification.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
             Task { @MainActor [weak self, weak item] in
                 guard let self, self.isCurrentPlayback(item, generation: generation) else { return }
@@ -380,7 +516,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func synchronizePlaybackStateWithPlayer() {
-        guard currentSong != nil, !hasFinishedCurrentSong else { return }
+        guard route == .local, !isHandoffInProgress, currentSong != nil, !hasFinishedCurrentSong else { return }
 
         switch player.timeControlStatus {
         case .paused:
@@ -454,7 +590,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func recoverFromPlaybackStall() {
-        guard isPlaying, currentSong != nil, !hasFinishedCurrentSong else { return }
+        guard route == .local, isPlaying, currentSong != nil, !hasFinishedCurrentSong else { return }
         AppLog.playback.warning("AVPlayer reported a playback stall; attempting recovery")
         didAttemptStallRecovery = true
         lastPlaybackProgressAt = Date()
@@ -464,7 +600,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func finishCurrentSong() {
-        guard !hasFinishedCurrentSong else { return }
+        guard route == .local, !hasFinishedCurrentSong else { return }
         AppLog.playback.info("Playback finished")
         hasFinishedCurrentSong = true
         removeStallCheckTimer()
@@ -477,7 +613,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     func skipCurrentSongAfterStall() {
-        guard !hasFinishedCurrentSong, currentSong != nil else { return }
+        guard route == .local, !hasFinishedCurrentSong, currentSong != nil else { return }
         AppLog.playback.warning("Playback stalled for 18 seconds; advancing to the next track")
         hasFinishedCurrentSong = true
         removeStallCheckTimer()
@@ -490,7 +626,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func failCurrentSong(error: Error?) {
-        guard !hasFinishedCurrentSong, let failedSong = currentSong else { return }
+        guard route == .local, !hasFinishedCurrentSong, let failedSong = currentSong else { return }
         if let error {
             let nsError = error as NSError
             AppLog.playback.error(

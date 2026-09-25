@@ -156,6 +156,9 @@ extension AppCoordinator {
         audioPlayer.onVolumeChanged = { [weak self] volume in
             self?.playbackPersistence.saveSelectedVolume(volume)
         }
+        audioPlayer.onSonosCommand = { [weak self] command in
+            self?.handleSonosCommand(command)
+        }
         audioPlayer.configureRemotePlaybackCommands(
             onPreviousTrack: { [weak self] in
                 self?.playPreviousTrack()
@@ -335,6 +338,7 @@ extension AppCoordinator {
     }
 
     func clearPlaybackState() {
+        resetSonosForServerChange()
         playbackQueue = []
         currentPlaybackQueueEntryID = nil
         pendingPlaybackRestore = nil
