@@ -53,8 +53,9 @@ struct ContentView: View {
                         .frame(width: frame.width, height: frame.height)
                         .position(x: frame.midX, y: frame.midY)
                         .opacity(isPositioned ? 1 : 0)
-                        .allowsHitTesting(isPositioned)
-                        .help("Choose AirPlay speaker")
+                        .allowsHitTesting(isPositioned && viewModel.audioPlayer.route == .local)
+                        .help(viewModel.audioPlayer.route == .local
+                            ? "Choose AirPlay speaker" : "Switch to This Mac / AirPlay in Sonos output first")
                 }
             }
             .task {

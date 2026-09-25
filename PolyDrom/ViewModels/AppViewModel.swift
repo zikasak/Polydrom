@@ -64,6 +64,11 @@ final class AppCoordinator: ObservableObject {
     @Published var currentLyrics: SongLyrics?
     @Published var lyricsMessage = "No lyrics loaded."
     @Published var isLoadingLyrics = false
+    @Published var sonosGroups: [SonosGroup] = []
+    @Published var sonosIsDiscovering = false
+    @Published var sonosMessage: String?
+    @Published var sonosQueueSynced = 0
+    @Published var sonosQueueTotal = 0
 
     let audioPlayer: AudioPlayer
 
@@ -75,6 +80,15 @@ final class AppCoordinator: ObservableObject {
     let playbackReporter: PlaybackReporter
     private let userDefaults: UserDefaults
     let playbackPersistence: PlaybackPersistence
+    let sonosUPnP: SonosUPnP
+    var sonosSession: SonosActiveSession?
+    var sonosSyncTask: Task<Void, Never>?
+    var sonosPollTask: Task<Void, Never>?
+    var sonosGeneration = 0
+    var sonosQueueWriteTask: Task<Void, Never>?
+    var sonosQueueMutationInFlight = false
+    var sonosActivationTask: Task<Void, Never>?
+    var sonosCleanupTask: Task<Void, Never>?
     var client: NavidromeClient?
     private var metadataMonitorTask: Task<Void, Never>?
     private var metadataSyncTask: Task<MetadataSyncOutcome, Error>?
@@ -141,7 +155,8 @@ final class AppCoordinator: ObservableObject {
         clientFactory: @escaping @MainActor (ServerProfile) -> NavidromeClient? = { NavidromeClient(profile: $0) },
         coverArtCache: CoverArtCache = .shared,
         serverRegistry: ServerRegistry? = nil,
-        userDefaults: UserDefaults = .standard, playbackFileURL: URL? = nil
+        userDefaults: UserDefaults = .standard, playbackFileURL: URL? = nil,
+        sonosUPnP: SonosUPnP = SonosUPnP()
     ) {
         self.store = store
         let suppliedRegistry = serverRegistry
@@ -153,6 +168,7 @@ final class AppCoordinator: ObservableObject {
         self.playbackReporter = PlaybackReporter()
         self.userDefaults = userDefaults
         self.playbackPersistence = PlaybackPersistence(userDefaults: userDefaults, fileURL: playbackFileURL)
+        self.sonosUPnP = sonosUPnP
         if userDefaults.object(forKey: Self.metadataRefreshIntervalKey) == nil {
             self.metadataRefreshInterval = .fifteenMinutes
         } else {
@@ -640,6 +656,11 @@ final class AppCoordinator: ObservableObject {
     func playNext(_ songs: [NavidromeSong]) {
         guard !songs.isEmpty else { return }
 
+        if sonosSession?.ownsQueue == true {
+            insertIntoSonosQueue(songs, afterCurrent: true)
+            return
+        }
+
         guard let currentIndex = currentPlaybackQueueIndex else {
             play(songs, startingAt: 0)
             return
@@ -666,6 +687,10 @@ final class AppCoordinator: ObservableObject {
 
     func addToQueue(_ songs: [NavidromeSong]) {
         guard !songs.isEmpty else { return }
+        if sonosSession?.ownsQueue == true {
+            insertIntoSonosQueue(songs, afterCurrent: false)
+            return
+        }
         playbackQueue.append(contentsOf: songs.map { PlaybackQueueEntry(song: $0) })
         persistPlaybackState()
         updateNowPlayingQueueState()
@@ -714,15 +739,22 @@ final class AppCoordinator: ObservableObject {
             await warmCachedSongCovers([songToPlay])
             guard isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
 
-            if var queue {
-                guard let index = queue.firstIndex(where: { $0.id == entry.id }) else { return }
-                queue[index].song = songToPlay
-                playbackQueue = queue
+            if sonosSession != nil {
+                try await playOnSonos(
+                    entry, song: songToPlay, replacingQueueWith: queue, client: client
+                )
             } else {
-                guard let index = playbackQueue.firstIndex(where: { $0.id == entry.id }) else { return }
-                playbackQueue[index].song = songToPlay
+                if var queue {
+                    guard let index = queue.firstIndex(where: { $0.id == entry.id }) else { return }
+                    queue[index].song = songToPlay
+                    playbackQueue = queue
+                } else {
+                    guard let index = playbackQueue.firstIndex(where: { $0.id == entry.id }) else { return }
+                    playbackQueue[index].song = songToPlay
+                }
+                currentPlaybackQueueEntryID = entry.id
+                audioPlayer.play(song: songToPlay, url: url)
             }
-            currentPlaybackQueueEntryID = entry.id
             if lyricsSongID != songToPlay.id {
                 lyricsSongID = nil
                 currentLyrics = nil
@@ -731,7 +763,6 @@ final class AppCoordinator: ObservableObject {
             updateNowPlayingQueueState()
             pendingPlaybackRestore = nil
             didRestorePlayback = true
-            audioPlayer.play(song: songToPlay, url: url)
             persistPlaybackState()
             AppLog.playback.debug("Playback URL prepared for song \(songToPlay.id, privacy: .private(mask: .hash))")
             updateNowPlayingArtwork(for: songToPlay)
@@ -811,6 +842,10 @@ final class AppCoordinator: ObservableObject {
     func playPreviousTrack() {
         guard let currentIndex = currentPlaybackQueueIndex,
               playbackQueue.indices.contains(currentIndex - 1) else { return }
+        if sonosSession != nil {
+            navigateSonos("Previous")
+            return
+        }
         let entry = playbackQueue[currentIndex - 1]
         Task {
             await play(entry, shouldHydrateSong: false)
@@ -820,6 +855,11 @@ final class AppCoordinator: ObservableObject {
     func playNextTrack() {
         guard let currentIndex = currentPlaybackQueueIndex,
               playbackQueue.indices.contains(currentIndex + 1) else { return }
+        if sonosSession != nil {
+            guard currentIndex + 1 < (sonosSession?.syncedCount ?? 0) else { return }
+            navigateSonos("Next")
+            return
+        }
         let entry = playbackQueue[currentIndex + 1]
         Task {
             await play(entry, shouldHydrateSong: false)
@@ -835,7 +875,9 @@ final class AppCoordinator: ObservableObject {
     func canPlayNextTrack() -> Bool {
         guard isOnline else { return false }
         guard let currentIndex = currentPlaybackQueueIndex else { return false }
-        return playbackQueue.indices.contains(currentIndex + 1)
+        guard playbackQueue.indices.contains(currentIndex + 1) else { return false }
+        if let sonosSession { return currentIndex + 1 < sonosSession.syncedCount }
+        return true
     }
 
     func loadLyrics(for song: NavidromeSong, force: Bool = false) async {
@@ -1063,7 +1105,7 @@ final class AppCoordinator: ObservableObject {
         prefetchSongCovers(loadedFavoriteSongs)
     }
 
-    private func refreshRecentSongs() async throws {
+    func refreshRecentSongs() async throws {
         let generation = sessionGeneration
         guard let serverKey else { return }
         let loadedRecentSongs = try await store.recentSongsAsync(serverKey: serverKey)

@@ -10,9 +10,19 @@ struct NavidromeClientTests {
 
         let client = try #require(NavidromeClient(profile: makeProfile(address: " music.example.com/path ")))
         let url = try client.streamURL(for: makeSong())
-        #expect(url.scheme == "http")
+        #expect(url.scheme == "https")
         #expect(url.host == "music.example.com")
         #expect(url.path == "/path/rest/stream.view")
+
+        let localClient = try #require(NavidromeClient(profile: makeProfile(address: "192.168.1.20:4533")))
+        let localURL = try localClient.coverArtURL(id: "album-1")
+        #expect(localURL.scheme == "http")
+        #expect(localURL.host == "192.168.1.20")
+        #expect(localURL.port == 4533)
+
+        let explicitHTTP = try #require(NavidromeClient(profile: makeProfile(address: "http://music.example.com")))
+        #expect(try explicitHTTP.coverArtURL(id: "album-1").scheme == "http")
+        #expect(NavidromeClient(profile: makeProfile(address: "ftp://music.example.com")) == nil)
     }
 
     @Test func generatedURLsContainValidAuthenticationAndEndpointParameters() throws {

@@ -120,6 +120,8 @@ struct PlayerBarView: View {
                 AirPlayRoutePickerAnchor(location: .compactPlayer)
                     .frame(width: 32, height: 40)
 
+                SonosOutputPicker(viewModel: viewModel)
+
                 Button(action: openFullPlayer) {
                     CoverArtView(resource: audioPlayer.currentSong.flatMap { viewModel.coverArtResource(for: $0, size: 96) }, size: 44)
                         .overlay {

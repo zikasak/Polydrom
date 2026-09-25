@@ -32,7 +32,7 @@
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Connect to your Navidrome server and AirPlay speakers on your local network.</string>
+	<string>Connect to your Navidrome server and discover AirPlay and Sonos speakers on your local network.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_airplay._tcp</string>

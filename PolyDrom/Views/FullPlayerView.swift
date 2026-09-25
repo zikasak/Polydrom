@@ -246,6 +246,8 @@ struct FullPlayerView: View {
 
             AirPlayRoutePickerAnchor(location: .fullPlayer)
                 .frame(width: 32, height: 30)
+
+            SonosOutputPicker(viewModel: viewModel)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

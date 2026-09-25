@@ -20,8 +20,10 @@ struct PolyDromApp: App {
             ContentView(viewModel: viewModel)
                 .background(MacOSWindowConfigurator())
                 .onAppear {
-                    applicationDelegate.prepareForTermination = { [weak viewModel] in
-                        await viewModel?.playbackReporter.finishForApplicationTermination()
+                    let model = viewModel
+                    applicationDelegate.prepareForTermination = { [weak model] in
+                        await model?.stopSonosForTermination()
+                        await model?.playbackReporter.finishForApplicationTermination()
                     }
                 }
         }
@@ -47,7 +49,7 @@ final class PolyDromApplicationDelegate: NSObject, NSApplicationDelegate {
     private var terminationTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
     private var isWaitingForTermination = false
-    private let terminationTimeout: Duration = .seconds(2)
+    private let terminationTimeout: Duration = .seconds(6)
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let prepareForTermination else { return .terminateNow }

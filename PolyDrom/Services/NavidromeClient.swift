@@ -330,11 +330,22 @@ struct NavidromeClient: Sendable {
         let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedAddress.isEmpty else { return nil }
 
-        if let url = URL(string: trimmedAddress), url.scheme != nil {
+        if let url = URL(string: trimmedAddress),
+           let scheme = url.scheme?.lowercased(),
+           (scheme == "http" || scheme == "https"),
+           url.host != nil {
             return url
         }
 
-        return URL(string: "http://\(trimmedAddress)")
+        guard !trimmedAddress.contains("://"),
+              let secureURL = URL(string: "https://\(trimmedAddress)"),
+              let host = secureURL.host?.lowercased() else { return nil }
+        let addressParts = host.split(separator: ".")
+        let isIPAddress = host.contains(":")
+            || (addressParts.count == 4 && addressParts.allSatisfy { UInt8($0) != nil })
+        let isLocalAddress = host == "localhost" || host.hasSuffix(".localhost")
+            || host.hasSuffix(".local") || !host.contains(".") || isIPAddress
+        return isLocalAddress ? URL(string: "http://\(trimmedAddress)") : secureURL
     }
 }
 

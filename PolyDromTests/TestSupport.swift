@@ -181,7 +181,8 @@ func makeViewModel(
     credentials: MemoryCredentialStore = MemoryCredentialStore(),
     session: URLSession = StubURLProtocol.session(),
     userDefaults: UserDefaults = temporaryUserDefaults(),
-    playbackFileURL: URL = temporaryPlaybackFileURL()
+    playbackFileURL: URL = temporaryPlaybackFileURL(),
+    sonosUPnP: SonosUPnP = SonosUPnP()
 ) -> (AppCoordinator, LibraryStore, MemoryCredentialStore) {
     let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: credentials)
     let viewModel = AppCoordinator(
@@ -194,7 +195,8 @@ func makeViewModel(
         ),
         serverRegistry: ServerRegistry(fileURL: nil, keychain: credentials),
         userDefaults: userDefaults,
-        playbackFileURL: playbackFileURL
+        playbackFileURL: playbackFileURL,
+        sonosUPnP: sonosUPnP
     )
     return (viewModel, store, credentials)
 }
