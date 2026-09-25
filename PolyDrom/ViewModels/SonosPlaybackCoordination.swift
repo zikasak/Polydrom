@@ -282,9 +282,10 @@ extension AppCoordinator {
     private static func queueItem(_ entry: PlaybackQueueEntry, client: NavidromeClient) throws -> SonosQueueItem {
         let stream = try client.streamURL(for: entry.song)
         try checkSpeakerReachability(of: stream)
-        let artwork = try? entry.song.coverArt.map { try client.coverArtURL(id: $0, size: 512) }
+        let artworkID = entry.song.coverArt ?? entry.song.albumId
+        let artwork = artworkID.flatMap { try? client.coverArtURL(id: $0, size: 512) }
         return SonosQueueItem(
-            entryID: entry.id, song: entry.song, streamURL: stream, artworkURL: artwork ?? nil
+            entryID: entry.id, song: entry.song, streamURL: stream, artworkURL: artwork
         )
     }
 

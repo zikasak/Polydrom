@@ -107,7 +107,7 @@ struct SonosUPnPTests {
             return Self.response(for: request)
         }
         let (model, _, _) = makeViewModel(sonosUPnP: SonosUPnP(session: session))
-        let profile = makeProfile()
+        let profile = makeProfile(address: "music.example.com")
         model.activeServer = profile
         model.client = NavidromeClient(profile: profile, session: session)
         model.isOnline = true
@@ -125,6 +125,15 @@ struct SonosUPnPTests {
         #expect(model.audioPlayer.volume == 0.23)
         #expect(model.playbackQueue.map(\.id) == queue.map(\.id))
         #expect(requests.withLock { $0.filter { Self.actionName($0) == "AddMultipleURIsToQueue" }.count } == 3)
+        let firstQueueRequest = try #require(requests.withLock {
+            $0.first(where: { Self.actionName($0) == "AddMultipleURIsToQueue" })
+        })
+        let firstQueueBody = try #require(Self.bodyData(firstQueueRequest))
+        let firstQueueAction = try #require(SonosXML.parse(firstQueueBody).firstDescendant(named: "AddMultipleURIsToQueue"))
+        let firstQueueMetadata = try #require(firstQueueAction.child(named: "EnqueuedURIsMetaData")?.text)
+        #expect(firstQueueMetadata.contains("<upnp:albumArtURI>"))
+        #expect(firstQueueMetadata.contains("https://music.example.com/rest/getCoverArt"))
+        #expect(firstQueueMetadata.contains("id=album-1&amp;size=512"))
         let currentIndex = try #require(model.playbackQueue.firstIndex {
             $0.id == model.currentPlaybackQueueEntryID
         })
