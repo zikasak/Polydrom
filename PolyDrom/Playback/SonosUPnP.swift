@@ -25,7 +25,7 @@ struct SonosGroup: Sendable, Identifiable {
     let memberIDs: [String]
 }
 
-struct SonosQueueItem: Sendable {
+struct SonosTrack: Sendable {
     let entryID: UUID
     let song: NavidromeSong
     let streamURL: URL
@@ -34,6 +34,7 @@ struct SonosQueueItem: Sendable {
 
 struct SonosPosition: Sendable {
     let track: Int
+    let trackURI: String
     let seconds: Double
     let duration: Double
     let transportState: String
@@ -48,7 +49,6 @@ enum SonosError: LocalizedError, Sendable {
     case soapFault(String)
     case localServerAddress
     case sourceChanged
-    case queueChanged
 
     var errorDescription: String? {
         switch self {
@@ -59,13 +59,11 @@ enum SonosError: LocalizedError, Sendable {
         case .unsupportedService:
             "This Sonos speaker does not expose a required playback service."
         case .soapFault(let code):
-            "Sonos could not complete the playback command (UPnP error \(code)). Check that the speaker can reach Navidrome."
+            "Sonos could not complete the playback command (UPnP error \(code))."
         case .localServerAddress:
             "Sonos cannot access a Navidrome address on this Mac. Use a server URL reachable from the speaker."
         case .sourceChanged:
-            "The Sonos group started playing another source. PolyDrom stopped controlling it."
-        case .queueChanged:
-            "The Sonos queue changed in another app. Select the group again to copy PolyDrom’s queue."
+            "Sonos playback changed in another app. PolyDrom stopped controlling it."
         }
     }
 }
@@ -199,35 +197,17 @@ struct SonosUPnP: Sendable {
         ])
     }
 
-    @discardableResult
-    func addQueueItems(_ items: [SonosQueueItem], to device: SonosDevice, at position: Int = 0) async throws -> Int? {
-        guard !items.isEmpty else { return nil }
-        let response: SonosXMLNode
-        if items.count == 1 {
-            let item = items[0]
-            response = try await action(device, service: "AVTransport", name: "AddURIToQueue", arguments: [
-                ("InstanceID", "0"),
-                ("EnqueuedURI", item.streamURL.absoluteString),
-                ("EnqueuedURIMetaData", Self.didl(for: item)),
-                ("DesiredFirstTrackNumberEnqueued", String(position)),
-                ("EnqueueAsNext", "0")
-            ])
-        } else {
-            response = try await action(device, service: "AVTransport", name: "AddMultipleURIsToQueue", arguments: [
-                ("InstanceID", "0"),
-                ("UpdateID", "0"),
-                ("NumberOfURIs", String(items.count)),
-                ("EnqueuedURIs", items.map { $0.streamURL.absoluteString }.joined(separator: " ")),
-                ("EnqueuedURIsMetaData", items.map(Self.didl).joined(separator: " ")),
-                ("ContainerURI", ""),
-                ("ContainerMetaData", ""),
-                ("DesiredFirstTrackNumberEnqueued", String(position)),
-                ("EnqueueAsNext", "0")
-            ])
+    func enqueueTrack(_ track: SonosTrack, on device: SonosDevice) async throws {
+        let response = try await action(device, service: "AVTransport", name: "AddURIToQueue", arguments: [
+            ("InstanceID", "0"),
+            ("EnqueuedURI", track.streamURL.absoluteString),
+            ("EnqueuedURIMetaData", Self.didl(for: track)),
+            ("DesiredFirstTrackNumberEnqueued", "0"),
+            ("EnqueueAsNext", "0")
+        ])
+        if let added = response.child(named: "NumTracksAdded")?.text, added != "1" {
+            throw SonosError.invalidResponse
         }
-        if let added = response.child(named: "NumTracksAdded")?.text,
-           Int(added) != items.count { throw SonosError.queueChanged }
-        return (response.child(named: "NewQueueLength")?.text).flatMap(Int.init)
     }
 
     func useQueue(_ device: SonosDevice) async throws {
@@ -242,8 +222,8 @@ struct SonosUPnP: Sendable {
         "x-rincon-queue:\(device.id)#0"
     }
 
-    func seekTrack(_ index: Int, on device: SonosDevice) async throws {
-        try await seek(unit: "TRACK_NR", target: String(index + 1), on: device)
+    func seekFirstTrack(on device: SonosDevice) async throws {
+        try await seek(unit: "TRACK_NR", target: "1", on: device)
     }
 
     func seekTime(_ seconds: Double, on device: SonosDevice) async throws {
@@ -275,27 +255,13 @@ struct SonosUPnP: Sendable {
         ])
         return SonosPosition(
             track: Int(position.child(named: "Track")?.text ?? "") ?? 0,
+            trackURI: position.child(named: "TrackURI")?.text ?? "",
             seconds: Self.seconds(position.child(named: "RelTime")?.text) ?? 0,
             duration: Self.seconds(position.child(named: "TrackDuration")?.text) ?? 0,
             transportState: transport.child(named: "CurrentTransportState")?.text ?? "STOPPED",
             transportStatus: transport.child(named: "CurrentTransportStatus")?.text ?? "OK",
             sourceURI: media.child(named: "CurrentURI")?.text ?? ""
         )
-    }
-
-    func currentSource(on device: SonosDevice) async throws -> String {
-        let result = try await action(device, service: "AVTransport", name: "GetMediaInfo", arguments: [
-            ("InstanceID", "0")
-        ])
-        return result.child(named: "CurrentURI")?.text ?? ""
-    }
-
-    func queueVersion(on device: SonosDevice) async throws -> String {
-        let result = try await action(device, service: "ContentDirectory", name: "Browse", arguments: [
-            ("ObjectID", "Q:0"), ("BrowseFlag", "BrowseMetadata"), ("Filter", "*"),
-            ("StartingIndex", "0"), ("RequestedCount", "1"), ("SortCriteria", "")
-        ])
-        return result.child(named: "UpdateID")?.text ?? ""
     }
 
     func groupVolume(on device: SonosDevice) async throws -> Int {
@@ -318,7 +284,7 @@ struct SonosUPnP: Sendable {
         return parts[0] * 3600 + parts[1] * 60 + parts[2]
     }
 
-    static func didl(for item: SonosQueueItem) -> String {
+    static func didl(for item: SonosTrack) -> String {
         let song = item.song
         let duration = max(song.duration ?? 0, 0)
         let time = String(format: "%02d:%02d:%02d", duration / 3600, (duration / 60) % 60, duration % 60)
