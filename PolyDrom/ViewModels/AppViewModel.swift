@@ -67,8 +67,6 @@ final class AppCoordinator: ObservableObject {
     @Published var sonosGroups: [SonosGroup] = []
     @Published var sonosIsDiscovering = false
     @Published var sonosMessage: String?
-    @Published var sonosQueueSynced = 0
-    @Published var sonosQueueTotal = 0
 
     let audioPlayer: AudioPlayer
 
@@ -82,11 +80,8 @@ final class AppCoordinator: ObservableObject {
     let playbackPersistence: PlaybackPersistence
     let sonosUPnP: SonosUPnP
     var sonosSession: SonosActiveSession?
-    var sonosSyncTask: Task<Void, Never>?
     var sonosPollTask: Task<Void, Never>?
     var sonosGeneration = 0
-    var sonosQueueWriteTask: Task<Void, Never>?
-    var sonosQueueMutationInFlight = false
     var sonosActivationTask: Task<Void, Never>?
     var sonosCleanupTask: Task<Void, Never>?
     var client: NavidromeClient?
@@ -656,11 +651,6 @@ final class AppCoordinator: ObservableObject {
     func playNext(_ songs: [NavidromeSong]) {
         guard !songs.isEmpty else { return }
 
-        if sonosSession?.ownsQueue == true {
-            insertIntoSonosQueue(songs, afterCurrent: true)
-            return
-        }
-
         guard let currentIndex = currentPlaybackQueueIndex else {
             play(songs, startingAt: 0)
             return
@@ -687,10 +677,6 @@ final class AppCoordinator: ObservableObject {
 
     func addToQueue(_ songs: [NavidromeSong]) {
         guard !songs.isEmpty else { return }
-        if sonosSession?.ownsQueue == true {
-            insertIntoSonosQueue(songs, afterCurrent: false)
-            return
-        }
         playbackQueue.append(contentsOf: songs.map { PlaybackQueueEntry(song: $0) })
         persistPlaybackState()
         updateNowPlayingQueueState()
@@ -842,10 +828,6 @@ final class AppCoordinator: ObservableObject {
     func playPreviousTrack() {
         guard let currentIndex = currentPlaybackQueueIndex,
               playbackQueue.indices.contains(currentIndex - 1) else { return }
-        if sonosSession != nil {
-            navigateSonos("Previous")
-            return
-        }
         let entry = playbackQueue[currentIndex - 1]
         Task {
             await play(entry, shouldHydrateSong: false)
@@ -855,11 +837,6 @@ final class AppCoordinator: ObservableObject {
     func playNextTrack() {
         guard let currentIndex = currentPlaybackQueueIndex,
               playbackQueue.indices.contains(currentIndex + 1) else { return }
-        if sonosSession != nil {
-            guard currentIndex + 1 < (sonosSession?.syncedCount ?? 0) else { return }
-            navigateSonos("Next")
-            return
-        }
         let entry = playbackQueue[currentIndex + 1]
         Task {
             await play(entry, shouldHydrateSong: false)
@@ -876,7 +853,6 @@ final class AppCoordinator: ObservableObject {
         guard isOnline else { return false }
         guard let currentIndex = currentPlaybackQueueIndex else { return false }
         guard playbackQueue.indices.contains(currentIndex + 1) else { return false }
-        if let sonosSession { return currentIndex + 1 < sonosSession.syncedCount }
         return true
     }
 

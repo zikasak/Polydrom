@@ -41,9 +41,6 @@ struct SonosOutputPicker: View {
             }
             .disabled(viewModel.sonosIsDiscovering)
 
-            if viewModel.sonosQueueTotal > viewModel.sonosQueueSynced {
-                Text("Copying queue: \(viewModel.sonosQueueSynced) of \(viewModel.sonosQueueTotal)")
-            }
             if let message = viewModel.sonosMessage {
                 Text(message)
             }
