@@ -84,6 +84,7 @@ extension AppCoordinator {
             sonosMessage = nil
         } catch {
             guard generation == sonosGeneration else { return }
+            AppLog.sonos.error("Sonos activation failed: \(Self.describe(error), privacy: .public)")
             audioPlayer.resumeAfterFailedSonosHandoff()
             sonosMessage = error.localizedDescription
             statusMessage = error.localizedDescription
@@ -131,22 +132,31 @@ extension AppCoordinator {
         let track = try Self.track(queue[currentIndex], client: client)
         guard generation == sonosGeneration else { throw CancellationError() }
         _ = try? await sonosUPnP.transport("Stop", on: device)
+        var step = "RemoveAllTracksFromQueue"
         do {
             guard generation == sonosGeneration else { throw CancellationError() }
             try await sonosUPnP.clearQueue(device)
             guard generation == sonosGeneration else { throw CancellationError() }
+            step = "AddURIToQueue"
             try await sonosUPnP.enqueueTrack(track, on: device)
             guard generation == sonosGeneration else { throw CancellationError() }
+            step = "SetAVTransportURI"
             try await sonosUPnP.useQueue(device)
             guard generation == sonosGeneration else { throw CancellationError() }
+            step = "Seek TRACK_NR"
             try await sonosUPnP.seekFirstTrack(on: device)
+            step = "Seek REL_TIME \(Int(seconds))s"
             if seconds >= 1 { try await sonosUPnP.seekTime(seconds, on: device) }
             guard generation == sonosGeneration else { throw CancellationError() }
             if audioPlayer.route == .local { audioPlayer.pauseForSonosHandoff() }
+            step = "Play"
             if autoplay { try await sonosUPnP.transport("Play", on: device) }
             guard generation == sonosGeneration else { throw CancellationError() }
         } catch {
             guard generation == sonosGeneration else { throw error }
+            AppLog.sonos.error(
+                "Sonos track load failed at \(step, privacy: .public): \(Self.describe(error), privacy: .public)"
+            )
             audioPlayer.resumeAfterFailedSonosHandoff()
             if audioPlayer.route != .local { await detachSonos(with: error.localizedDescription) }
             else { _ = try? await sonosUPnP.clearQueue(device) }
@@ -171,6 +181,11 @@ extension AppCoordinator {
         sonosMessage = nil
         startSonosPolling(generation: generation)
         updateNowPlayingQueueState()
+    }
+
+    private static func describe(_ error: Error) -> String {
+        let error = error as NSError
+        return "\(error.domain) \(error.code): \(error.localizedDescription)"
     }
 
     private static func track(_ entry: PlaybackQueueEntry, client: NavidromeClient) throws -> SonosTrack {
@@ -238,6 +253,9 @@ extension AppCoordinator {
                     try await sonosUPnP.setGroupVolume(Int((volume * 100).rounded()), on: session.group.coordinator)
                 }
             } catch {
+                AppLog.sonos.error(
+                    "Sonos command \(String(describing: command), privacy: .public) failed: \(Self.describe(error), privacy: .public)"
+                )
                 if generation == sonosGeneration {
                     sonosMessage = error.localizedDescription
                     statusMessage = error.localizedDescription
@@ -340,10 +358,16 @@ extension AppCoordinator {
             let position = try await sonosUPnP.position(on: session.group.coordinator)
             guard generation == sonosGeneration, let current = sonosSession else { return }
             if !position.sourceURI.isEmpty, position.sourceURI != expectedSource {
+                AppLog.sonos.warning(
+                    "Sonos source changed: expected \(expectedSource, privacy: .public), got \(position.sourceURI, privacy: .private)"
+                )
                 await detachSonos(with: SonosError.sourceChanged.localizedDescription)
                 return
             }
             if !position.trackURI.isEmpty, position.trackURI != expectedTrack {
+                AppLog.sonos.warning(
+                    "Sonos track changed: expected \(expectedTrack, privacy: .private), got \(position.trackURI, privacy: .private)"
+                )
                 await detachSonos(with: SonosError.sourceChanged.localizedDescription)
                 return
             }
@@ -351,20 +375,32 @@ extension AppCoordinator {
                 let duration = max(audioPlayer.duration, position.duration)
                 let finished = duration > 0
                     && max(audioPlayer.currentTime, position.seconds) >= duration - 2
+                let elapsed = Date().timeIntervalSince(current.startedAt)
+                AppLog.sonos.info(
+                    """
+                    Sonos stopped: finished=\(finished, privacy: .public) \
+                    status=\(position.transportStatus, privacy: .public) \
+                    sonosSeconds=\(position.seconds, privacy: .public) \
+                    lastKnownSeconds=\(self.audioPlayer.currentTime, privacy: .public) \
+                    sonosDuration=\(position.duration, privacy: .public) \
+                    playerDuration=\(self.audioPlayer.duration, privacy: .public) \
+                    sinceStart=\(elapsed, privacy: .public)
+                    """
+                )
                 if finished {
                     audioPlayer.endSonosTrack(finished: true)
                     playNextTrackAfterCurrentSongFinished()
                     return
                 }
-                if position.transportStatus != "OK" ||
-                    (position.seconds < 1 && Date().timeIntervalSince(current.startedAt) > 8) {
+                if position.transportStatus != "OK" || (position.seconds < 1 && elapsed > 8) {
                     let message = "Sonos could not play this stream. Make sure the speaker can reach the Navidrome URL."
+                    AppLog.sonos.warning("Leaving Sonos: stopped without finishing the track")
                     await leaveSonosOutput(clearPlayback: false)
                     sonosMessage = message
                     statusMessage = message
                     return
                 }
-                if position.seconds > 0, Date().timeIntervalSince(current.startedAt) > 2 {
+                if position.seconds > 0, elapsed > 2 {
                     audioPlayer.endSonosTrack(finished: false)
                     return
                 }
@@ -389,16 +425,25 @@ extension AppCoordinator {
                let groups = try? await sonosUPnP.discoverGroups(),
                generation == sonosGeneration,
                !groups.contains(where: { $0.id == current.group.id && $0.coordinator.id == current.group.coordinator.id }) {
+                let sameCoordinator = groups.first { $0.coordinator.id == current.group.coordinator.id }
+                AppLog.sonos.warning(
+                    """
+                    Sonos group \(current.group.id, privacy: .public) not found among \(groups.count, privacy: .public) \
+                    groups; coordinator now in group \(sameCoordinator?.id ?? "none", privacy: .public)
+                    """
+                )
                 await detachSonos(with: "The Sonos group changed. Select it again to continue.")
             }
         } catch {
             guard generation == sonosGeneration else { return }
+            AppLog.sonos.error("Sonos poll failed: \(Self.describe(error), privacy: .public)")
             sonosMessage = "Could not reach Sonos: \(error.localizedDescription)"
         }
     }
 
     private func detachSonos(with message: String) async {
         guard sonosSession != nil else { return }
+        AppLog.sonos.warning("Detaching Sonos: \(message, privacy: .public)")
         sonosGeneration += 1
         sonosPollTask?.cancel()
         sonosSession = nil

@@ -17,4 +17,5 @@ enum AppLog {
     static let playback = Logger(subsystem: subsystem, category: "playback")
     static let cache = Logger(subsystem: subsystem, category: "cache")
     static let registry = Logger(subsystem: subsystem, category: "registry")
+    static let sonos = Logger(subsystem: subsystem, category: "sonos")
 }
