@@ -85,7 +85,8 @@ extension AppCoordinator {
             sonosMessage = nil
         } catch {
             guard generation == sonosGeneration else { return }
-            AppLog.sonos.error("Sonos activation failed: \(Self.describe(error), privacy: .public)")
+            let reason = Self.describe(error)
+            AppLog.sonos.error("Sonos activation failed: \(reason, privacy: .public)")
             audioPlayer.resumeAfterFailedSonosHandoff()
             sonosMessage = error.localizedDescription
             statusMessage = error.localizedDescription
@@ -155,9 +156,9 @@ extension AppCoordinator {
             guard generation == sonosGeneration else { throw CancellationError() }
         } catch {
             guard generation == sonosGeneration else { throw error }
-            AppLog.sonos.error(
-                "Sonos track load failed at \(step, privacy: .public): \(Self.describe(error), privacy: .public)"
-            )
+            let failedStep = step
+            let reason = Self.describe(error)
+            AppLog.sonos.error("Sonos track load failed at \(failedStep, privacy: .public): \(reason, privacy: .public)")
             audioPlayer.resumeAfterFailedSonosHandoff()
             if audioPlayer.route != .local { await detachSonos(with: error.localizedDescription) }
             else { _ = try? await sonosUPnP.clearQueue(device) }
@@ -184,7 +185,7 @@ extension AppCoordinator {
         updateNowPlayingQueueState()
     }
 
-    private static func describe(_ error: Error) -> String {
+    nonisolated private static func describe(_ error: Error) -> String {
         let error = error as NSError
         return "\(error.domain) \(error.code): \(error.localizedDescription)"
     }
@@ -254,9 +255,9 @@ extension AppCoordinator {
                     try await sonosUPnP.setGroupVolume(Int((volume * 100).rounded()), on: session.group.coordinator)
                 }
             } catch {
-                AppLog.sonos.error(
-                    "Sonos command \(String(describing: command), privacy: .public) failed: \(Self.describe(error), privacy: .public)"
-                )
+                let commandName = String(describing: command)
+                let reason = Self.describe(error)
+                AppLog.sonos.error("Sonos command \(commandName, privacy: .public) failed: \(reason, privacy: .public)")
                 if generation == sonosGeneration {
                     sonosMessage = error.localizedDescription
                     statusMessage = error.localizedDescription
@@ -359,15 +360,17 @@ extension AppCoordinator {
             let position = try await sonosUPnP.position(on: session.group.coordinator)
             guard generation == sonosGeneration, let current = sonosSession else { return }
             if !position.sourceURI.isEmpty, position.sourceURI != expectedSource {
+                let actualSource = position.sourceURI
                 AppLog.sonos.warning(
-                    "Sonos source changed: expected \(expectedSource, privacy: .public), got \(position.sourceURI, privacy: .private)"
+                    "Sonos source changed: expected \(expectedSource, privacy: .public), got \(actualSource, privacy: .private)"
                 )
                 await detachSonos(with: SonosError.sourceChanged.localizedDescription)
                 return
             }
             if !position.trackURI.isEmpty, position.trackURI != expectedTrack {
+                let actualTrack = position.trackURI
                 AppLog.sonos.warning(
-                    "Sonos track changed: expected \(expectedTrack, privacy: .private), got \(position.trackURI, privacy: .private)"
+                    "Sonos track changed: expected \(expectedTrack, privacy: .private), got \(actualTrack, privacy: .private)"
                 )
                 await detachSonos(with: SonosError.sourceChanged.localizedDescription)
                 return
@@ -377,14 +380,19 @@ extension AppCoordinator {
                 let finished = duration > 0
                     && max(audioPlayer.currentTime, position.seconds) >= duration - 2
                 let elapsed = Date().timeIntervalSince(current.startedAt)
+                let lastKnownSeconds = audioPlayer.currentTime
+                let playerDuration = audioPlayer.duration
+                let status = position.transportStatus
+                let sonosSeconds = position.seconds
+                let sonosDuration = position.duration
                 AppLog.sonos.info(
                     """
                     Sonos stopped: finished=\(finished, privacy: .public) \
-                    status=\(position.transportStatus, privacy: .public) \
-                    sonosSeconds=\(position.seconds, privacy: .public) \
-                    lastKnownSeconds=\(self.audioPlayer.currentTime, privacy: .public) \
-                    sonosDuration=\(position.duration, privacy: .public) \
-                    playerDuration=\(self.audioPlayer.duration, privacy: .public) \
+                    status=\(status, privacy: .public) \
+                    sonosSeconds=\(sonosSeconds, privacy: .public) \
+                    lastKnownSeconds=\(lastKnownSeconds, privacy: .public) \
+                    sonosDuration=\(sonosDuration, privacy: .public) \
+                    playerDuration=\(playerDuration, privacy: .public) \
                     sinceStart=\(elapsed, privacy: .public)
                     """
                 )
@@ -426,18 +434,21 @@ extension AppCoordinator {
                let groups = try? await sonosUPnP.discoverGroups(),
                generation == sonosGeneration,
                !groups.contains(where: { $0.id == current.group.id && $0.coordinator.id == current.group.coordinator.id }) {
-                let sameCoordinator = groups.first { $0.coordinator.id == current.group.coordinator.id }
+                let expectedGroupID = current.group.id
+                let groupCount = groups.count
+                let coordinatorGroupID = groups.first { $0.coordinator.id == current.group.coordinator.id }?.id ?? "none"
                 AppLog.sonos.warning(
                     """
-                    Sonos group \(current.group.id, privacy: .public) not found among \(groups.count, privacy: .public) \
-                    groups; coordinator now in group \(sameCoordinator?.id ?? "none", privacy: .public)
+                    Sonos group \(expectedGroupID, privacy: .public) not found among \(groupCount, privacy: .public) \
+                    groups; coordinator now in group \(coordinatorGroupID, privacy: .public)
                     """
                 )
                 await detachSonos(with: "The Sonos group changed. Select it again to continue.")
             }
         } catch {
             guard generation == sonosGeneration else { return }
-            AppLog.sonos.error("Sonos poll failed: \(Self.describe(error), privacy: .public)")
+            let reason = Self.describe(error)
+            AppLog.sonos.error("Sonos poll failed: \(reason, privacy: .public)")
             sonosMessage = "Could not reach Sonos: \(error.localizedDescription)"
         }
     }
