@@ -85,16 +85,24 @@ struct SonosUPnPTests {
         }
     }
 
-    @Test func sonosStreamsFlacAndMp3WithoutTranscoding() throws {
+    @Test func sonosStreamsNativeFormatsWithoutTranscoding() throws {
         let flac = NavidromeSong(id: "flac", title: "Flac", suffix: "FLAC")
         let mp3 = NavidromeSong(id: "mp3", title: "Mp3", suffix: "mp3")
         let ogg = NavidromeSong(id: "ogg", title: "Ogg", suffix: "ogg")
+        let m4a = NavidromeSong(id: "m4a", title: "M4a", suffix: "m4a")
+        let opus = NavidromeSong(id: "opus", title: "Opus", suffix: "opus")
+        let unknown = NavidromeSong(id: "unknown", title: "Unknown")
         #expect(AppCoordinator.sonosStreamFormat(for: flac).format == "raw")
         #expect(AppCoordinator.sonosStreamFormat(for: flac).mimeType == "audio/flac")
         #expect(AppCoordinator.sonosStreamFormat(for: mp3).format == "raw")
         #expect(AppCoordinator.sonosStreamFormat(for: mp3).mimeType == "audio/mpeg")
-        #expect(AppCoordinator.sonosStreamFormat(for: ogg).format == "mp3")
-        #expect(AppCoordinator.sonosStreamFormat(for: ogg).mimeType == "audio/mpeg")
+        #expect(AppCoordinator.sonosStreamFormat(for: ogg).format == "raw")
+        #expect(AppCoordinator.sonosStreamFormat(for: ogg).mimeType == "audio/ogg")
+        #expect(AppCoordinator.sonosStreamFormat(for: m4a).format == "raw")
+        #expect(AppCoordinator.sonosStreamFormat(for: m4a).mimeType == "audio/mp4")
+        #expect(AppCoordinator.sonosStreamFormat(for: opus).format == "mp3")
+        #expect(AppCoordinator.sonosStreamFormat(for: opus).mimeType == "audio/mpeg")
+        #expect(AppCoordinator.sonosStreamFormat(for: unknown).format == "mp3")
 
         let stream = try #require(URL(string: "https://music.example.com/rest/stream?id=flac&format=raw"))
         let track = SonosTrack(entryID: UUID(), song: flac, streamURL: stream, artworkURL: nil, mimeType: "audio/flac")
