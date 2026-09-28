@@ -85,6 +85,22 @@ struct SonosUPnPTests {
         }
     }
 
+    @Test func sonosStreamsFlacAndMp3WithoutTranscoding() throws {
+        let flac = NavidromeSong(id: "flac", title: "Flac", suffix: "FLAC")
+        let mp3 = NavidromeSong(id: "mp3", title: "Mp3", suffix: "mp3")
+        let ogg = NavidromeSong(id: "ogg", title: "Ogg", suffix: "ogg")
+        #expect(AppCoordinator.sonosStreamFormat(for: flac).format == "raw")
+        #expect(AppCoordinator.sonosStreamFormat(for: flac).mimeType == "audio/flac")
+        #expect(AppCoordinator.sonosStreamFormat(for: mp3).format == "raw")
+        #expect(AppCoordinator.sonosStreamFormat(for: mp3).mimeType == "audio/mpeg")
+        #expect(AppCoordinator.sonosStreamFormat(for: ogg).format == "mp3")
+        #expect(AppCoordinator.sonosStreamFormat(for: ogg).mimeType == "audio/mpeg")
+
+        let stream = try #require(URL(string: "https://music.example.com/rest/stream?id=flac&format=raw"))
+        let track = SonosTrack(entryID: UUID(), song: flac, streamURL: stream, artworkURL: nil, mimeType: "audio/flac")
+        #expect(SonosUPnP.didl(for: track).contains("protocolInfo=\"http-get:*:audio/flac:*\""))
+    }
+
     @Test func positionAndGroupVolumeReadSoapFields() async throws {
         let requests = Mutex<[URLRequest]>([])
         let upnp = SonosUPnP(session: StubURLProtocol.session { request in

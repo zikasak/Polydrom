@@ -191,14 +191,25 @@ extension AppCoordinator {
         return "\(error.domain) \(error.code): \(error.localizedDescription)"
     }
 
+    /// Sonos plays MP3 and FLAC natively; streaming the original file keeps
+    /// byte-range seeking available, which transcoded streams lack.
+    nonisolated static func sonosStreamFormat(for song: NavidromeSong) -> (format: String, mimeType: String) {
+        switch song.suffix?.lowercased() {
+        case "mp3": ("raw", "audio/mpeg")
+        case "flac": ("raw", "audio/flac")
+        default: ("mp3", "audio/mpeg")
+        }
+    }
+
     private static func track(_ entry: PlaybackQueueEntry, client: NavidromeClient) throws -> SonosTrack {
-        let format = entry.song.suffix?.lowercased() == "mp3" ? "raw" : "mp3"
+        let (format, mimeType) = sonosStreamFormat(for: entry.song)
         let stream = try client.streamURL(for: entry.song, format: format)
         try checkSpeakerReachability(of: stream)
         let artworkID = entry.song.coverArt ?? entry.song.albumId
         let artwork = artworkID.flatMap { try? client.coverArtURL(id: $0, size: 512) }
         return SonosTrack(
-            entryID: entry.id, song: entry.song, streamURL: stream, artworkURL: artwork
+            entryID: entry.id, song: entry.song, streamURL: stream, artworkURL: artwork,
+            mimeType: mimeType
         )
     }
 
