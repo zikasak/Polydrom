@@ -209,6 +209,14 @@ extension AppCoordinator {
 
     func handleSonosCommand(_ command: SonosPlaybackCommand) {
         guard let session = sonosSession else { return }
+        if case .volume(let volume) = command {
+            pendingSonosVolume = Int((volume * 100).rounded())
+            let generation = sonosGeneration
+            if sonosVolumeTask != nil, sonosVolumeTaskGeneration == generation { return }
+            sonosVolumeTaskGeneration = generation
+            sonosVolumeTask = Task { await sendPendingSonosVolume(on: session.group.coordinator, generation: generation) }
+            return
+        }
         if case .stop = command {
             sonosGeneration += 1
             let generation = sonosGeneration
@@ -251,8 +259,8 @@ extension AppCoordinator {
                             isPlaying: audioPlayer.isPlaying, event: .seeked
                         )
                     }
-                case .volume(let volume):
-                    try await sonosUPnP.setGroupVolume(Int((volume * 100).rounded()), on: session.group.coordinator)
+                case .volume:
+                    break
                 }
             } catch {
                 let commandName = String(describing: command)
@@ -264,6 +272,48 @@ extension AppCoordinator {
                 }
             }
         }
+    }
+
+    private func sendPendingSonosVolume(on device: SonosDevice, generation: Int) async {
+        defer {
+            if sonosVolumeTaskGeneration == generation {
+                sonosVolumeTask = nil
+                pendingSonosVolume = nil
+            }
+        }
+        while generation == sonosGeneration {
+            // Coalesce slider updates before sending, then keep only one request in flight.
+            try? await Task.sleep(for: .milliseconds(100))
+            guard generation == sonosGeneration, let volume = pendingSonosVolume else { return }
+            pendingSonosVolume = nil
+            do {
+                try await sonosUPnP.setGroupVolume(volume, on: device)
+                guard generation == sonosGeneration else { return }
+                clearSonosVolumeError()
+            } catch {
+                guard generation == sonosGeneration else { return }
+                let reason = Self.describe(error)
+                AppLog.sonos.error("Sonos volume command failed: \(reason, privacy: .public)")
+                let actualVolume = try? await sonosUPnP.groupVolume(on: device)
+                guard generation == sonosGeneration else { return }
+                if actualVolume.map({ abs($0 - volume) <= 1 }) == true {
+                    clearSonosVolumeError()
+                } else if pendingSonosVolume == nil {
+                    let message = "Could not change Sonos volume: \(error.localizedDescription)"
+                    sonosVolumeErrorMessage = message
+                    sonosMessage = message
+                    statusMessage = message
+                }
+            }
+            if pendingSonosVolume == nil { return }
+        }
+    }
+
+    private func clearSonosVolumeError() {
+        guard let message = sonosVolumeErrorMessage else { return }
+        if sonosMessage == message { sonosMessage = nil }
+        if statusMessage == message { statusMessage = "Sonos volume changed" }
+        sonosVolumeErrorMessage = nil
     }
 
     func switchToLocalOutput() {

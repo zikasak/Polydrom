@@ -84,6 +84,10 @@ final class AppCoordinator: ObservableObject {
     var sonosGeneration = 0
     var sonosActivationTask: Task<Void, Never>?
     var sonosCleanupTask: Task<Void, Never>?
+    var sonosVolumeTask: Task<Void, Never>?
+    var sonosVolumeTaskGeneration = -1
+    var pendingSonosVolume: Int?
+    var sonosVolumeErrorMessage: String?
     var client: NavidromeClient?
     private var metadataMonitorTask: Task<Void, Never>?
     private var metadataSyncTask: Task<MetadataSyncOutcome, Error>?

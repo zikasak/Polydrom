@@ -31,7 +31,7 @@ struct SonosUPnPTests {
         #expect(device.id == "RINCON-1")
         #expect(device.name == "Living Room")
         #expect(device.services["AVTransport"]?.url.path == "/MediaRenderer/AVTransport/Control")
-        #expect(device.services["GroupRenderingControl"] != nil)
+        #expect(device.services["GroupRenderingControl"]?.url.path == "/MediaRenderer/GroupRenderingControl/Control")
         let topology = try SonosXML.parse(Data(Self.topology.utf8))
         let groups = SonosUPnP.groups(from: topology, devices: [device.id: device])
         #expect(groups.count == 1)
@@ -86,9 +86,9 @@ struct SonosUPnPTests {
     }
 
     @Test func positionAndGroupVolumeReadSoapFields() async throws {
-        let bodies = Mutex<[Data]>([])
+        let requests = Mutex<[URLRequest]>([])
         let upnp = SonosUPnP(session: StubURLProtocol.session { request in
-            if let body = Self.bodyData(request) { bodies.withLock { $0.append(body) } }
+            requests.withLock { $0.append(request) }
             return Self.response(
                 for: request, trackURI: "https://music.example.com/rest/stream?id=track"
             )
@@ -103,8 +103,93 @@ struct SonosUPnPTests {
         #expect(position.trackURI == "https://music.example.com/rest/stream?id=track")
         #expect(try await upnp.groupVolume(on: device) == 23)
         try await upnp.setGroupVolume(150, on: device)
-        let root = try SonosXML.parse(try #require(bodies.withLock { $0.last }))
+        let recordedRequests = requests.withLock { $0 }
+        #expect(recordedRequests.suffix(2).map(Self.actionName) == ["GetGroupVolume", "SetGroupVolume"])
+        let volumeRequest = try #require(recordedRequests.last)
+        #expect(volumeRequest.url?.path == "/MediaRenderer/GroupRenderingControl/Control")
+        #expect(volumeRequest.value(forHTTPHeaderField: "Content-Type") == "text/xml; charset=utf-8")
+        #expect(volumeRequest.value(forHTTPHeaderField: "SOAPACTION") ==
+            "\"urn:schemas-upnp-org:service:GroupRenderingControl:1#SetGroupVolume\"")
+        let root = try SonosXML.parse(try #require(Self.bodyData(volumeRequest)))
         #expect(root.firstDescendant(named: "DesiredVolume")?.text == "100")
+    }
+
+    @Test func volumeFaultAfterSuccessfulChangeDoesNotShowError() async {
+        let speaker = Mutex((volume: 23, writes: 0))
+        let session = StubURLProtocol.session { request in
+            if Self.actionName(request) == "SetGroupVolume" {
+                speaker.withLock { state in
+                    state.volume = Int(Self.requestField("DesiredVolume", in: request) ?? "") ?? state.volume
+                    state.writes += 1
+                }
+                return StubURLProtocol.Response(statusCode: 500, data: Data(Self.volumeFault.utf8))
+            }
+            return Self.response(for: request, volume: speaker.withLock { $0.volume })
+        }
+        let (model, _, _) = makeViewModel(sonosUPnP: SonosUPnP(session: session))
+        model.sonosSession = SonosActiveSession(
+            group: Self.group(), sourceURI: nil, trackURI: nil, startedAt: Date()
+        )
+        model.audioPlayer.selectSonosRoute(groupID: "group-1", groupVolume: 0.23)
+
+        model.audioPlayer.setVolume(0.4)
+        model.audioPlayer.setVolume(0.5)
+        model.audioPlayer.setVolume(0.6)
+
+        #expect(await eventually { speaker.withLock { $0.writes } == 1 && model.sonosVolumeTask == nil })
+        #expect(speaker.withLock { $0.volume } == 60)
+        #expect(model.sonosMessage == nil)
+        #expect(model.statusMessage != SonosError.soapFault("801").localizedDescription)
+    }
+
+    @Test func volumeUpdatesStaySerializedWhileDragging() async {
+        let speaker = Mutex((values: [Int](), inFlight: 0, maxInFlight: 0))
+        let session = StubURLProtocol.session { request in
+            if Self.actionName(request) == "SetGroupVolume" {
+                speaker.withLock { state in
+                    state.values.append(Int(Self.requestField("DesiredVolume", in: request) ?? "") ?? 0)
+                    state.inFlight += 1
+                    state.maxInFlight = max(state.maxInFlight, state.inFlight)
+                }
+                Thread.sleep(forTimeInterval: 0.2)
+                speaker.withLock { $0.inFlight -= 1 }
+            }
+            return Self.response(for: request)
+        }
+        let (model, _, _) = makeViewModel(sonosUPnP: SonosUPnP(session: session))
+        model.sonosSession = SonosActiveSession(
+            group: Self.group(), sourceURI: nil, trackURI: nil, startedAt: Date()
+        )
+        model.audioPlayer.selectSonosRoute(groupID: "group-1", groupVolume: 0.23)
+
+        model.audioPlayer.setVolume(0.4)
+        #expect(await eventually { speaker.withLock { $0.inFlight } == 1 })
+        model.audioPlayer.setVolume(0.5)
+        model.audioPlayer.setVolume(0.6)
+
+        #expect(await eventually { model.sonosVolumeTask == nil })
+        #expect(speaker.withLock { $0.values } == [40, 60])
+        #expect(speaker.withLock { $0.maxInFlight } == 1)
+        #expect(model.sonosMessage == nil)
+    }
+
+    @Test func volumeFaultWithoutChangeShowsError() async {
+        let session = StubURLProtocol.session { request in
+            if Self.actionName(request) == "SetGroupVolume" {
+                return StubURLProtocol.Response(statusCode: 500, data: Data(Self.volumeFault.utf8))
+            }
+            return Self.response(for: request, volume: 23)
+        }
+        let (model, _, _) = makeViewModel(sonosUPnP: SonosUPnP(session: session))
+        model.sonosSession = SonosActiveSession(
+            group: Self.group(), sourceURI: nil, trackURI: nil, startedAt: Date()
+        )
+        model.audioPlayer.selectSonosRoute(groupID: "group-1", groupVolume: 0.23)
+
+        model.audioPlayer.setVolume(0.6)
+
+        #expect(await eventually { model.sonosVolumeTask == nil && model.sonosMessage != nil })
+        #expect(model.sonosMessage?.contains("801") == true)
     }
 
     @Test func routeStreamsOneTrackAndKeepsQueueLocal() async throws {
@@ -455,7 +540,7 @@ struct SonosUPnPTests {
         let services = Dictionary(uniqueKeysWithValues: serviceNames.map { name in
             (name, SonosServiceEndpoint(
                 type: "urn:schemas-upnp-org:service:\(name):1",
-                url: URL(string: "\(host)/\(name)/Control")!
+                url: URL(string: "\(host)/MediaRenderer/\(name)/Control")!
             ))
         })
         return SonosDevice(
@@ -473,7 +558,7 @@ struct SonosUPnPTests {
     <root><device><manufacturer>Sonos, Inc.</manufacturer><UDN>uuid:RINCON-1</UDN>
     <roomName>Living Room</roomName><serviceList>
     <service><serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType><controlURL>/MediaRenderer/AVTransport/Control</controlURL></service>
-    <service><serviceType>urn:schemas-upnp-org:service:GroupRenderingControl:1</serviceType><controlURL>/GroupRenderingControl/Control</controlURL></service>
+    <service><serviceType>urn:schemas-upnp-org:service:GroupRenderingControl:1</serviceType><controlURL>/MediaRenderer/GroupRenderingControl/Control</controlURL></service>
     </serviceList></device></root>
     """
 
@@ -490,4 +575,6 @@ struct SonosUPnPTests {
     <faultcode>s:Client</faultcode><detail><UPnPError><errorCode>701</errorCode></UPnPError></detail>
     </s:Fault></s:Body></s:Envelope>
     """
+
+    nonisolated private static let volumeFault = fault.replacingOccurrences(of: "701", with: "801")
 }
