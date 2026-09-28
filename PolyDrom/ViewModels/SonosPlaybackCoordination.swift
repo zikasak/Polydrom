@@ -6,6 +6,7 @@ struct SonosActiveSession {
     let sourceURI: String?
     let trackURI: String?
     let startedAt: Date
+    var lastProgressAt: Date?
 }
 
 @MainActor
@@ -234,6 +235,7 @@ extension AppCoordinator {
                 case .play:
                     try await sonosUPnP.transport("Play", on: session.group.coordinator)
                     guard generation == sonosGeneration else { return }
+                    sonosSession?.lastProgressAt = Date()
                     if let song = audioPlayer.currentSong {
                         audioPlayer.updateSonosPlayback(
                             song: song, at: audioPlayer.currentTime, duration: audioPlayer.duration,
@@ -243,6 +245,7 @@ extension AppCoordinator {
                 case .pause:
                     try await sonosUPnP.transport("Pause", on: session.group.coordinator)
                     guard generation == sonosGeneration else { return }
+                    sonosSession?.lastProgressAt = nil
                     if let song = audioPlayer.currentSong {
                         audioPlayer.updateSonosPlayback(
                             song: song, at: audioPlayer.currentTime, duration: audioPlayer.duration,
@@ -254,6 +257,7 @@ extension AppCoordinator {
                 case .seek(let seconds):
                     try await sonosUPnP.seekTime(seconds, on: session.group.coordinator)
                     guard generation == sonosGeneration else { return }
+                    sonosSession?.lastProgressAt = audioPlayer.isPlaying ? Date() : nil
                     if let song = audioPlayer.currentSong {
                         audioPlayer.updateSonosPlayback(
                             song: song, at: seconds, duration: audioPlayer.duration,
@@ -397,6 +401,9 @@ extension AppCoordinator {
         sonosPollTask = Task { [weak self] in
             var tick = 0
             while let self, !Task.isCancelled, generation == sonosGeneration {
+                if tick > 0, tick.isMultiple(of: 30) {
+                    Task { await self.checkSonosGroup(generation: generation) }
+                }
                 await pollSonosOnce(generation: generation, tick: tick)
                 tick += 1
                 try? await Task.sleep(for: .seconds(1))
@@ -429,10 +436,12 @@ extension AppCoordinator {
             }
             if position.transportState == "STOPPED", audioPlayer.isPlaying {
                 let duration = max(audioPlayer.duration, position.duration)
-                let finished = duration > 0
-                    && max(audioPlayer.currentTime, position.seconds) >= duration - 2
-                let elapsed = Date().timeIntervalSince(current.startedAt)
                 let lastKnownSeconds = audioPlayer.currentTime
+                let sinceProgress = current.lastProgressAt.map { Date().timeIntervalSince($0) } ?? 0
+                let projectedSeconds = lastKnownSeconds + sinceProgress
+                let finished = duration > 0
+                    && max(projectedSeconds, position.seconds) >= duration - 2
+                let elapsed = Date().timeIntervalSince(current.startedAt)
                 let playerDuration = audioPlayer.duration
                 let status = position.transportStatus
                 let sonosSeconds = position.seconds
@@ -443,6 +452,7 @@ extension AppCoordinator {
                     status=\(status, privacy: .public) \
                     sonosSeconds=\(sonosSeconds, privacy: .public) \
                     lastKnownSeconds=\(lastKnownSeconds, privacy: .public) \
+                    sinceProgress=\(sinceProgress, privacy: .public) \
                     sonosDuration=\(sonosDuration, privacy: .public) \
                     playerDuration=\(playerDuration, privacy: .public) \
                     sinceStart=\(elapsed, privacy: .public)
@@ -476,26 +486,12 @@ extension AppCoordinator {
                     song: song, at: position.seconds, duration: position.duration,
                     isPlaying: playing, event: event
                 )
+                sonosSession?.lastProgressAt = playing ? Date() : nil
             }
             if tick > 0, tick.isMultiple(of: 5) {
                 let volume = try? await sonosUPnP.groupVolume(on: current.group.coordinator)
                 guard generation == sonosGeneration else { return }
                 if let volume { audioPlayer.setSonosVolume(Double(volume) / 100) }
-            }
-            if tick > 0, tick.isMultiple(of: 30),
-               let groups = try? await sonosUPnP.discoverGroups(),
-               generation == sonosGeneration,
-               !groups.contains(where: { $0.id == current.group.id && $0.coordinator.id == current.group.coordinator.id }) {
-                let expectedGroupID = current.group.id
-                let groupCount = groups.count
-                let coordinatorGroupID = groups.first { $0.coordinator.id == current.group.coordinator.id }?.id ?? "none"
-                AppLog.sonos.warning(
-                    """
-                    Sonos group \(expectedGroupID, privacy: .public) not found among \(groupCount, privacy: .public) \
-                    groups; coordinator now in group \(coordinatorGroupID, privacy: .public)
-                    """
-                )
-                await detachSonos(with: "The Sonos group changed. Select it again to continue.")
             }
         } catch {
             guard generation == sonosGeneration else { return }
@@ -503,6 +499,24 @@ extension AppCoordinator {
             AppLog.sonos.error("Sonos poll failed: \(reason, privacy: .public)")
             sonosMessage = "Could not reach Sonos: \(error.localizedDescription)"
         }
+    }
+
+    private func checkSonosGroup(generation: Int) async {
+        guard generation == sonosGeneration, let current = sonosSession,
+              let groups = try? await sonosUPnP.discoverGroups(),
+              generation == sonosGeneration,
+              !groups.contains(where: { $0.id == current.group.id && $0.coordinator.id == current.group.coordinator.id })
+        else { return }
+        let expectedGroupID = current.group.id
+        let groupCount = groups.count
+        let coordinatorGroupID = groups.first { $0.coordinator.id == current.group.coordinator.id }?.id ?? "none"
+        AppLog.sonos.warning(
+            """
+            Sonos group \(expectedGroupID, privacy: .public) not found among \(groupCount, privacy: .public) \
+            groups; coordinator now in group \(coordinatorGroupID, privacy: .public)
+            """
+        )
+        await detachSonos(with: "The Sonos group changed. Select it again to continue.")
     }
 
     private func detachSonos(with message: String) async {
