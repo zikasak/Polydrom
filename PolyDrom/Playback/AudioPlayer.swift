@@ -64,6 +64,7 @@ final class AudioPlayer: ObservableObject {
     private var canPlayNextInNowPlaying = false
     private var localVolume: Double = 1
     private var isHandoffInProgress = false
+    private var fallbackStreamURL: URL?
 
     init() {
         let player = AVPlayer()
@@ -95,11 +96,13 @@ final class AudioPlayer: ObservableObject {
     func play(
         song: NavidromeSong,
         url: URL,
+        fallbackURL: URL? = nil,
         startingAt startTime: Double = 0,
         autoplay: Bool = true,
         reportStart: Bool = true
     ) {
         route = .local
+        fallbackStreamURL = fallbackURL
         AppLog.playback.info(
             "Starting playback for song \(song.id, privacy: .private(mask: .hash))"
         )
@@ -158,6 +161,7 @@ final class AudioPlayer: ObservableObject {
         reportStart: Bool
     ) {
         playbackGeneration += 1
+        fallbackStreamURL = nil
         removeTimeObserver()
         removeSongFinishedObserver()
         removePlaybackFailureObserver()
@@ -222,12 +226,12 @@ final class AudioPlayer: ObservableObject {
         notifyPlaybackStateChanged(event: finished ? .finished : .stopped)
     }
 
-    func leaveSonosRoute(song: NavidromeSong?, url: URL?, at seconds: Double, autoplay: Bool) {
+    func leaveSonosRoute(song: NavidromeSong?, url: URL?, fallbackURL: URL? = nil, at seconds: Double, autoplay: Bool) {
         route = .local
         volume = localVolume
         player.volume = Float(localVolume)
         if let song, let url {
-            play(song: song, url: url, startingAt: seconds, autoplay: autoplay, reportStart: false)
+            play(song: song, url: url, fallbackURL: fallbackURL, startingAt: seconds, autoplay: autoplay, reportStart: false)
         } else {
             clearPlayback()
         }
@@ -306,6 +310,7 @@ final class AudioPlayer: ObservableObject {
     func clearPlayback() {
         AppLog.playback.info("Stopping playback")
         playbackGeneration += 1
+        fallbackStreamURL = nil
         removeTimeObserver()
         removeSongFinishedObserver()
         removePlaybackFailureObserver()
@@ -436,6 +441,7 @@ final class AudioPlayer: ObservableObject {
         }
 
         let stalledFor = Date().timeIntervalSince(lastPlaybackProgressAt)
+        if stalledFor >= 8, retryWithFallbackStream() { return }
         if stalledFor >= 18 {
             skipCurrentSongAfterStall()
         } else if stalledFor >= 8, !didAttemptStallRecovery {
@@ -627,6 +633,7 @@ final class AudioPlayer: ObservableObject {
 
     private func failCurrentSong(error: Error?) {
         guard route == .local, !hasFinishedCurrentSong, let failedSong = currentSong else { return }
+        if retryWithFallbackStream() { return }
         if let error {
             let nsError = error as NSError
             AppLog.playback.error(
@@ -642,6 +649,15 @@ final class AudioPlayer: ObservableObject {
         updateNowPlayingInfo()
         notifyPlaybackStateChanged(event: .failed)
         onSongFailed?(failedSong)
+    }
+
+    private func retryWithFallbackStream() -> Bool {
+        guard let fallbackStreamURL, let song = currentSong else { return false }
+        self.fallbackStreamURL = nil
+        AppLog.playback.warning("Original stream could not play; retrying as MP3")
+        play(song: song, url: fallbackStreamURL, startingAt: currentTime,
+             autoplay: isPlaying, reportStart: false)
+        return true
     }
 
     private func isCurrentPlayback(_ item: AVPlayerItem?, generation: Int) -> Bool {

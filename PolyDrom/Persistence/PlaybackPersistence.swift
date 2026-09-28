@@ -229,6 +229,7 @@ extension AppCoordinator {
 
         do {
             let url = try client.streamURL(for: song)
+            let fallbackURL = try client.streamURL(for: song, format: "mp3")
             await warmCachedSongCovers([song])
             guard isCurrentSession(generation, serverKey: activeServerKey) else { return }
 
@@ -237,6 +238,7 @@ extension AppCoordinator {
             audioPlayer.play(
                 song: song,
                 url: url,
+                fallbackURL: fallbackURL,
                 startingAt: state.position,
                 autoplay: false
             )

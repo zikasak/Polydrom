@@ -51,6 +51,15 @@ struct DomainModelTests {
         #expect(NavidromeGenre(name: "Ambient", songCount: 2).subtitle == "2 songs")
     }
 
+    @Test func songPreservesSourceFormatAcrossPersistence() throws {
+        let song = try JSONDecoder().decode(
+            NavidromeSong.self,
+            from: Data(#"{"id":"source","title":"Source","suffix":"mp3"}"#.utf8)
+        )
+        #expect(song.suffix == "mp3")
+        #expect(try JSONDecoder().decode(NavidromeSong.self, from: JSONEncoder().encode(song)).suffix == "mp3")
+    }
+
     @Test func albumDecodingSupportsFlexibleValuesAndFallbacks() throws {
         let album = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":42,"title":7,"artist":9,"artistId":10,"songCount":"3","year":"2024","coverArt":11}"#.utf8))
         let untitled = try JSONDecoder().decode(NavidromeAlbum.self, from: Data(#"{"id":"a"}"#.utf8))

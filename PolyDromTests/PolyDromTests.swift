@@ -12,7 +12,7 @@ import Testing
 @MainActor
 struct PolyDromTests {
 
-    @Test func streamURLUsesAVFoundationFriendlyQuery() throws {
+    @Test func streamURLRequestsOriginalAudio() throws {
         let profile = ServerProfile(
             id: UUID(),
             name: "Test",
@@ -32,7 +32,7 @@ struct PolyDromTests {
 
         #expect(components.path == "/rest/stream.view")
         #expect(queryItems.contains(URLQueryItem(name: "id", value: "song-1")))
-        #expect(queryItems.contains(URLQueryItem(name: "format", value: "mp3")))
+        #expect(queryItems.contains(URLQueryItem(name: "format", value: "raw")))
         #expect(!queryItems.contains { $0.name == "estimateContentLength" })
         #expect(!queryItems.contains { $0.name == "f" })
     }

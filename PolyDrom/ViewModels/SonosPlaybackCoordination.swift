@@ -191,7 +191,8 @@ extension AppCoordinator {
     }
 
     private static func track(_ entry: PlaybackQueueEntry, client: NavidromeClient) throws -> SonosTrack {
-        let stream = try client.streamURL(for: entry.song)
+        let format = entry.song.suffix?.lowercased() == "mp3" ? "raw" : "mp3"
+        let stream = try client.streamURL(for: entry.song, format: format)
         try checkSpeakerReachability(of: stream)
         let artworkID = entry.song.coverArt ?? entry.song.albumId
         let artwork = artworkID.flatMap { try? client.coverArtURL(id: $0, size: 512) }
@@ -342,7 +343,8 @@ extension AppCoordinator {
         sonosSession = nil
         sonosMessage = nil
         let url: URL? = if let song, let client { try? client.streamURL(for: song) } else { nil }
-        audioPlayer.leaveSonosRoute(song: song, url: url, at: seconds, autoplay: autoplay)
+        let fallbackURL: URL? = if let song, let client { try? client.streamURL(for: song, format: "mp3") } else { nil }
+        audioPlayer.leaveSonosRoute(song: song, url: url, fallbackURL: fallbackURL, at: seconds, autoplay: autoplay)
         if let song, url == nil { audioPlayer.restore(song: song, at: seconds) }
         updateNowPlayingQueueState()
         persistPlaybackState()
@@ -514,7 +516,8 @@ extension AppCoordinator {
         let song = audioPlayer.currentSong
         let seconds = audioPlayer.currentTime
         let url: URL? = if let song, let client { try? client.streamURL(for: song) } else { nil }
-        audioPlayer.leaveSonosRoute(song: song, url: url, at: seconds, autoplay: false)
+        let fallbackURL: URL? = if let song, let client { try? client.streamURL(for: song, format: "mp3") } else { nil }
+        audioPlayer.leaveSonosRoute(song: song, url: url, fallbackURL: fallbackURL, at: seconds, autoplay: false)
         if let song, url == nil { audioPlayer.restore(song: song, at: seconds) }
         persistPlaybackState()
     }

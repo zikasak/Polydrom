@@ -64,6 +64,7 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
     let discNumber: Int?
     let created: Date?
     let played: Date?
+    let suffix: String?
     let genres: [String]
 
     init(
@@ -79,6 +80,7 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         discNumber: Int? = nil,
         created: Date? = nil,
         played: Date? = nil,
+        suffix: String? = nil,
         genres: [String] = []
     ) {
         self.id = id
@@ -93,6 +95,7 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         self.discNumber = discNumber
         self.created = created
         self.played = played
+        self.suffix = suffix
         self.genres = Self.normalizedGenres(genres)
     }
 
@@ -102,6 +105,7 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         case discNumber
         case created
         case played
+        case suffix
         case genre
         case genres
     }
@@ -120,6 +124,7 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         discNumber = container.decodeIntIfPresent(forKey: .discNumber)
         created = container.decodeDateIfPresent(forKey: .created)
         played = container.decodeDateIfPresent(forKey: .played)
+        suffix = container.decodeStringIfPresent(forKey: .suffix)
         let modernGenres = (try? container.decode([SongGenreValue].self, forKey: .genres)) ?? []
         let singleModernGenre = try? container.decode(SongGenreValue.self, forKey: .genres)
         let legacyGenre = container.decodeStringIfPresent(forKey: .genre)
@@ -142,6 +147,7 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         try container.encodeIfPresent(discNumber, forKey: .discNumber)
         try container.encodeIfPresent(created, forKey: .created)
         try container.encodeIfPresent(played, forKey: .played)
+        try container.encodeIfPresent(suffix, forKey: .suffix)
         if !genres.isEmpty {
             try container.encode(genres.map(SongGenreValue.init(name:)), forKey: .genres)
         }

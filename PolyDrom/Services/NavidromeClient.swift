@@ -209,13 +209,13 @@ struct NavidromeClient: Sendable {
         try response.subsonicResponse.throwIfNeeded()
     }
 
-    func streamURL(for song: NavidromeSong) throws -> URL {
+    func streamURL(for song: NavidromeSong, format: String = "raw") throws -> URL {
         try apiURL(
             "stream",
             includeResponseFormat: false,
             queryItems: [
                 URLQueryItem(name: "id", value: song.id),
-                URLQueryItem(name: "format", value: "mp3")
+                URLQueryItem(name: "format", value: format)
             ]
         )
     }

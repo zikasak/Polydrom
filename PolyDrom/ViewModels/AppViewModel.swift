@@ -726,6 +726,7 @@ final class AppCoordinator: ObservableObject {
             let songToPlay = try await resolvedSongForPlayback(entry.song, shouldHydrateSong: shouldHydrateSong)
             guard isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
             let url = try client.streamURL(for: songToPlay)
+            let fallbackURL = try client.streamURL(for: songToPlay, format: "mp3")
             await warmCachedSongCovers([songToPlay])
             guard isCurrentSession(playbackSession.generation, serverKey: playbackSession.serverKey) else { return }
 
@@ -743,7 +744,7 @@ final class AppCoordinator: ObservableObject {
                     playbackQueue[index].song = songToPlay
                 }
                 currentPlaybackQueueEntryID = entry.id
-                audioPlayer.play(song: songToPlay, url: url)
+                audioPlayer.play(song: songToPlay, url: url, fallbackURL: fallbackURL)
             }
             if lyricsSongID != songToPlay.id {
                 lyricsSongID = nil

@@ -41,7 +41,9 @@ struct NavidromeClientTests {
             #expect(!items.contains(where: { $0.name == "f" }))
         }
         #expect(queryValue("id", in: URLRequest(url: stream)) == "s")
-        #expect(queryValue("format", in: URLRequest(url: stream)) == "mp3")
+        #expect(queryValue("format", in: URLRequest(url: stream)) == "raw")
+        let mp3 = try client.streamURL(for: makeSong(id: "s"), format: "mp3")
+        #expect(queryValue("format", in: URLRequest(url: mp3)) == "mp3")
         #expect(queryValue("id", in: URLRequest(url: cover)) == "art")
         #expect(queryValue("size", in: URLRequest(url: cover)) == "320")
     }
