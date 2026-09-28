@@ -235,6 +235,7 @@ extension AppCoordinator {
                 case .play:
                     try await sonosUPnP.transport("Play", on: session.group.coordinator)
                     guard generation == sonosGeneration else { return }
+                    sonosSession?.lastProgressAt = Date()
                     if let song = audioPlayer.currentSong {
                         audioPlayer.updateSonosPlayback(
                             song: song, at: audioPlayer.currentTime, duration: audioPlayer.duration,
@@ -244,6 +245,7 @@ extension AppCoordinator {
                 case .pause:
                     try await sonosUPnP.transport("Pause", on: session.group.coordinator)
                     guard generation == sonosGeneration else { return }
+                    sonosSession?.lastProgressAt = nil
                     if let song = audioPlayer.currentSong {
                         audioPlayer.updateSonosPlayback(
                             song: song, at: audioPlayer.currentTime, duration: audioPlayer.duration,
@@ -255,6 +257,7 @@ extension AppCoordinator {
                 case .seek(let seconds):
                     try await sonosUPnP.seekTime(seconds, on: session.group.coordinator)
                     guard generation == sonosGeneration else { return }
+                    sonosSession?.lastProgressAt = audioPlayer.isPlaying ? Date() : nil
                     if let song = audioPlayer.currentSong {
                         audioPlayer.updateSonosPlayback(
                             song: song, at: seconds, duration: audioPlayer.duration,

@@ -436,6 +436,57 @@ struct SonosUPnPTests {
         #expect(model.audioPlayer.currentSong == second.song)
     }
 
+    @Test func pausedTimeIsNotProjectedIntoTrackProgress() async throws {
+        let speaker = Mutex((sourceURI: "", state: "PLAYING", seconds: 0))
+        let session = StubURLProtocol.session { request in
+            let state = speaker.withLock { speaker in
+                switch Self.actionName(request) {
+                case "SetAVTransportURI":
+                    speaker.sourceURI = Self.requestField("CurrentURI", in: request) ?? ""
+                case "Play":
+                    speaker.state = "PLAYING"
+                case "Pause":
+                    speaker.state = "PAUSED_PLAYBACK"
+                default:
+                    break
+                }
+                return speaker
+            }
+            return Self.response(
+                for: request, sourceURI: state.sourceURI,
+                transportState: state.state, seconds: state.seconds
+            )
+        }
+        let (model, _, _) = makeViewModel(sonosUPnP: SonosUPnP(session: session))
+        let profile = makeProfile()
+        model.activeServer = profile
+        model.client = NavidromeClient(profile: profile, session: session)
+        model.isOnline = true
+        let entry = PlaybackQueueEntry(song: makeSong())
+        model.playbackQueue = [entry]
+        model.currentPlaybackQueueEntryID = entry.id
+        model.audioPlayer.restore(song: entry.song, at: 12)
+        model.selectSonosGroup(Self.group())
+        #expect(await eventually(timeout: .seconds(3)) {
+            model.sonosSession?.sourceURI != nil && model.audioPlayer.isPlaying
+        })
+
+        speaker.withLock { $0.seconds = 100 }
+        await model.pollSonosOnce(generation: model.sonosGeneration, tick: 1)
+        #expect(model.sonosSession?.lastProgressAt != nil)
+
+        model.audioPlayer.pauseCurrentSong()
+        #expect(await eventually(timeout: .seconds(3)) {
+            !model.audioPlayer.isPlaying && model.sonosSession?.lastProgressAt == nil
+        })
+
+        let resumedAt = Date()
+        model.audioPlayer.playCurrentSong()
+        #expect(await eventually(timeout: .seconds(3)) {
+            model.audioPlayer.isPlaying && (model.sonosSession?.lastProgressAt ?? .distantPast) >= resumedAt
+        })
+    }
+
     @Test func externalSourceChangeDetachesWithoutCheckingSonosQueue() async throws {
         let speaker = Mutex((sourceURI: "", volume: 23, requests: [String]()))
         let session = StubURLProtocol.session { request in
