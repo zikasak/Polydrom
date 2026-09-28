@@ -53,11 +53,12 @@ struct SonosOutputPicker: View {
             }
         } label: {
             outputIcon
-                .font(.body)
                 .frame(width: 32, height: 30)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // Menus stretch and shrink like buttons; keep the icon from collapsing in narrow windows.
+        .fixedSize()
         .help(outputHelp)
         .accessibilityLabel("Sonos output")
         .accessibilityValue(activeGroupName.map { "Playing on \($0)" } ?? "This Mac")
@@ -99,15 +100,20 @@ struct SonosOutputPicker: View {
     }
 
     /// Menu labels drop SwiftUI foreground styles on macOS, so the active state
-    /// is baked into a non-template image.
+    /// is baked into a non-template image. The outline symbol keeps the speaker
+    /// cones readable when tinted; the filled one turns into a solid block.
     private var outputIcon: Image {
-        let symbol = "hifispeaker.fill"
-        guard activeGroupID != nil,
-              let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Sonos output")?
-                .withSymbolConfiguration(.init(paletteColors: [.controlAccentColor])) else {
+        let symbol = "hifispeaker"
+        let size = NSFont.preferredFont(forTextStyle: .body).pointSize
+        var configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
+        if activeGroupID != nil {
+            configuration = configuration.applying(.init(paletteColors: [.controlAccentColor]))
+        }
+        guard let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Sonos output")?
+            .withSymbolConfiguration(configuration) else {
             return Image(systemName: symbol)
         }
-        image.isTemplate = false
+        image.isTemplate = activeGroupID == nil
         return Image(nsImage: image)
     }
 
