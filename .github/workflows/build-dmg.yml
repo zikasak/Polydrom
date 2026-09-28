@@ -222,6 +222,8 @@ jobs:
             -f pkcs12 -k "$keychain_path" -T /usr/bin/codesign > /dev/null
           security set-key-partition-list -S apple-tool:,apple: \
             -k "$keychain_password" "$keychain_path" > /dev/null
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -d user -s "$keychain_path"
 
           certificate_pem="$RUNNER_TEMP/PolyDrom-signing.pem"
           security find-certificate -p -c 'PolyDrom Release Signing' \
@@ -234,6 +236,13 @@ jobs:
             echo 'Release signing certificate does not match the pinned identity.' >&2
             exit 1
           fi
+
+          signing_probe="$RUNNER_TEMP/PolyDrom-signing-probe"
+          cp /bin/echo "$signing_probe"
+          codesign --force --sign "$signing_identity" --keychain "$keychain_path" "$signing_probe"
+          codesign --verify --strict "$signing_probe"
+          rm -f "$signing_probe"
+
           echo "POLYDROM_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
           echo "POLYDROM_SIGNING_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
           rm -f "$certificate_path" "$certificate_pem"
