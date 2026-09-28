@@ -221,7 +221,7 @@ struct PersistenceTests {
         let current = MemoryCredentialStore()
         let legacy = MemoryCredentialStore()
         legacy.passwords["server"] = "old password"
-        let store = KeychainStore(current: current, legacy: legacy)
+        let store = KeychainStore(current: current, legacy: [legacy])
 
         #expect(try store.password(for: "server") == "old password")
         #expect(current.passwords["server"] == "old password")
@@ -249,10 +249,29 @@ struct PersistenceTests {
 
         let legacy = MemoryCredentialStore()
         legacy.passwords["server"] = "old password"
-        let store = KeychainStore(current: FailingSaveStore(), legacy: legacy)
+        let store = KeychainStore(current: FailingSaveStore(), legacy: [legacy])
 
         #expect(try store.password(for: "server") == "old password")
         #expect(legacy.passwords["server"] == "old password")
+    }
+
+    @Test func keychainMigrationPrefersNewestLegacyItemAndFallsBackToOlderOne() throws {
+        let current = MemoryCredentialStore()
+        let newer = MemoryCredentialStore()
+        let older = MemoryCredentialStore()
+        newer.passwords["server"] = "newer password"
+        older.passwords["server"] = "older password"
+        older.passwords["other"] = "other password"
+        let store = KeychainStore(current: current, legacy: [newer, older])
+
+        #expect(try store.password(for: "server") == "newer password")
+        #expect(try store.password(for: "other") == "other password")
+        #expect(current.passwords["server"] == "newer password")
+        #expect(current.passwords["other"] == "other password")
+
+        try store.delete(credentialID: "server")
+        #expect(newer.passwords["server"] == nil)
+        #expect(older.passwords["server"] == nil)
     }
 
     @Test func unusableMusicCacheIsRecreatedWithoutARegistryDependency() async throws {

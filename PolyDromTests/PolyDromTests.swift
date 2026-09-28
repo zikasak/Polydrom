@@ -140,7 +140,7 @@ struct PolyDromTests {
     @Test func libraryStorePersistsRecentSongs() async throws {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),
-            keychain: KeychainStore()
+            keychain: MemoryCredentialStore()
         )
         let song = makeSong()
         let serverKey = "https://music.example.com|user"
@@ -164,7 +164,7 @@ struct PolyDromTests {
     @Test func playNextInsertsAfterCurrentSongAndQueueAppends() {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),
-            keychain: KeychainStore()
+            keychain: MemoryCredentialStore()
         )
         let audioPlayer = AudioPlayer()
         let viewModel = AppCoordinator(store: store, audioPlayer: audioPlayer)
@@ -186,7 +186,7 @@ struct PolyDromTests {
     @Test func duplicateQueueEntriesKeepIndependentIdentity() {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),
-            keychain: KeychainStore()
+            keychain: MemoryCredentialStore()
         )
         let audioPlayer = AudioPlayer()
         let viewModel = AppCoordinator(store: store, audioPlayer: audioPlayer)
@@ -241,7 +241,7 @@ struct PolyDromTests {
     @Test func songNavigationReusesLoadedAlbumAndArtistMetadata() throws {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),
-            keychain: KeychainStore()
+            keychain: MemoryCredentialStore()
         )
         let viewModel = AppCoordinator(store: store, audioPlayer: AudioPlayer())
         let song = makeSong(

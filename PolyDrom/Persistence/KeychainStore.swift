@@ -17,14 +17,24 @@ protocol CredentialStoring {
 
 struct KeychainStore: CredentialStoring {
     private let current: any CredentialStoring
-    private let legacy: any CredentialStoring
+    private let legacy: [any CredentialStoring]
 
     init() {
-        current = KeychainServiceStore(service: "uk.zikasak.PolyDrom.Navidrome.v2")
-        legacy = KeychainServiceStore(service: "uk.zikasak.PolyDrom.Navidrome")
+        #if DEBUG
+        // Tests and local builds must never create items in the release app's
+        // Keychain services. Their signatures change between builds.
+        current = KeychainServiceStore(service: "uk.zikasak.PolyDrom.Navidrome.debug")
+        legacy = []
+        #else
+        current = KeychainServiceStore(service: "uk.zikasak.PolyDrom.Navidrome.v3")
+        legacy = [
+            KeychainServiceStore(service: "uk.zikasak.PolyDrom.Navidrome.v2"),
+            KeychainServiceStore(service: "uk.zikasak.PolyDrom.Navidrome")
+        ]
+        #endif
     }
 
-    init(current: any CredentialStoring, legacy: any CredentialStoring) {
+    init(current: any CredentialStoring, legacy: [any CredentialStoring]) {
         self.current = current
         self.legacy = legacy
     }
@@ -34,20 +44,20 @@ struct KeychainStore: CredentialStoring {
             return password
         }
 
-        guard let password = try legacy.password(for: credentialID) else {
-            return nil
-        }
+        for oldStore in legacy {
+            guard let password = try oldStore.password(for: credentialID) else {
+                continue
+            }
 
-        // Old items were created by ad-hoc-signed releases. Their ACL retains
-        // each individual app build, so create a new item owned by this app.
-        do {
-            try current.save(password: password, credentialID: credentialID)
-        } catch {
-            // Keep the saved server usable if the replacement item cannot be
-            // written. The original item remains available for a later retry.
-            AppLog.registry.error("Could not migrate Keychain credential: \(error.localizedDescription, privacy: .public)")
+            // Preserve the source item until its replacement is usable.
+            do {
+                try current.save(password: password, credentialID: credentialID)
+            } catch {
+                AppLog.registry.error("Could not migrate Keychain credential: \(error.localizedDescription, privacy: .public)")
+            }
+            return password
         }
-        return password
+        return nil
     }
 
     func save(password: String, credentialID: String) throws {
@@ -56,7 +66,9 @@ struct KeychainStore: CredentialStoring {
 
     func delete(credentialID: String) throws {
         try current.delete(credentialID: credentialID)
-        try legacy.delete(credentialID: credentialID)
+        for oldStore in legacy {
+            try oldStore.delete(credentialID: credentialID)
+        }
     }
 }
 
