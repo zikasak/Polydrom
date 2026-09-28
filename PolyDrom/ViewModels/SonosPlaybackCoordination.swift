@@ -437,7 +437,7 @@ extension AppCoordinator {
                 let status = position.transportStatus
                 let sonosSeconds = position.seconds
                 let sonosDuration = position.duration
-                AppLog.sonos.info(
+                AppLog.sonos.notice(
                     """
                     Sonos stopped: finished=\(finished, privacy: .public) \
                     status=\(status, privacy: .public) \
