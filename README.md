@@ -220,7 +220,7 @@ When reporting a bug, include the macOS version, PolyDrom version, Navidrome ver
 
 ## Releases and updates
 
-GitHub Actions builds and tests every pull request and push to `main`, then produces an unsigned Apple-silicon DMG. After a successful `main` build, [semantic-release](https://github.com/semantic-release/semantic-release) analyzes Conventional Commits since the previous release and, when one is required, publishes:
+GitHub Actions builds and tests every pull request and push to `main`, then produces an ad-hoc-signed Apple-silicon CI DMG. After a successful `main` build, [semantic-release](https://github.com/semantic-release/semantic-release) analyzes Conventional Commits since the previous release and, when one is required, publishes a DMG signed with PolyDrom's persistent self-signed certificate:
 
 - `PolyDrom.dmg`
 - `PolyDrom.dmg.sha256`
@@ -241,7 +241,11 @@ gh secret set SPARKLE_ED_PRIVATE_KEY \
 rm /private/tmp/polydrom-sparkle-private-key
 ```
 
-The public key belongs in `Config/Info.plist`; the private key is used only by the release workflow. Releases are determined automatically from commits merged into `main`:
+The public key belongs in `Config/Info.plist`; the private key is used only by the release workflow.
+
+The release job also needs `POLYDROM_SIGNING_P12_BASE64` and `POLYDROM_SIGNING_P12_PASSWORD` repository secrets. They contain a password-protected PKCS#12 copy of the persistent PolyDrom code-signing identity and its password. Keep a secure backup of both; **do not regenerate the certificate for each release**. The public certificate fingerprint is pinned in `Config/ReleaseSigningFingerprint`, so a replacement signing identity fails the release rather than silently changing the app's Keychain identity. GitHub Actions imports the certificate into a temporary keychain. CI artifacts for pull requests use ad-hoc signing and do not receive these secrets.
+
+Releases are determined automatically from commits merged into `main`:
 
 - `fix:` and `perf:` create a patch release.
 - `feat:` creates a minor release.
@@ -250,7 +254,7 @@ The public key belongs in `Config/Info.plist`; the private key is used only by t
 
 Use Conventional Commit messages for commits that reach `main`, including squash-merge titles, for example `fix(playback): resume after reconnect`. semantic-release calculates the next version, creates the `vMAJOR.MINOR.PATCH` tag and release notes, stamps the archived app with that version, and uploads the DMG, checksum, and appcast to the GitHub release. The Xcode project's marketing version remains the fallback for local, pull-request, and manual workflow builds; it does not need to be changed for releases. Manual workflow runs build artifacts but never publishes a GitHub release.
 
-The release workflow intentionally does not perform Apple Developer signing, notarization, or stapling. Adding those steps requires an Apple Developer identity and corresponding GitHub secrets.
+The self-signed certificate gives Keychain a stable code-signing requirement across releases. The first update from an older ad-hoc-signed release may ask for Keychain access once more; later updates signed with this certificate should retain that approval. This certificate is not an Apple Developer ID. Gatekeeper still treats the app as unidentified, and the workflow does not notarize or staple it. Apple Developer signing and notarization require a Developer ID identity and corresponding GitHub secrets.
 
 ## Contributing
 

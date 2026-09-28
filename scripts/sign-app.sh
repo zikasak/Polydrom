@@ -50,31 +50,33 @@ sparkle_version="$sparkle_framework/Versions/B"
 test -d "$sparkle_framework"
 test -d "$sparkle_version"
 
-# An ad-hoc identity is available without an Apple Developer Program account.
-# It makes the bundle's code and resources internally verifiable, but it does
-# not identify the developer to Gatekeeper or replace notarization.
-signing_identity="-"
+# CI artifacts use ad-hoc signing. Published releases supply a persistent
+# certificate identity so Keychain recognizes the app after an update.
+signing_identity="${POLYDROM_SIGNING_IDENTITY:--}"
+signing_options=()
+if [[ -n "${POLYDROM_SIGNING_KEYCHAIN:-}" ]]; then
+  signing_options+=(--keychain "$POLYDROM_SIGNING_KEYCHAIN")
+fi
 
 # Sparkle contains nested executables and services. Sign the deepest items
 # first, then the framework, and finally the containing application. Do not
 # replace this with codesign --deep: Sparkle's sandboxed helpers have different
 # entitlements and need to be signed individually.
-codesign --force --sign "$signing_identity" --options runtime \
+codesign --force --sign "$signing_identity" "${signing_options[@]}" --options runtime \
   "$sparkle_version/XPCServices/Installer.xpc"
-codesign --force --sign "$signing_identity" --options runtime \
+codesign --force --sign "$signing_identity" "${signing_options[@]}" --options runtime \
   --preserve-metadata=entitlements \
   "$sparkle_version/XPCServices/Downloader.xpc"
-codesign --force --sign "$signing_identity" --options runtime \
+codesign --force --sign "$signing_identity" "${signing_options[@]}" --options runtime \
   "$sparkle_version/Autoupdate"
-codesign --force --sign "$signing_identity" --options runtime \
+codesign --force --sign "$signing_identity" "${signing_options[@]}" --options runtime \
   "$sparkle_version/Updater.app"
-codesign --force --sign "$signing_identity" --options runtime \
+codesign --force --sign "$signing_identity" "${signing_options[@]}" --options runtime \
   "$sparkle_framework"
 
-# Leave the application without the hardened runtime. An ad-hoc application
-# cannot use the same library-validation setup as a Developer ID build, while
-# Sparkle's nested helpers retain the runtime configuration they ship with.
-codesign --force --sign "$signing_identity" \
+# Leave the application without the hardened runtime. Sparkle's nested helpers
+# retain the runtime configuration they ship with.
+codesign --force --sign "$signing_identity" "${signing_options[@]}" \
   --entitlements "$resolved_entitlements" \
   "$app_path"
 

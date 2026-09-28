@@ -118,7 +118,7 @@ jobs:
             exit 1
           fi
 
-      - name: Ad-hoc sign release app
+      - name: Ad-hoc sign CI artifact
         env:
           ARCHIVE_PATH: ${{ runner.temp }}/PolyDrom.xcarchive
         run: |
@@ -198,6 +198,45 @@ jobs:
 
       - name: Install release dependencies
         run: npm ci
+
+      - name: Import release signing certificate
+        env:
+          POLYDROM_SIGNING_P12_BASE64: ${{ secrets.POLYDROM_SIGNING_P12_BASE64 }}
+          POLYDROM_SIGNING_P12_PASSWORD: ${{ secrets.POLYDROM_SIGNING_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          : "${POLYDROM_SIGNING_P12_BASE64:?Missing signing certificate secret}"
+          : "${POLYDROM_SIGNING_P12_PASSWORD:?Missing signing certificate password secret}"
+
+          certificate_path="$RUNNER_TEMP/PolyDrom-signing.p12"
+          keychain_path="$RUNNER_TEMP/PolyDrom-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+
+          printf '%s' "$POLYDROM_SIGNING_P12_BASE64" | base64 -D > "$certificate_path"
+          chmod 600 "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" -P "$POLYDROM_SIGNING_P12_PASSWORD" \
+            -f pkcs12 -k "$keychain_path" -T /usr/bin/codesign > /dev/null
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$keychain_password" "$keychain_path" > /dev/null
+
+          certificate_pem="$RUNNER_TEMP/PolyDrom-signing.pem"
+          security find-certificate -p -c 'PolyDrom Release Signing' \
+            "$keychain_path" > "$certificate_pem"
+          test -s "$certificate_pem"
+
+          signing_identity="$(openssl x509 -in "$certificate_pem" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)"
+          expected_identity="$(cat Config/ReleaseSigningFingerprint)"
+          if [[ "$signing_identity" != "$expected_identity" ]]; then
+            echo 'Release signing certificate does not match the pinned identity.' >&2
+            exit 1
+          fi
+          echo "POLYDROM_SIGNING_IDENTITY=$signing_identity" >> "$GITHUB_ENV"
+          echo "POLYDROM_SIGNING_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+          rm -f "$certificate_path" "$certificate_pem"
 
       - name: Run semantic-release
         id: semantic_release

@@ -24,6 +24,13 @@ fi
 : "${GITHUB_RUN_NUMBER:?GITHUB_RUN_NUMBER is required}"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
 : "${SPARKLE_ED_PRIVATE_KEY:?SPARKLE_ED_PRIVATE_KEY is required}"
+: "${POLYDROM_SIGNING_IDENTITY:?POLYDROM_SIGNING_IDENTITY is required for published releases}"
+: "${POLYDROM_SIGNING_KEYCHAIN:?POLYDROM_SIGNING_KEYCHAIN is required for published releases}"
+expected_identity="$(cat Config/ReleaseSigningFingerprint)"
+if [[ "$POLYDROM_SIGNING_IDENTITY" != "$expected_identity" ]]; then
+  echo "Published release signing identity does not match the pinned certificate." >&2
+  exit 1
+fi
 
 archive_path="$RUNNER_TEMP/PolyDrom.xcarchive"
 derived_data_path="$RUNNER_TEMP/PolyDrom-ReleaseData"
@@ -68,6 +75,12 @@ if [[ "$bundle_version" != "$GITHUB_RUN_NUMBER" ]]; then
 fi
 
 bash scripts/sign-app.sh "$app_path"
+
+signature_details="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
+if grep -Fq 'Signature=adhoc' <<< "$signature_details"; then
+  echo "Published releases must not use an ad-hoc signature." >&2
+  exit 1
+fi
 
 staging_path="$(mktemp -d "$RUNNER_TEMP/PolyDrom-dmg.XXXXXX")"
 ditto "$app_path" "$staging_path/PolyDrom.app"
