@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 struct SonosActiveSession {
     let group: SonosGroup
