@@ -1149,8 +1149,22 @@ final class AppCoordinator: ObservableObject {
             return
         } catch {
             guard isCurrentSession(generation, serverKey: serverKey) else { return }
-            if !wasOnline || error is URLError {
-                isOnline = false
+            // Navidrome can stall or reject catalog requests while it rescans the
+            // library, so confirm the server is really unreachable before going offline.
+            if let changeState = try? await client.catalogChangeState(timeoutInterval: 10) {
+                guard isCurrentSession(generation, serverKey: serverKey) else { return }
+                isOnline = true
+                if changeState.isScanning || error is LibrarySyncError {
+                    AppLog.sync.info("Metadata refresh interrupted by a Navidrome scan; retrying later")
+                    statusMessage = "Navidrome is scanning. Refresh will retry shortly."
+                    scheduleScanRetry(serverKey: serverKey, generation: generation)
+                    return
+                }
+            } else {
+                guard isCurrentSession(generation, serverKey: serverKey) else { return }
+                if !wasOnline || error is URLError {
+                    isOnline = false
+                }
             }
             AppLog.sync.error("Metadata refresh failed: \(error.localizedDescription, privacy: .private)")
             statusMessage = hasCachedLibrary

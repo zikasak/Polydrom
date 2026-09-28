@@ -456,6 +456,28 @@ struct AppCoordinatorTests {
         #expect(!failed.isBusy)
     }
 
+    @Test func refreshInterruptedByNavidromeScanKeepsServerOnline() async throws {
+        let scanStarted = Mutex(false)
+        let handler: StubURLProtocol.Handler = { request in
+            switch apiMethod(in: request) {
+            case "ping", "getOpenSubsonicExtensions":
+                return envelope(#"{"status":"ok"}"#)
+            case "getScanStatus":
+                let scanning = scanStarted.withLock { $0 }
+                return envelope(#"{"status":"ok","scanStatus":{"scanning":\#(scanning),"lastScan":"scan"}}"#)
+            default:
+                scanStarted.withLock { $0 = true }
+                throw URLError(.timedOut)
+            }
+        }
+        let (viewModel, _, _) = makeViewModel(session: StubURLProtocol.session(handler: handler))
+
+        await viewModel.connect(makeProfile())
+
+        #expect(viewModel.isOnline)
+        #expect(viewModel.statusMessage == "Navidrome is scanning. Refresh will retry shortly.")
+    }
+
     @Test func lateConnectionResponseCannotReplaceNewerServerSession() async throws {
         let handler: StubURLProtocol.Handler = { request in
             if apiMethod(in: request) == "ping", queryValue("u", in: request) == "first" {

@@ -45,8 +45,8 @@ struct NavidromeClient: Sendable {
         return response.subsonicResponse.song
     }
 
-    func catalogChangeState() async throws -> CatalogChangeState {
-        let response: ScanStatusEnvelope = try await request("getScanStatus")
+    func catalogChangeState(timeoutInterval: TimeInterval? = nil) async throws -> CatalogChangeState {
+        let response: ScanStatusEnvelope = try await request("getScanStatus", timeoutInterval: timeoutInterval)
         try response.subsonicResponse.throwIfNeeded()
         let status = response.subsonicResponse.scanStatus
         return CatalogChangeState(
