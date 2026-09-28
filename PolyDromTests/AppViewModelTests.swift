@@ -191,6 +191,13 @@ struct AppCoordinatorTests {
 
         await viewModel.connect(profile)
 
+        let item = try #require(viewModel.audioPlayer.player.currentItem)
+        NotificationCenter.default.post(
+            name: .AVPlayerItemFailedToPlayToEndTime,
+            object: item
+        )
+        try await Task.sleep(for: .milliseconds(100))
+
         #expect(getSongRequestCount.withLock { $0 } == 0)
         #expect(viewModel.playbackQueue.map(\.song.id) == [removedSong.id, availableSong.id])
         #expect(viewModel.currentPlaybackQueueEntryID == removedEntry.id)

@@ -65,6 +65,7 @@ final class AudioPlayer: ObservableObject {
     private var localVolume: Double = 1
     private var isHandoffInProgress = false
     private var fallbackStreamURL: URL?
+    private var hasAttemptedLocalPlayback = false
 
     init() {
         let player = AVPlayer()
@@ -103,6 +104,7 @@ final class AudioPlayer: ObservableObject {
     ) {
         route = .local
         fallbackStreamURL = fallbackURL
+        hasAttemptedLocalPlayback = autoplay
         AppLog.playback.info(
             "Starting playback for song \(song.id, privacy: .private(mask: .hash))"
         )
@@ -162,6 +164,7 @@ final class AudioPlayer: ObservableObject {
     ) {
         playbackGeneration += 1
         fallbackStreamURL = nil
+        hasAttemptedLocalPlayback = false
         removeTimeObserver()
         removeSongFinishedObserver()
         removePlaybackFailureObserver()
@@ -244,6 +247,7 @@ final class AudioPlayer: ObservableObject {
 
     func restore(song: NavidromeSong, at seconds: Double) {
         route = .local
+        hasAttemptedLocalPlayback = false
         let targetTime = normalizedPlaybackTime(seconds, duration: Double(song.duration ?? 0))
         currentSong = song
         isPlaying = false
@@ -270,9 +274,15 @@ final class AudioPlayer: ObservableObject {
             onSonosCommand?(.play)
             return
         }
-        guard currentSong != nil, player.currentItem != nil else { return }
+        guard currentSong != nil, let item = player.currentItem else { return }
 
         AppLog.playback.debug("Resuming current song")
+        hasAttemptedLocalPlayback = true
+        if item.status == .failed {
+            isPlaying = true
+            failCurrentSong(error: item.error)
+            return
+        }
         resetStallTracking(at: currentTime)
         startStallCheckTimer()
         isPlaying = true
@@ -311,6 +321,7 @@ final class AudioPlayer: ObservableObject {
         AppLog.playback.info("Stopping playback")
         playbackGeneration += 1
         fallbackStreamURL = nil
+        hasAttemptedLocalPlayback = false
         removeTimeObserver()
         removeSongFinishedObserver()
         removePlaybackFailureObserver()
@@ -632,7 +643,8 @@ final class AudioPlayer: ObservableObject {
     }
 
     private func failCurrentSong(error: Error?) {
-        guard route == .local, !hasFinishedCurrentSong, let failedSong = currentSong else { return }
+        guard route == .local, hasAttemptedLocalPlayback, !hasFinishedCurrentSong,
+              let failedSong = currentSong else { return }
         if retryWithFallbackStream() { return }
         if let error {
             let nsError = error as NSError
