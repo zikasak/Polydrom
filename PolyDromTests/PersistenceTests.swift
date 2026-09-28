@@ -217,6 +217,44 @@ struct PersistenceTests {
         #expect(NavidromeError.server(message: "Nope").localizedDescription == "Nope")
     }
 
+    @Test func legacyKeychainPasswordMovesToNewItemAndNewItemTakesPriority() throws {
+        let current = MemoryCredentialStore()
+        let legacy = MemoryCredentialStore()
+        legacy.passwords["server"] = "old password"
+        let store = KeychainStore(current: current, legacy: legacy)
+
+        #expect(try store.password(for: "server") == "old password")
+        #expect(current.passwords["server"] == "old password")
+        #expect(legacy.passwords["server"] == "old password")
+
+        legacy.error = TestFailure.intentional
+        #expect(try store.password(for: "server") == "old password")
+        legacy.error = nil
+
+        try store.save(password: "new password", credentialID: "server")
+        #expect(current.passwords["server"] == "new password")
+        #expect(legacy.passwords["server"] == "old password")
+
+        try store.delete(credentialID: "server")
+        #expect(current.passwords["server"] == nil)
+        #expect(legacy.passwords["server"] == nil)
+    }
+
+    @Test func failedKeychainMigrationKeepsLegacyPasswordUsable() throws {
+        struct FailingSaveStore: CredentialStoring {
+            func password(for credentialID: String) throws -> String? { nil }
+            func save(password: String, credentialID: String) throws { throw TestFailure.intentional }
+            func delete(credentialID: String) throws {}
+        }
+
+        let legacy = MemoryCredentialStore()
+        legacy.passwords["server"] = "old password"
+        let store = KeychainStore(current: FailingSaveStore(), legacy: legacy)
+
+        #expect(try store.password(for: "server") == "old password")
+        #expect(legacy.passwords["server"] == "old password")
+    }
+
     @Test func unusableMusicCacheIsRecreatedWithoutARegistryDependency() async throws {
         let directory = try temporaryDirectory()
         let cacheURL = directory.appendingPathComponent("LibraryCache.sqlite")

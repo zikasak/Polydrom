@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import OSLog
 import Security
 
 protocol CredentialStoring {
@@ -15,7 +16,52 @@ protocol CredentialStoring {
 }
 
 struct KeychainStore: CredentialStoring {
-    private let service = "uk.zikasak.PolyDrom.Navidrome"
+    private let current: any CredentialStoring
+    private let legacy: any CredentialStoring
+
+    init() {
+        current = KeychainServiceStore(service: "uk.zikasak.PolyDrom.Navidrome.v2")
+        legacy = KeychainServiceStore(service: "uk.zikasak.PolyDrom.Navidrome")
+    }
+
+    init(current: any CredentialStoring, legacy: any CredentialStoring) {
+        self.current = current
+        self.legacy = legacy
+    }
+
+    func password(for credentialID: String) throws -> String? {
+        if let password = try current.password(for: credentialID) {
+            return password
+        }
+
+        guard let password = try legacy.password(for: credentialID) else {
+            return nil
+        }
+
+        // Old items were created by ad-hoc-signed releases. Their ACL retains
+        // each individual app build, so create a new item owned by this app.
+        do {
+            try current.save(password: password, credentialID: credentialID)
+        } catch {
+            // Keep the saved server usable if the replacement item cannot be
+            // written. The original item remains available for a later retry.
+            AppLog.registry.error("Could not migrate Keychain credential: \(error.localizedDescription, privacy: .public)")
+        }
+        return password
+    }
+
+    func save(password: String, credentialID: String) throws {
+        try current.save(password: password, credentialID: credentialID)
+    }
+
+    func delete(credentialID: String) throws {
+        try current.delete(credentialID: credentialID)
+        try legacy.delete(credentialID: credentialID)
+    }
+}
+
+private struct KeychainServiceStore: CredentialStoring {
+    let service: String
 
     func password(for credentialID: String) throws -> String? {
         let query: [String: Any] = [
@@ -69,6 +115,13 @@ struct KeychainStore: CredentialStoring {
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
 
         let addStatus = SecItemAdd(insert as CFDictionary, nil)
+        if addStatus == errSecDuplicateItem {
+            let retryStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+            guard retryStatus == errSecSuccess else {
+                throw KeychainError.unexpectedStatus(retryStatus)
+            }
+            return
+        }
         guard addStatus == errSecSuccess else {
             throw KeychainError.unexpectedStatus(addStatus)
         }
