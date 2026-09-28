@@ -30,6 +30,7 @@ struct SonosTrack: Sendable {
     let song: NavidromeSong
     let streamURL: URL
     let artworkURL: URL?
+    var mimeType = "audio/mpeg"
 }
 
 struct SonosPosition: Sendable {
@@ -294,7 +295,7 @@ struct SonosUPnP: Sendable {
             "<upnp:albumArtURI>\(SonosXML.escape($0.absoluteString))</upnp:albumArtURI>"
         } ?? ""
         return """
-        <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="\(item.entryID.uuidString)" parentID="0" restricted="true"><dc:title>\(SonosXML.escape(song.title))</dc:title>\(artist)\(album)\(artwork)<upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="http-get:*:audio/mpeg:*" duration="\(time)">\(SonosXML.escape(item.streamURL.absoluteString))</res></item></DIDL-Lite>
+        <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="\(item.entryID.uuidString)" parentID="0" restricted="true"><dc:title>\(SonosXML.escape(song.title))</dc:title>\(artist)\(album)\(artwork)<upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="http-get:*:\(item.mimeType):*" duration="\(time)">\(SonosXML.escape(item.streamURL.absoluteString))</res></item></DIDL-Lite>
         """
     }
 }

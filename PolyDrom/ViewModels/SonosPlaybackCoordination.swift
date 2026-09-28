@@ -191,14 +191,32 @@ extension AppCoordinator {
         return "\(error.domain) \(error.code): \(error.localizedDescription)"
     }
 
+    /// Formats Sonos plays natively are streamed as the original file, which keeps
+    /// byte-range seeking available; transcoded streams lack it.
+    nonisolated static func sonosStreamFormat(for song: NavidromeSong) -> (format: String, mimeType: String) {
+        let mimeType: String? = switch song.suffix?.lowercased() {
+        case "mp3": "audio/mpeg"
+        case "flac": "audio/flac"
+        case "m4a", "mp4": "audio/mp4"
+        case "aac": "audio/aac"
+        case "ogg", "oga": "audio/ogg"
+        case "wma": "audio/x-ms-wma"
+        case "wav": "audio/wav"
+        case "aif", "aiff": "audio/aiff"
+        default: nil
+        }
+        return mimeType.map { ("raw", $0) } ?? ("mp3", "audio/mpeg")
+    }
+
     private static func track(_ entry: PlaybackQueueEntry, client: NavidromeClient) throws -> SonosTrack {
-        let format = entry.song.suffix?.lowercased() == "mp3" ? "raw" : "mp3"
+        let (format, mimeType) = sonosStreamFormat(for: entry.song)
         let stream = try client.streamURL(for: entry.song, format: format)
         try checkSpeakerReachability(of: stream)
         let artworkID = entry.song.coverArt ?? entry.song.albumId
         let artwork = artworkID.flatMap { try? client.coverArtURL(id: $0, size: 512) }
         return SonosTrack(
-            entryID: entry.id, song: entry.song, streamURL: stream, artworkURL: artwork
+            entryID: entry.id, song: entry.song, streamURL: stream, artworkURL: artwork,
+            mimeType: mimeType
         )
     }
 
