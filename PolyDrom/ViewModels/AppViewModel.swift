@@ -183,7 +183,7 @@ final class AppCoordinator: ObservableObject {
                     storeURL: legacyStoreURL,
                     recoverDisposableCache: false
                 ),
-                keychain: KeychainStore()
+                keychain: CredentialStore()
             )
             try? self.serverRegistry.importLegacyServersIfNeeded(from: legacyStore)
         } else {

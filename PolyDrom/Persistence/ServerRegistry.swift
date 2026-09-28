@@ -2,8 +2,8 @@ import Foundation
 import OSLog
 
 /// Stores server metadata separately from the disposable music cache. Passwords
-/// are deliberately never encoded here; their Keychain identifiers are retained
-/// so credentials survive cache recovery and schema changes.
+/// are deliberately never encoded here; their credential identifiers are
+/// retained so credentials survive cache recovery and schema changes.
 @MainActor
 final class ServerRegistry {
     private struct StoredServer: Codable {
@@ -49,7 +49,7 @@ final class ServerRegistry {
     private var storedServers: [StoredServer]
 
     convenience init() {
-        self.init(fileURL: Self.defaultFileURL(), keychain: KeychainStore())
+        self.init(fileURL: Self.defaultFileURL(), keychain: CredentialStore())
     }
 
     init(fileURL: URL?, keychain: any CredentialStoring) {

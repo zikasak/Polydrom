@@ -22,7 +22,7 @@ final class LibraryStore {
     }
 
     convenience init() {
-        self.init(persistence: .shared, keychain: KeychainStore())
+        self.init(persistence: .shared, keychain: CredentialStore())
     }
 
     func servers() throws -> [ServerProfile] {

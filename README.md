@@ -98,11 +98,11 @@ When a server cannot be reached, PolyDrom loads its cached library automatically
 
 ## Data and security
 
-- Passwords are stored in the macOS Keychain and are not written to the library database or server registry.
+- Passwords are stored in an owner-only file (`credentials.json`, mode 0600) inside PolyDrom's sandbox container. They are not written to the library database or server registry. PolyDrom does not use the login keychain because the app has no Apple team identifier: macOS binds such keychain items to one exact build, so every update would ask for the keychain password. The trade-off is that the file is protected by macOS account and sandbox-container permissions rather than keychain encryption.
 - Non-secret server profiles are stored atomically in Application Support.
 - Catalog metadata, favorites, playlists, and local playback history are stored in a server-scoped Core Data cache.
 - Cover art is cached separately on disk and in memory.
-- Deleting a saved server removes its Keychain credential and cached library from the Mac.
+- Deleting a saved server removes its stored password and cached library from the Mac.
 - Clearing **Library metadata** removes all cached libraries and local play history but preserves saved servers and passwords.
 - Clearing **Cover art** removes downloaded and decoded images; they are fetched again on demand.
 - Network logs record request method, status, latency, and response size, but not passwords or authentication query values.
@@ -170,7 +170,7 @@ AppCoordinator ─────────────── AudioPlayer / Now P
     │
     ├── NavidromeClient ────── Subsonic API, streams, lyrics, artwork
     ├── LibrarySyncCoordinator
-    ├── ServerRegistry ─────── Application Support + Keychain
+    ├── ServerRegistry ─────── Application Support + credential file
     ├── LibraryStore ───────── server-scoped Core Data cache
     ├── PlaybackPersistence ── queue, position, and volume
     └── CoverArtCache ──────── bounded memory and disk caches
@@ -178,7 +178,7 @@ AppCoordinator ─────────────── AudioPlayer / Now P
 
 - `AppCoordinator` uses a session generation to prevent a canceled connection, deleted server, or stale asynchronous response from changing the active library or player.
 - `LibrarySyncCoordinator` performs paged catalog synchronization, coalesces concurrent refreshes, retries a catalog that changes mid-sync, and applies updates atomically.
-- `LibraryStore` is disposable by design. If its cache cannot be migrated or opened, only the affected local cache is rebuilt; saved server profiles and Keychain credentials remain intact.
+- `LibraryStore` is disposable by design. If its cache cannot be migrated or opened, only the affected local cache is rebuilt; saved server profiles and credentials remain intact.
 - UI and AVFoundation state stay on the main actor. Transport and domain values are `Sendable`, while Core Data work runs on background contexts.
 - `CoverArtCache` deduplicates in-flight downloads, bounds network and decode concurrency, and prevents an old request from repopulating a cache after it has been cleared.
 
@@ -187,7 +187,7 @@ AppCoordinator ─────────────── AudioPlayer / Now P
 ```text
 PolyDrom/
 ├── Models/          Domain and metadata models
-├── Persistence/     Core Data, server registry, Keychain, playback state
+├── Persistence/     Core Data, server registry, credentials, playback state
 ├── Playback/        AVPlayer, Now Playing, and AirPlay integration
 ├── Services/        Navidrome API, synchronization, updates, cover art
 ├── ViewModels/      Application and playlist coordination
@@ -243,7 +243,7 @@ rm /private/tmp/polydrom-sparkle-private-key
 
 The public key belongs in `Config/Info.plist`; the private key is used only by the release workflow.
 
-The release job also needs `POLYDROM_SIGNING_P12_BASE64` and `POLYDROM_SIGNING_P12_PASSWORD` repository secrets. They contain a password-protected PKCS#12 copy of the persistent PolyDrom code-signing identity and its password. Keep a secure backup of both; **do not regenerate the certificate for each release**. The public certificate fingerprint is pinned in `Config/ReleaseSigningFingerprint`, so a replacement signing identity fails the release rather than silently changing the app's Keychain identity. GitHub Actions imports the certificate into a temporary keychain. CI artifacts for pull requests use ad-hoc signing and do not receive these secrets.
+The release job also needs `POLYDROM_SIGNING_P12_BASE64` and `POLYDROM_SIGNING_P12_PASSWORD` repository secrets. They contain a password-protected PKCS#12 copy of the persistent PolyDrom code-signing identity and its password. Keep a secure backup of both; **do not regenerate the certificate for each release**. The public certificate fingerprint is pinned in `Config/ReleaseSigningFingerprint`, so a replacement signing identity fails the release rather than silently changing the app's code-signing identity. GitHub Actions imports the certificate into a temporary keychain. CI artifacts for pull requests use ad-hoc signing and do not receive these secrets.
 
 Releases are determined automatically from commits merged into `main`:
 
@@ -254,13 +254,13 @@ Releases are determined automatically from commits merged into `main`:
 
 Use Conventional Commit messages for commits that reach `main`, including squash-merge titles, for example `fix(playback): resume after reconnect`. semantic-release calculates the next version, creates the `vMAJOR.MINOR.PATCH` tag and release notes, stamps the archived app with that version, and uploads the DMG, checksum, and appcast to the GitHub release. The Xcode project's marketing version remains the fallback for local, pull-request, and manual workflow builds; it does not need to be changed for releases. Manual workflow runs build artifacts but never publishes a GitHub release.
 
-The self-signed certificate gives Keychain a stable code-signing requirement across releases. Password items created by older releases are copied to new Keychain items when first read by the signed app. That first read may ask for Keychain access once more; later updates should use the new items without prompting. Source items are retained until their saved server is deleted, so a failed copy cannot erase the password. Debug and test builds use a separate Keychain service and cannot claim release credentials. This certificate is not an Apple Developer ID. Gatekeeper still treats the app as unidentified, and the workflow does not notarize or staple it. Apple Developer signing and notarization require a Developer ID identity and corresponding GitHub secrets.
+The self-signed certificate gives the app a stable code-signing requirement across releases. Passwords that older releases saved in the login keychain are copied into the credential file the first time they are read. That read asks for keychain access one last time; later updates do not touch the keychain. The keychain items are retained until their saved server is deleted, so a failed copy cannot erase the password. Debug and test builds use a separate credential file and never read release credentials. This certificate is not an Apple Developer ID. Gatekeeper still treats the app as unidentified, and the workflow does not notarize or staple it. Apple Developer signing and notarization require a Developer ID identity and corresponding GitHub secrets.
 
 ## Contributing
 
 Issues and focused pull requests are welcome. Before opening a PR:
 
-1. Keep changes scoped and preserve server isolation, Keychain handling, and session-generation guards.
+1. Keep changes scoped and preserve server isolation, credential handling, and session-generation guards.
 2. Add or update tests for behavior changes.
 3. Run `bash scripts/quality.sh` and resolve every warning.
 4. Do not commit credentials, private Sparkle keys, derived data, build products, or local library caches.

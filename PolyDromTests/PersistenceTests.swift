@@ -217,11 +217,11 @@ struct PersistenceTests {
         #expect(NavidromeError.server(message: "Nope").localizedDescription == "Nope")
     }
 
-    @Test func legacyKeychainPasswordMovesToNewItemAndNewItemTakesPriority() throws {
+    @Test func legacyKeychainPasswordMovesToCredentialFileAndFileTakesPriority() throws {
         let current = MemoryCredentialStore()
         let legacy = MemoryCredentialStore()
         legacy.passwords["server"] = "old password"
-        let store = KeychainStore(current: current, legacy: [legacy])
+        let store = CredentialStore(current: current, legacy: [legacy])
 
         #expect(try store.password(for: "server") == "old password")
         #expect(current.passwords["server"] == "old password")
@@ -249,10 +249,35 @@ struct PersistenceTests {
 
         let legacy = MemoryCredentialStore()
         legacy.passwords["server"] = "old password"
-        let store = KeychainStore(current: FailingSaveStore(), legacy: [legacy])
+        let store = CredentialStore(current: FailingSaveStore(), legacy: [legacy])
 
         #expect(try store.password(for: "server") == "old password")
         #expect(legacy.passwords["server"] == "old password")
+    }
+
+    @Test func fileCredentialStoreKeepsPasswordsInOwnerOnlyFile() throws {
+        let fileURL = try temporaryDirectory()
+            .appendingPathComponent("PolyDrom", isDirectory: true)
+            .appendingPathComponent("credentials.json")
+        let store = FileCredentialStore(fileURL: fileURL)
+
+        #expect(try store.password(for: "server") == nil)
+        try store.save(password: "first", credentialID: "server")
+        try store.save(password: "other", credentialID: "other")
+        try store.save(password: "second", credentialID: "server")
+
+        let reopened = FileCredentialStore(fileURL: fileURL)
+        #expect(try reopened.password(for: "server") == "second")
+        #expect(try reopened.password(for: "other") == "other")
+        let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+        let siblings = try FileManager.default.contentsOfDirectory(atPath: fileURL.deletingLastPathComponent().path)
+        #expect(siblings == ["credentials.json"])
+
+        try reopened.delete(credentialID: "server")
+        try reopened.delete(credentialID: "missing")
+        #expect(try store.password(for: "server") == nil)
+        #expect(try store.password(for: "other") == "other")
     }
 
     @Test func keychainMigrationPrefersNewestLegacyItemAndFallsBackToOlderOne() throws {
@@ -262,7 +287,7 @@ struct PersistenceTests {
         newer.passwords["server"] = "newer password"
         older.passwords["server"] = "older password"
         older.passwords["other"] = "other password"
-        let store = KeychainStore(current: current, legacy: [newer, older])
+        let store = CredentialStore(current: current, legacy: [newer, older])
 
         #expect(try store.password(for: "server") == "newer password")
         #expect(try store.password(for: "other") == "other password")
