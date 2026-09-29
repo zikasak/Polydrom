@@ -6,6 +6,7 @@
 //
 
 import AVKit
+import Combine
 import SwiftUI
 
 struct FullPlayerView: View {
@@ -525,12 +526,16 @@ enum PlayerDetailPanel: Equatable {
 
 struct PlayerQueueView: View {
     @ObservedObject var viewModel: AppCoordinator
-    @ObservedObject private var audioPlayer: AudioPlayer
     @State private var isScrolling = false
+    // Mirrors only the player state the queue shows. Observing the player itself
+    // would rebuild every visible queue row on each playback-time tick.
+    @State private var hasCurrentSong: Bool
+    @State private var isPlaying: Bool
 
     init(viewModel: AppCoordinator) {
         self.viewModel = viewModel
-        self.audioPlayer = viewModel.audioPlayer
+        _hasCurrentSong = State(initialValue: viewModel.audioPlayer.currentSong != nil)
+        _isPlaying = State(initialValue: viewModel.audioPlayer.isPlaying)
     }
 
     var body: some View {
@@ -546,7 +551,7 @@ struct PlayerQueueView: View {
                         LazyVStack(spacing: 4) {
                             ForEach(viewModel.playbackQueue) { entry in
                                 let song = entry.song
-                                let isCurrent = audioPlayer.currentSong != nil
+                                let isCurrent = hasCurrentSong
                                     && viewModel.currentPlaybackQueueEntryID == entry.id
                                 Button {
                                     viewModel.play(entry)
@@ -567,7 +572,7 @@ struct PlayerQueueView: View {
                                         Spacer()
 
                                         if isCurrent {
-                                            Image(systemName: audioPlayer.isPlaying ? "speaker.wave.2.fill" : "pause.fill")
+                                            Image(systemName: isPlaying ? "speaker.wave.2.fill" : "pause.fill")
                                                 .foregroundStyle(.tint)
                                         } else {
                                             Text(song.durationText)
@@ -604,10 +609,16 @@ struct PlayerQueueView: View {
             }
         }
         .background(.ultraThinMaterial)
+        .onReceive(viewModel.audioPlayer.$currentSong.map { $0 != nil }.removeDuplicates()) { value in
+            hasCurrentSong = value
+        }
+        .onReceive(viewModel.audioPlayer.$isPlaying.removeDuplicates()) { value in
+            isPlaying = value
+        }
     }
 
     private func scrollToCurrentEntry(with proxy: ScrollViewProxy, animated: Bool) {
-        guard audioPlayer.currentSong != nil,
+        guard hasCurrentSong,
               let currentEntryID = viewModel.currentPlaybackQueueEntryID,
               viewModel.playbackQueue.contains(where: { $0.id == currentEntryID }) else {
             return
