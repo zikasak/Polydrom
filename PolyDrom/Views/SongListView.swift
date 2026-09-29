@@ -335,6 +335,7 @@ private struct IndexedSong: Identifiable {
 struct CoverArtView: View {
     let resource: CoverArtResource?
     let size: CGFloat
+    let cornerRadius: CGFloat
 
     @Environment(\.libraryGridIsScrolling) private var libraryGridIsScrolling
     @State private var image: CGImage?
@@ -342,10 +343,12 @@ struct CoverArtView: View {
 
     init(
         resource: CoverArtResource?,
-        size: CGFloat
+        size: CGFloat,
+        cornerRadius: CGFloat = 6
     ) {
         self.resource = resource
         self.size = size
+        self.cornerRadius = cornerRadius
 
         let cachedImage = resource.flatMap { CoverArtCache.shared.cachedImage(for: $0) }
         _image = State(initialValue: cachedImage)
@@ -363,7 +366,7 @@ struct CoverArtView: View {
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .task(id: coverArtTaskID) {
             if restoreCachedImage() { return }
             if shouldPauseLoading {
