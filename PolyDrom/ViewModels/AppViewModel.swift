@@ -88,7 +88,13 @@ final class AppCoordinator: ObservableObject {
     var sonosVolumeTaskGeneration = -1
     var pendingSonosVolume: Int?
     var sonosVolumeErrorMessage: String?
-    var client: NavidromeClient?
+    var client: NavidromeClient? {
+        didSet { coverArtResources.removeAll() }
+    }
+    /// Cover art URLs carry a freshly salted auth token, so building one per row
+    /// render is costly. Resources are reused until the client changes.
+    private var coverArtResources: [String: CoverArtResource] = [:]
+    private let coverArtResourceLimit = 20_000
     private var metadataMonitorTask: Task<Void, Never>?
     private var metadataSyncTask: Task<MetadataSyncOutcome, Error>?
     private var metadataRefreshID: UUID?
@@ -1414,8 +1420,12 @@ final class AppCoordinator: ObservableObject {
 
     private func coverArtResource(id: String, size: Int) -> CoverArtResource? {
         guard let client, let serverKey else { return nil }
-        guard let url = try? client.coverArtURL(id: id, size: size) else { return nil }
         let cacheKey = "\(serverKey)|\(id)|\(size)"
+        if let resource = coverArtResources[cacheKey] {
+            return resource
+        }
+
+        guard let url = try? client.coverArtURL(id: id, size: size) else { return nil }
         let fallbackCacheKeys: [String]
 
         if interchangeableThumbnailSizes.contains(size) {
@@ -1426,11 +1436,16 @@ final class AppCoordinator: ObservableObject {
             fallbackCacheKeys = []
         }
 
-        return CoverArtResource(
+        let resource = CoverArtResource(
             cacheKey: cacheKey,
             url: url,
             fallbackCacheKeys: fallbackCacheKeys
         )
+        if coverArtResources.count >= coverArtResourceLimit {
+            coverArtResources.removeAll(keepingCapacity: true)
+        }
+        coverArtResources[cacheKey] = resource
+        return resource
     }
 
     private func warmCachedAlbumCovers(_ albums: [NavidromeAlbum]) async {

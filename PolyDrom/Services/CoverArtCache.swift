@@ -113,12 +113,17 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
         entries[key] = Entry(image: image, cost: cost, lastAccess: accessCounter)
         totalCost += cost
 
-        while entries.count > countLimit || totalCost > costLimit {
-            guard let leastRecentlyUsed = entries.min(by: { $0.value.lastAccess < $1.value.lastAccess }) else {
-                break
-            }
-            totalCost -= leastRecentlyUsed.value.cost
-            entries[leastRecentlyUsed.key] = nil
+        guard entries.count > countLimit || totalCost > costLimit else { return }
+
+        // Evict in one batch down to 90% of the limits. Scanning for a single
+        // least-recently-used entry on every insert holds the lock that rows read
+        // from on the main thread while scrolling.
+        let targetCount = countLimit * 9 / 10
+        let targetCost = costLimit / 10 * 9
+        for (key, entry) in entries.sorted(by: { $0.value.lastAccess < $1.value.lastAccess }) {
+            guard entries.count > targetCount || totalCost > targetCost else { break }
+            totalCost -= entry.cost
+            entries[key] = nil
         }
     }
 

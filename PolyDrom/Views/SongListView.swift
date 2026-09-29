@@ -5,6 +5,7 @@
 //  Created by zikasak on 07/07/2026.
 //
 
+import Combine
 import SwiftUI
 
 struct SongListView: View {
@@ -18,6 +19,7 @@ struct SongListView: View {
 
     @State private var isSelecting = false
     @State private var selectedIndices = IndexSet()
+    @State private var currentSongID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -42,7 +44,7 @@ struct SongListView: View {
                         queue: songs,
                         queueIndex: item.index,
                         viewModel: viewModel,
-                        audioPlayer: viewModel.audioPlayer,
+                        isCurrentSong: item.song.id == currentSongID,
                         openRoute: openRoute,
                         currentAlbumID: currentAlbumID,
                         selection: isSelecting ? selectionBinding(for: item.index) : nil,
@@ -57,8 +59,14 @@ struct SongListView: View {
                             }
                         }
                     )
+                    .equatable()
                 }
             }
+        }
+        // Only the playing song's identity matters to rows; observing the whole
+        // player would re-render every visible row on each playback-time tick.
+        .onReceive(viewModel.audioPlayer.$currentSong.map { $0?.id }.removeDuplicates()) { id in
+            currentSongID = id
         }
         .onChange(of: songs.count) { _, count in
             selectedIndices = IndexSet(selectedIndices.filter { $0 < count })
@@ -126,16 +134,66 @@ struct SongListView: View {
     }
 }
 
-struct SongRowView: View {
+/// Rows are compared by value so scrolling and unrelated coordinator updates do
+/// not re-evaluate every visible row. `viewModel` is intentionally not observed;
+/// it is only used to perform actions, and display state is passed in.
+struct SongRowView: View, Equatable {
     let song: NavidromeSong
     let queue: [NavidromeSong]
     let queueIndex: Int
-    @ObservedObject var viewModel: AppCoordinator
-    @ObservedObject var audioPlayer: AudioPlayer
+    let viewModel: AppCoordinator
+    let isCurrentSong: Bool
+    let isFavorite: Bool
+    let isOnline: Bool
+    let isPlaylistMutating: Bool
+    let coverArtResource: CoverArtResource?
     let openRoute: (LibraryRoute) -> Void
     let currentAlbumID: String?
     var selection: Binding<Bool>?
     var removeFromPlaylist: (() -> Void)?
+
+    init(
+        song: NavidromeSong,
+        queue: [NavidromeSong],
+        queueIndex: Int,
+        viewModel: AppCoordinator,
+        isCurrentSong: Bool,
+        openRoute: @escaping (LibraryRoute) -> Void,
+        currentAlbumID: String?,
+        selection: Binding<Bool>? = nil,
+        removeFromPlaylist: (() -> Void)? = nil
+    ) {
+        self.song = song
+        self.queue = queue
+        self.queueIndex = queueIndex
+        self.viewModel = viewModel
+        self.isCurrentSong = isCurrentSong
+        self.isFavorite = viewModel.isFavorite(song)
+        self.isOnline = viewModel.isOnline
+        self.isPlaylistMutating = viewModel.isPlaylistMutating
+        self.coverArtResource = viewModel.coverArtResource(for: song, size: 96)
+        self.openRoute = openRoute
+        self.currentAlbumID = currentAlbumID
+        self.selection = selection
+        self.removeFromPlaylist = removeFromPlaylist
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        // Array equality short-circuits when both sides share storage, which is
+        // the common case when the parent re-renders with an unchanged list.
+        lhs.song == rhs.song
+            && lhs.queueIndex == rhs.queueIndex
+            && lhs.isCurrentSong == rhs.isCurrentSong
+            && lhs.isFavorite == rhs.isFavorite
+            && lhs.isOnline == rhs.isOnline
+            && lhs.isPlaylistMutating == rhs.isPlaylistMutating
+            && lhs.coverArtResource == rhs.coverArtResource
+            && lhs.currentAlbumID == rhs.currentAlbumID
+            && lhs.selection?.wrappedValue == rhs.selection?.wrappedValue
+            && (lhs.removeFromPlaylist == nil) == (rhs.removeFromPlaylist == nil)
+            && lhs.viewModel === rhs.viewModel
+            && lhs.queue == rhs.queue
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -151,11 +209,11 @@ struct SongRowView: View {
                         .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
-                .disabled(!viewModel.isOnline)
+                .disabled(!isOnline)
                 .help("Play")
             }
 
-            CoverArtView(resource: viewModel.coverArtResource(for: song, size: 96), size: 38)
+            CoverArtView(resource: coverArtResource, size: 38)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(song.title)
@@ -183,19 +241,19 @@ struct SongRowView: View {
                             .labelStyle(.iconOnly)
                     }
                     .buttonStyle(.borderless)
-                    .disabled(viewModel.isPlaylistMutating)
+                    .disabled(isPlaylistMutating)
                     .help("Remove from playlist")
                 }
 
                 Button {
                     viewModel.toggleFavorite(song)
                 } label: {
-                    Label(viewModel.isFavorite(song) ? "Unfavorite" : "Favorite", systemImage: viewModel.isFavorite(song) ? "heart.fill" : "heart")
+                    Label(isFavorite ? "Unfavorite" : "Favorite", systemImage: isFavorite ? "heart.fill" : "heart")
                         .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
-                .disabled(!viewModel.isOnline)
-                .help(viewModel.isFavorite(song) ? "Remove from favorites" : "Add to favorites")
+                .disabled(!isOnline)
+                .help(isFavorite ? "Remove from favorites" : "Add to favorites")
             }
         }
         .padding(.vertical, 4)
@@ -206,7 +264,7 @@ struct SongRowView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
-            if selection == nil, viewModel.isOnline {
+            if selection == nil, isOnline {
                 viewModel.play(queue, startingAt: queueIndex)
             }
         }
@@ -217,7 +275,7 @@ struct SongRowView: View {
                 } label: {
                     Label("Play", systemImage: "play.fill")
                 }
-                .disabled(!viewModel.isOnline)
+                .disabled(!isOnline)
 
                 Button {
                     viewModel.playNext([song])
@@ -237,11 +295,11 @@ struct SongRowView: View {
                     viewModel.toggleFavorite(song)
                 } label: {
                     Label(
-                        viewModel.isFavorite(song) ? "Remove from Favorites" : "Add to Favorites",
-                        systemImage: viewModel.isFavorite(song) ? "heart.slash" : "heart"
+                        isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                        systemImage: isFavorite ? "heart.slash" : "heart"
                     )
                 }
-                .disabled(!viewModel.isOnline)
+                .disabled(!isOnline)
 
                 AddToPlaylistMenu(viewModel: viewModel, songs: [song])
 
@@ -249,24 +307,28 @@ struct SongRowView: View {
                     Button(role: .destructive, action: removeFromPlaylist) {
                         Label("Remove from Playlist", systemImage: "trash")
                     }
-                    .disabled(viewModel.isPlaylistMutating)
+                    .disabled(isPlaylistMutating)
                 }
 
-                if navigationAlbum != nil || navigationArtist != nil {
+                if hasNavigationAlbum || hasNavigationArtist {
                     Divider()
                 }
 
-                if let album = navigationAlbum {
+                if hasNavigationAlbum {
                     Button {
-                        openRoute(.album(album))
+                        if let album = viewModel.albumForNavigation(from: song) {
+                            openRoute(.album(album))
+                        }
                     } label: {
                         Label("Open Album", systemImage: "rectangle.stack")
                     }
                 }
 
-                if let artist = navigationArtist {
+                if hasNavigationArtist {
                     Button {
-                        openRoute(.artist(artist))
+                        if let artist = viewModel.artistForNavigation(from: song) {
+                            openRoute(.artist(artist))
+                        }
                     } label: {
                         Label("Open Artist", systemImage: "music.mic")
                     }
@@ -275,20 +337,15 @@ struct SongRowView: View {
         }
     }
 
-    private var navigationAlbum: NavidromeAlbum? {
-        guard let album = viewModel.albumForNavigation(from: song),
-              album.id != currentAlbumID else {
-            return nil
-        }
-        return album
+    // The full library lookups behind navigation are deferred to the click so
+    // the eagerly built context menu stays cheap while rows scroll into view.
+    private var hasNavigationAlbum: Bool {
+        guard let album = NavidromeAlbum(song: song) else { return false }
+        return album.id != currentAlbumID
     }
 
-    private var navigationArtist: NavidromeArtist? {
-        viewModel.artistForNavigation(from: song)
-    }
-
-    private var isCurrentSong: Bool {
-        audioPlayer.currentSong?.id == song.id
+    private var hasNavigationArtist: Bool {
+        NavidromeArtist(song: song) != nil
     }
 }
 
