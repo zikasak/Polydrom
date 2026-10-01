@@ -12,6 +12,7 @@ import SwiftUI
 struct FullPlayerView: View {
     @ObservedObject var viewModel: AppCoordinator
     @ObservedObject private var audioPlayer: AudioPlayer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var detailPanel: PlayerDetailPanel?
     let openRoute: (LibraryRoute) -> Void
     let onClose: () -> Void
@@ -57,7 +58,7 @@ struct FullPlayerView: View {
                     }
                 }
             }
-            .animation(.snappy(duration: 0.28), value: detailPanel)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: detailPanel)
         }
         .frame(minWidth: 760, minHeight: 620)
     }
@@ -92,8 +93,13 @@ struct FullPlayerView: View {
 
                 Spacer()
 
-                detailButton(.queue)
-                detailButton(.lyrics)
+                HStack(spacing: 8) {
+                    detailButton(.queue)
+                    detailButton(.lyrics)
+                }
+                .fixedSize()
+                // Animate the pair's position, not each button's geometry independently.
+                .geometryGroup()
             }
 
             Spacer(minLength: 0)
@@ -266,6 +272,8 @@ struct FullPlayerView: View {
         }
         .buttonStyle(.bordered)
         .tint(detailPanel == panel ? .accentColor : nil)
+        // Keep selection colors out of the panel's spring animation.
+        .animation(nil, value: detailPanel)
         .help(panel.title)
     }
 
