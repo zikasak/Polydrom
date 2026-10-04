@@ -10,23 +10,24 @@ import SwiftUI
 struct AlbumBrowserView: View {
     @ObservedObject var viewModel: AppCoordinator
     @Environment(\.openLibraryRoute) private var openLibraryRoute
-    let albums: [NavidromeAlbum]
+    let snapshot: ViewCollectionSnapshot<NavidromeAlbum>
     var openAlbum: ((NavidromeAlbum) -> Void)?
 
     init(
         viewModel: AppCoordinator,
-        albums: [NavidromeAlbum],
+        snapshot: ViewCollectionSnapshot<NavidromeAlbum>,
         openAlbum: ((NavidromeAlbum) -> Void)? = nil
     ) {
         self.viewModel = viewModel
-        self.albums = albums
+        self.snapshot = snapshot
         self.openAlbum = openAlbum
     }
 
     var body: some View {
         AlbumBrowserGrid(
-            albums: albums,
+            snapshot: snapshot,
             favoriteAlbumIDs: viewModel.favoriteAlbumIDs,
+            favoritesRevision: viewModel.favoriteAlbumIDsRevision,
             serverKey: viewModel.serverKey,
             isOnline: viewModel.isOnline,
             coverArtResource: { album in
@@ -48,8 +49,9 @@ struct AlbumBrowserView: View {
 /// Compared by the values it shows, so coordinator updates that do not affect
 /// the grid leave it alone while it scrolls.
 private struct AlbumBrowserGrid: View, Equatable {
-    let albums: [NavidromeAlbum]
+    let snapshot: ViewCollectionSnapshot<NavidromeAlbum>
     let favoriteAlbumIDs: Set<String>
+    let favoritesRevision: UUID
     let serverKey: String?
     let isOnline: Bool
     let coverArtResource: (NavidromeAlbum) -> CoverArtResource?
@@ -57,14 +59,14 @@ private struct AlbumBrowserGrid: View, Equatable {
     let openAlbum: (NavidromeAlbum) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.albums == rhs.albums
-            && lhs.favoriteAlbumIDs == rhs.favoriteAlbumIDs
+        lhs.snapshot.revision == rhs.snapshot.revision
+            && lhs.favoritesRevision == rhs.favoritesRevision
             && lhs.serverKey == rhs.serverKey
             && lhs.isOnline == rhs.isOnline
     }
 
     var body: some View {
-        LazyLibraryCardGrid(albums, minimumCardWidth: 150) { album in
+        LazyLibraryCardGrid(snapshot.items, minimumCardWidth: 150) { album in
             let isFavorite = favoriteAlbumIDs.contains(album.id)
 
             LibraryCardView(
@@ -121,7 +123,7 @@ struct AlbumDetailView: View {
 
             SongListView(
                 title: "Songs",
-                songs: viewModel.selectedAlbum?.id == album.id ? viewModel.albumSongs : [],
+                snapshot: viewModel.selectedAlbum?.id == album.id ? viewModel.albumSongsSnapshot : .empty,
                 viewModel: viewModel,
                 emptyMessage: viewModel.isBusy ? "Loading songs..." : "No songs for this album.",
                 openRoute: openRoute,

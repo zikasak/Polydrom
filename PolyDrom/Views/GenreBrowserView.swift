@@ -49,7 +49,7 @@ struct GenreDetailView: View {
 
             SongListView(
                 title: "Songs",
-                songs: viewModel.selectedGenre?.id == genre.id ? viewModel.genreSongs : [],
+                snapshot: viewModel.selectedGenre?.id == genre.id ? viewModel.genreSongsSnapshot : .empty,
                 viewModel: viewModel,
                 emptyMessage: viewModel.isBusy ? "Loading songs..." : "No songs for this genre.",
                 openRoute: openRoute

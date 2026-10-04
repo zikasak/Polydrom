@@ -74,15 +74,15 @@ struct LibraryDetailView: View {
         case .random:
             SongListView(
                 title: "Random songs",
-                songs: viewModel.randomSongs,
+                snapshot: viewModel.randomSongsSnapshot,
                 viewModel: viewModel,
                 emptyMessage: "No random songs loaded.",
                 openRoute: openRoute
             )
         case .albums:
-            AlbumBrowserView(viewModel: viewModel, albums: viewModel.albums)
+            AlbumBrowserView(viewModel: viewModel, snapshot: viewModel.albumsSnapshot)
         case .artists:
-            ArtistBrowserView(viewModel: viewModel, artists: viewModel.artists)
+            ArtistBrowserView(viewModel: viewModel, snapshot: viewModel.artistsSnapshot)
         case .genres:
             GenreBrowserView(viewModel: viewModel)
         case .playlists:
@@ -92,7 +92,7 @@ struct LibraryDetailView: View {
         case .recent:
             SongListView(
                 title: "Recently played",
-                songs: viewModel.recentSongs,
+                snapshot: viewModel.recentSongsSnapshot,
                 viewModel: viewModel,
                 emptyMessage: "No playback history yet.",
                 openRoute: openRoute
@@ -126,7 +126,7 @@ private struct FavoriteLibraryView: View {
                     ContentUnavailableView("No favorite artists yet.", systemImage: "music.mic")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ArtistBrowserView(viewModel: viewModel, artists: viewModel.favoriteArtists)
+                    ArtistBrowserView(viewModel: viewModel, snapshot: viewModel.favoriteArtistsSnapshot)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             case .albums:
@@ -134,7 +134,7 @@ private struct FavoriteLibraryView: View {
                     ContentUnavailableView("No favorite albums yet.", systemImage: "rectangle.stack")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    AlbumBrowserView(viewModel: viewModel, albums: viewModel.favoriteAlbums)
+                    AlbumBrowserView(viewModel: viewModel, snapshot: viewModel.favoriteAlbumsSnapshot)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             case .songs:
@@ -144,7 +144,7 @@ private struct FavoriteLibraryView: View {
                 } else {
                     SongListView(
                         title: "Favorite songs",
-                        songs: viewModel.favoriteSongs,
+                        snapshot: viewModel.favoriteSongsSnapshot,
                         viewModel: viewModel,
                         emptyMessage: "No favorite songs yet.",
                         openRoute: openRoute

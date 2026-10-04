@@ -18,20 +18,52 @@ struct SessionIdentity: Sendable {
 
 @MainActor
 final class AppCoordinator: ObservableObject {
-    @Published var serverAddress = ""
-    @Published var username = ""
-    @Published var password = ""
-    @Published var servers: [ServerProfile] = []
-    @Published var activeServer: ServerProfile?
-    @Published var selectedSection: LibrarySection = .home
-    @Published var statusMessage = "Disconnected"
-    @Published var isBusy = false
-    @Published var isOnline = false
-    @Published var hasCachedLibrary = false
-    @Published var isRefreshingMetadata = false
-    @Published var isClearingCache = false
-    @Published var lastMetadataCheckAt: Date?
+    // A stored publisher bypasses Combine's synthesized wiring; each published
+    // property explicitly notifies it before mutation.
+    let objectWillChange = ObservableObjectPublisher()
+    @Published var serverAddress = "" {
+        willSet { objectWillChange.send() }
+    }
+    @Published var username = "" {
+        willSet { objectWillChange.send() }
+    }
+    @Published var password = "" {
+        willSet { objectWillChange.send() }
+    }
+    @Published var servers: [ServerProfile] = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var activeServer: ServerProfile? {
+        willSet { objectWillChange.send() }
+        didSet { refreshEditablePlaylists() }
+    }
+    @Published var selectedSection: LibrarySection = .home {
+        willSet { objectWillChange.send() }
+    }
+    @Published var statusMessage = "Disconnected" {
+        willSet { objectWillChange.send() }
+    }
+    @Published var isBusy = false {
+        willSet { objectWillChange.send() }
+    }
+    @Published var isOnline = false {
+        willSet { objectWillChange.send() }
+        didSet { refreshEditablePlaylists() }
+    }
+    @Published var hasCachedLibrary = false {
+        willSet { objectWillChange.send() }
+    }
+    @Published var isRefreshingMetadata = false {
+        willSet { objectWillChange.send() }
+    }
+    @Published var isClearingCache = false {
+        willSet { objectWillChange.send() }
+    }
+    @Published var lastMetadataCheckAt: Date? {
+        willSet { objectWillChange.send() }
+    }
     @Published var metadataRefreshInterval: MetadataRefreshInterval {
+        willSet { objectWillChange.send() }
         didSet {
             guard metadataRefreshInterval != oldValue else { return }
             userDefaults.set(metadataRefreshInterval.rawValue, forKey: Self.metadataRefreshIntervalKey)
@@ -39,6 +71,7 @@ final class AppCoordinator: ObservableObject {
         }
     }
     @Published var coverArtCrawlEnabled: Bool {
+        willSet { objectWillChange.send() }
         didSet {
             guard coverArtCrawlEnabled != oldValue else { return }
             userDefaults.set(coverArtCrawlEnabled, forKey: Self.coverArtCrawlEnabledKey)
@@ -46,49 +79,168 @@ final class AppCoordinator: ObservableObject {
         }
     }
     @Published var coverArtCacheLimit: CoverArtCacheLimit {
+        willSet { objectWillChange.send() }
         didSet {
             guard coverArtCacheLimit != oldValue else { return }
             userDefaults.set(coverArtCacheLimit.rawValue, forKey: Self.coverArtCacheLimitKey)
             applyCoverArtCacheLimit()
         }
     }
-    @Published var coverArtCacheSize: Int?
-    @Published var searchText = ""
-    @Published var searchResults: [NavidromeSong] = []
-    @Published var randomSongs: [NavidromeSong] = []
-    @Published var recentlyAddedAlbums: [NavidromeAlbum] = []
-    @Published var recentlyPlayedAlbums: [NavidromeAlbum] = []
-    @Published var homeRandomAlbums: [NavidromeAlbum] = []
-    @Published var featuredAlbums: [NavidromeAlbum] = []
-    @Published var albums: [NavidromeAlbum] = []
-    @Published var artists: [NavidromeArtist] = []
-    @Published var genres: [NavidromeGenre] = []
-    @Published var selectedGenre: NavidromeGenre?
-    @Published var genreSongs: [NavidromeSong] = []
-    @Published var artistAlbums: [NavidromeAlbum] = []
-    @Published var selectedArtist: NavidromeArtist?
-    @Published var selectedAlbum: NavidromeAlbum?
-    @Published var albumSongs: [NavidromeSong] = []
-    @Published var playlists: [NavidromePlaylist] = []
-    @Published var selectedPlaylist: NavidromePlaylist?
-    @Published var playlistSongs: [NavidromeSong] = []
-    @Published var playlistCreationRequest: PlaylistCreationRequest?
-    @Published var isPlaylistMutating = false
-    @Published var favoriteArtists: [NavidromeArtist] = []
-    @Published var favoriteAlbums: [NavidromeAlbum] = []
-    @Published var favoriteSongs: [NavidromeSong] = []
-    @Published var recentSongs: [NavidromeSong] = []
-    @Published var favoriteArtistIDs: Set<String> = []
-    @Published var favoriteAlbumIDs: Set<String> = []
-    @Published var favoriteIDs: Set<String> = []
-    @Published var playbackQueue: [PlaybackQueueEntry] = []
-    @Published var currentPlaybackQueueEntryID: UUID?
-    @Published var currentLyrics: SongLyrics?
-    @Published var lyricsMessage = "No lyrics loaded."
-    @Published var isLoadingLyrics = false
-    @Published var sonosGroups: [SonosGroup] = []
-    @Published var sonosIsDiscovering = false
-    @Published var sonosMessage: String?
+    @Published var coverArtCacheSize: Int? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var searchText = "" {
+        willSet { objectWillChange.send() }
+    }
+    @Published var searchResults: [NavidromeSong] = [] {
+        willSet { objectWillChange.send() }
+        didSet { searchResultsSnapshot = SongListSnapshot(searchResults, previous: searchResultsSnapshot) }
+    }
+    @Published var randomSongs: [NavidromeSong] = [] {
+        willSet { objectWillChange.send() }
+        didSet { randomSongsSnapshot = SongListSnapshot(randomSongs, previous: randomSongsSnapshot) }
+    }
+    @Published var recentlyAddedAlbums: [NavidromeAlbum] = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var recentlyPlayedAlbums: [NavidromeAlbum] = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var homeRandomAlbums: [NavidromeAlbum] = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var featuredAlbums: [NavidromeAlbum] = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var albums: [NavidromeAlbum] = [] {
+        willSet { objectWillChange.send() }
+        didSet { albumsSnapshot = ViewCollectionSnapshot(albums) }
+    }
+    @Published var artists: [NavidromeArtist] = [] {
+        willSet { objectWillChange.send() }
+        didSet { artistsSnapshot = ViewCollectionSnapshot(artists) }
+    }
+    @Published var genres: [NavidromeGenre] = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var selectedGenre: NavidromeGenre? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var genreSongs: [NavidromeSong] = [] {
+        willSet { objectWillChange.send() }
+        didSet { genreSongsSnapshot = SongListSnapshot(genreSongs, previous: genreSongsSnapshot) }
+    }
+    @Published var artistAlbums: [NavidromeAlbum] = [] {
+        willSet { objectWillChange.send() }
+        didSet { artistAlbumsSnapshot = ViewCollectionSnapshot(artistAlbums) }
+    }
+    @Published var selectedArtist: NavidromeArtist? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var selectedAlbum: NavidromeAlbum? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var albumSongs: [NavidromeSong] = [] {
+        willSet { objectWillChange.send() }
+        didSet { albumSongsSnapshot = SongListSnapshot(albumSongs, previous: albumSongsSnapshot) }
+    }
+    @Published var playlists: [NavidromePlaylist] = [] {
+        willSet { objectWillChange.send() }
+        didSet { refreshEditablePlaylists() }
+    }
+    @Published var selectedPlaylist: NavidromePlaylist? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var playlistSongs: [NavidromeSong] = [] {
+        willSet { objectWillChange.send() }
+        didSet { playlistSongsSnapshot = SongListSnapshot(playlistSongs, previous: playlistSongsSnapshot) }
+    }
+    @Published var playlistCreationRequest: PlaylistCreationRequest? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var isPlaylistMutating = false {
+        willSet { objectWillChange.send() }
+        didSet { refreshEditablePlaylists() }
+    }
+    @Published var favoriteArtists: [NavidromeArtist] = [] {
+        willSet { objectWillChange.send() }
+        didSet { favoriteArtistsSnapshot = ViewCollectionSnapshot(favoriteArtists) }
+    }
+    @Published var favoriteAlbums: [NavidromeAlbum] = [] {
+        willSet { objectWillChange.send() }
+        didSet { favoriteAlbumsSnapshot = ViewCollectionSnapshot(favoriteAlbums) }
+    }
+    @Published var favoriteSongs: [NavidromeSong] = [] {
+        willSet { objectWillChange.send() }
+        didSet { favoriteSongsSnapshot = SongListSnapshot(favoriteSongs, previous: favoriteSongsSnapshot) }
+    }
+    @Published var recentSongs: [NavidromeSong] = [] {
+        willSet { objectWillChange.send() }
+        didSet { recentSongsSnapshot = SongListSnapshot(recentSongs, previous: recentSongsSnapshot) }
+    }
+    @Published var favoriteArtistIDs: Set<String> = [] {
+        willSet { objectWillChange.send() }
+        didSet { favoriteArtistIDsRevision = UUID() }
+    }
+    @Published var favoriteAlbumIDs: Set<String> = [] {
+        willSet { objectWillChange.send() }
+        didSet { favoriteAlbumIDsRevision = UUID() }
+    }
+    @Published var favoriteIDs: Set<String> = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var playbackQueue: [PlaybackQueueEntry] = [] {
+        willSet { objectWillChange.send() }
+        didSet {
+            playbackQueueIndices = Dictionary(
+                playbackQueue.enumerated().map { ($0.element.id, $0.offset) },
+                uniquingKeysWith: { first, _ in first }
+            )
+        }
+    }
+    @Published var currentPlaybackQueueEntryID: UUID? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var currentLyrics: SongLyrics? {
+        willSet { objectWillChange.send() }
+        didSet {
+            lyricsTimeline = LyricsTimeline(currentLyrics)
+            lyricsRevision = UUID()
+        }
+    }
+    @Published var lyricsMessage = "No lyrics loaded." {
+        willSet { objectWillChange.send() }
+    }
+    @Published var isLoadingLyrics = false {
+        willSet { objectWillChange.send() }
+    }
+    @Published var sonosGroups: [SonosGroup] = [] {
+        willSet { objectWillChange.send() }
+    }
+    @Published var sonosIsDiscovering = false {
+        willSet { objectWillChange.send() }
+    }
+    @Published var sonosMessage: String? {
+        willSet { objectWillChange.send() }
+    }
+
+    // Prepared only when source data changes, never in a view body.
+    private(set) var searchResultsSnapshot = SongListSnapshot()
+    private(set) var randomSongsSnapshot = SongListSnapshot()
+    private(set) var genreSongsSnapshot = SongListSnapshot()
+    private(set) var albumSongsSnapshot = SongListSnapshot()
+    private(set) var playlistSongsSnapshot = SongListSnapshot()
+    private(set) var favoriteSongsSnapshot = SongListSnapshot()
+    private(set) var recentSongsSnapshot = SongListSnapshot()
+    private(set) var albumsSnapshot = ViewCollectionSnapshot<NavidromeAlbum>()
+    private(set) var artistAlbumsSnapshot = ViewCollectionSnapshot<NavidromeAlbum>()
+    private(set) var favoriteAlbumsSnapshot = ViewCollectionSnapshot<NavidromeAlbum>()
+    private(set) var artistsSnapshot = ViewCollectionSnapshot<NavidromeArtist>()
+    private(set) var favoriteArtistsSnapshot = ViewCollectionSnapshot<NavidromeArtist>()
+    private(set) var favoriteAlbumIDsRevision = UUID()
+    private(set) var favoriteArtistIDsRevision = UUID()
+    private(set) var lyricsTimeline = LyricsTimeline()
+    private(set) var lyricsRevision = UUID()
 
     // MARK: - Collaborators
 
@@ -153,6 +305,8 @@ final class AppCoordinator: ObservableObject {
 
     // MARK: - Playback
 
+    private(set) var playbackQueueIndices: [UUID: Int] = [:]
+
     var lyricsSongID: String?
     var pendingPlaybackRestore: PersistedPlaybackState?
     var didRestorePlayback = false
@@ -199,8 +353,11 @@ final class AppCoordinator: ObservableObject {
         isOnline && !isPlaylistMutating
     }
 
-    var editablePlaylists: [NavidromePlaylist] {
-        playlists.filter(canEdit)
+    let playlistMenuState = PlaylistMenuState()
+
+    private func refreshEditablePlaylists() {
+        playlistMenuState.playlists = playlists.filter(canEdit)
+        playlistMenuState.canCreatePlaylist = canCreatePlaylist
     }
 
     var currentSession: SessionIdentity? {

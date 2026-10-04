@@ -11,7 +11,10 @@ import SwiftUI
 
 struct FullPlayerView: View {
     @ObservedObject var viewModel: AppCoordinator
-    @ObservedObject private var audioPlayer: AudioPlayer
+    private let audioPlayer: AudioPlayer
+    @State private var currentSong: NavidromeSong?
+    @State private var isPlaying: Bool
+    @State private var statusMessage: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var detailPanel: PlayerDetailPanel?
     let openRoute: (LibraryRoute) -> Void
@@ -24,6 +27,9 @@ struct FullPlayerView: View {
     ) {
         self.viewModel = viewModel
         self.audioPlayer = viewModel.audioPlayer
+        _currentSong = State(initialValue: viewModel.audioPlayer.currentSong)
+        _isPlaying = State(initialValue: viewModel.audioPlayer.isPlaying)
+        _statusMessage = State(initialValue: viewModel.audioPlayer.statusMessage)
         self.openRoute = openRoute
         self.onClose = onClose
     }
@@ -35,7 +41,7 @@ struct FullPlayerView: View {
                 220,
                 min(430, proxy.size.height - 400, proxy.size.width * 0.42)
             )
-            let artworkResource = audioPlayer.currentSong.flatMap {
+            let artworkResource = currentSong.flatMap {
                 viewModel.coverArtResource(for: $0, size: 900)
             }
 
@@ -61,6 +67,9 @@ struct FullPlayerView: View {
             .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: detailPanel)
         }
         .frame(minWidth: 760, minHeight: 620)
+        .onReceive(audioPlayer.$currentSong.removeDuplicates()) { currentSong = $0 }
+        .onReceive(audioPlayer.$isPlaying.removeDuplicates()) { isPlaying = $0 }
+        .onReceive(audioPlayer.$statusMessage.removeDuplicates()) { statusMessage = $0 }
     }
 
     private func playerBackground(resource: CoverArtResource?) -> some View {
@@ -110,7 +119,7 @@ struct FullPlayerView: View {
             )
             .shadow(color: .black.opacity(0.28), radius: 28, y: 16)
             .contextMenu {
-                if let album = audioPlayer.currentSong.flatMap(viewModel.albumForNavigation) {
+                if let album = currentSong.flatMap(viewModel.albumForNavigation) {
                     AlbumContextMenu(viewModel: viewModel, album: album) {
                         openRoute(.album(album))
                     }
@@ -120,15 +129,15 @@ struct FullPlayerView: View {
             VStack(spacing: 5) {
                 NowPlayingTitle(
                     viewModel: viewModel,
-                    song: audioPlayer.currentSong,
+                    song: currentSong,
                     font: .system(size: 28, weight: .bold, design: .rounded),
                     openRoute: openRoute
                 )
 
                 NowPlayingMetadataLine(
                     viewModel: viewModel,
-                    song: audioPlayer.currentSong,
-                    statusMessage: audioPlayer.statusMessage,
+                    song: currentSong,
+                    statusMessage: statusMessage,
                     font: .title3,
                     spacing: 6,
                     openRoute: openRoute
@@ -141,8 +150,8 @@ struct FullPlayerView: View {
 
             PlayerTransportControls(
                 viewModel: viewModel,
-                currentSong: audioPlayer.currentSong,
-                isPlaying: audioPlayer.isPlaying,
+                currentSong: currentSong,
+                isPlaying: isPlaying,
                 style: .full
             )
 
@@ -155,17 +164,7 @@ struct FullPlayerView: View {
     }
 
     private var progressControls: some View {
-        VStack(spacing: 4) {
-            PlayerSeekSlider(audioPlayer: audioPlayer)
-
-            HStack {
-                Text(PlaybackTime.text(audioPlayer.currentTime))
-                Spacer()
-                Text("-\(PlaybackTime.text(max(audioPlayer.duration - audioPlayer.currentTime, 0)))")
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
+        FullPlayerProgressControls(audioPlayer: audioPlayer)
     }
 
     private var outputControls: some View {
@@ -189,7 +188,7 @@ struct FullPlayerView: View {
     private func detailButton(_ panel: PlayerDetailPanel) -> some View {
         Button {
             detailPanel = detailPanel == panel ? nil : panel
-            if panel == .lyrics, let song = audioPlayer.currentSong {
+            if panel == .lyrics, let song = currentSong {
                 Task { await viewModel.loadLyrics(for: song) }
             }
         } label: {
@@ -415,11 +414,15 @@ struct PlayerQueueView: View {
 
 struct PlayerLyricsView: View {
     @ObservedObject var viewModel: AppCoordinator
-    @ObservedObject private var audioPlayer: AudioPlayer
+    private let audioPlayer: AudioPlayer
+    @State private var songID: String?
+    @State private var highlightedLine: Int?
 
     init(viewModel: AppCoordinator) {
         self.viewModel = viewModel
         self.audioPlayer = viewModel.audioPlayer
+        _songID = State(initialValue: viewModel.audioPlayer.currentSong?.id)
+        _highlightedLine = State(initialValue: viewModel.lyricsTimeline.lineIndex(at: viewModel.audioPlayer.currentTime))
     }
 
     var body: some View {
@@ -431,6 +434,7 @@ struct PlayerLyricsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let lyrics = viewModel.currentLyrics, !lyrics.lines.isEmpty {
                 lyricsScrollView(lyrics)
+                    .id(viewModel.lyricsRevision)
             } else {
                 ContentUnavailableView(
                     "Lyrics unavailable",
@@ -441,23 +445,31 @@ struct PlayerLyricsView: View {
             }
         }
         .background(.ultraThinMaterial)
-        .task(id: audioPlayer.currentSong?.id) {
+        .onReceive(audioPlayer.$currentSong.map { $0?.id }.removeDuplicates()) { songID = $0 }
+        .onReceive(audioPlayer.$currentTime) { updateHighlightedLine(at: $0) }
+        .onChange(of: viewModel.lyricsRevision, initial: true) { _, _ in
+            updateHighlightedLine(at: audioPlayer.currentTime)
+        }
+        .task(id: songID) {
             guard let song = audioPlayer.currentSong else { return }
             await viewModel.loadLyrics(for: song)
         }
     }
 
-    private func lyricsScrollView(_ lyrics: SongLyrics) -> some View {
-        let highlightedLine = lyrics.lineIndex(at: audioPlayer.currentTime)
+    private func updateHighlightedLine(at time: Double) {
+        let index = viewModel.lyricsTimeline.lineIndex(at: time)
+        if highlightedLine != index { highlightedLine = index }
+    }
 
-        return ScrollViewReader { proxy in
+    private func lyricsScrollView(_ lyrics: SongLyrics) -> some View {
+        ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { index, line in
+                    ForEach(lyrics.lines.indices, id: \.self) { index in
                         lyricRow(
                             lyrics.lineSegments[index],
                             isHighlighted: index == highlightedLine,
-                            playbackTime: lyrics.playbackTime(for: line)
+                            playbackTime: viewModel.lyricsTimeline.playbackTime(at: index)
                         )
                             .id(index)
                     }
