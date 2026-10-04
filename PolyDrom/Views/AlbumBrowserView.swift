@@ -69,30 +69,31 @@ private struct AlbumBrowserGrid: View, Equatable {
 
     var body: some View {
         LazyLibraryCardGrid(albums, minimumCardWidth: 150) { album in
-            ZStack(alignment: .topTrailing) {
-                NavigationLink(value: LibraryRoute.album(album)) {
-                    AlbumCardView(
-                        album: album,
-                        coverArtResource: coverArtResource(album)
-                    )
-                }
-                .buttonStyle(.plain)
+            let isFavorite = favoriteAlbumIDs.contains(album.id)
 
-                Button {
+            // Cards scroll into view by the dozen, and a button or navigation
+            // link costs several times what a tap gesture does to build, so both
+            // the card and its favorite badge are plain views with gestures.
+            AlbumCardView(
+                album: album,
+                coverArtResource: coverArtResource(album)
+            )
+            .modifier(LibraryCardPressModifier {
+                openAlbum(album)
+            })
+            // Pinned to the cover's corner, which is centered in a card whose
+            // width follows the window.
+            .overlay(alignment: .top) {
+                LibraryFavoriteBadge(
+                    isFavorite: isFavorite,
+                    isEnabled: isOnline,
+                    help: isFavorite ? "Remove album from favorites" : "Add album to favorites"
+                ) {
                     toggleFavorite(album)
-                } label: {
-                    Label(
-                        favoriteAlbumIDs.contains(album.id) ? "Unfavorite" : "Favorite",
-                        systemImage: favoriteAlbumIDs.contains(album.id) ? "heart.fill" : "heart"
-                    )
-                    .labelStyle(.iconOnly)
-                    .padding(7)
-                    .background(.regularMaterial, in: Circle())
                 }
-                .buttonStyle(.borderless)
-                .disabled(!isOnline)
-                .padding(15)
-                .help(favoriteAlbumIDs.contains(album.id) ? "Remove album from favorites" : "Add album to favorites")
+                .padding(5)
+                .frame(width: 128, alignment: .trailing)
+                .padding(.top, 10)
             }
             .contextMenu {
                 Button {
@@ -118,8 +119,8 @@ private struct AlbumBrowserGrid: View, Equatable {
                     toggleFavorite(album)
                 } label: {
                     Label(
-                        favoriteAlbumIDs.contains(album.id) ? "Remove from Favorites" : "Add to Favorites",
-                        systemImage: favoriteAlbumIDs.contains(album.id) ? "heart.slash" : "heart"
+                        isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                        systemImage: isFavorite ? "heart.slash" : "heart"
                     )
                 }
                 .disabled(!isOnline)
