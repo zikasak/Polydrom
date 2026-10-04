@@ -490,7 +490,9 @@ actor CoverArtCache {
         memoryCache.removeAllObjects()
         decodedImageCache.removeAll()
         crawlFailedKeys.removeAll()
-        diskEntries = [:]
+        // Reloaded from the directory on next use, so a clear that fails part
+        // way still accounts for whatever is left on disk.
+        diskEntries = nil
         diskUsage = 0
 
         let fileManager = FileManager.default

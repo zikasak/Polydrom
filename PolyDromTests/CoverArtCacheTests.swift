@@ -337,6 +337,21 @@ struct CoverArtCacheTests {
         #expect(await cache.diskUsageBytes() == onePixelPNG.count)
     }
 
+    @Test func failedClearStillCountsCoversLeftOnDisk() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let cache = CoverArtCache(session: session, diskDirectory: directory)
+        _ = try await cache.data(for: CoverArtResource(cacheKey: "kept", url: URL(string: "https://art.example/kept")!))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path) }
+
+        await #expect(throws: (any Error).self) { try await cache.clear() }
+
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+    }
+
     @Test func crawlGivesUpAfterRepeatedFailures() async throws {
         let requests = Mutex(0)
         let session = StubURLProtocol.session { _ in
