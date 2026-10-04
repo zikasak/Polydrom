@@ -168,14 +168,17 @@ struct SonosUPnPTests {
 
     @Test func volumeUpdatesStaySerializedWhileDragging() async {
         let speaker = Mutex((values: [Int](), inFlight: 0, maxInFlight: 0))
+        // Holds the first request open until the later drags are queued, however slow the runner is.
+        let firstRequestGate = DispatchSemaphore(value: 0)
         let session = StubURLProtocol.session { request in
             if Self.actionName(request) == "SetGroupVolume" {
-                speaker.withLock { state in
+                let isFirst = speaker.withLock { state in
                     state.values.append(Int(Self.requestField("DesiredVolume", in: request) ?? "") ?? 0)
                     state.inFlight += 1
                     state.maxInFlight = max(state.maxInFlight, state.inFlight)
+                    return state.values.count == 1
                 }
-                Thread.sleep(forTimeInterval: 0.2)
+                if isFirst { _ = firstRequestGate.wait(timeout: .now() + 10) }
                 speaker.withLock { $0.inFlight -= 1 }
             }
             return Self.response(for: request)
@@ -187,11 +190,12 @@ struct SonosUPnPTests {
         model.audioPlayer.selectSonosRoute(groupID: "group-1", groupVolume: 0.23)
 
         model.audioPlayer.setVolume(0.4)
-        #expect(await eventually { speaker.withLock { $0.inFlight } == 1 })
+        #expect(await eventually(timeout: .seconds(10)) { speaker.withLock { $0.inFlight } == 1 })
         model.audioPlayer.setVolume(0.5)
         model.audioPlayer.setVolume(0.6)
+        firstRequestGate.signal()
 
-        #expect(await eventually { model.sonosVolumeTask == nil })
+        #expect(await eventually(timeout: .seconds(10)) { model.sonosVolumeTask == nil })
         #expect(speaker.withLock { $0.values } == [40, 60])
         #expect(speaker.withLock { $0.maxInFlight } == 1)
         #expect(model.sonosMessage == nil)
