@@ -168,7 +168,7 @@ struct PersistenceTests {
             ),
             serverKey: "server-a"
         )
-        #expect(try await store.recentSongsAsync(serverKey: "server-a").isEmpty)
+        #expect(try await store.recentSongs(serverKey: "server-a").isEmpty)
         let shuffledLibrary = try await store.randomSongs(serverKey: "server-a")
         #expect(shuffledLibrary.count == 2)
         #expect(Set(shuffledLibrary.map(\.id)) == ["one", "two"])
@@ -181,13 +181,13 @@ struct PersistenceTests {
         try store.markPlayed(makeSong(id: "one", title: "Updated", duration: 42), serverKey: "server-a")
         try store.markPlayed(makeSong(id: "one", title: "Other Server"), serverKey: "server-b")
 
-        let recent = try await store.recentSongsAsync(serverKey: "server-a")
+        let recent = try await store.recentSongs(serverKey: "server-a")
         #expect(recent.count == 2)
         #expect(recent.first?.id == "one")
         #expect(recent.first?.title == "Updated")
         #expect(recent.first?.duration == 42)
-        #expect(try await store.recentSongsAsync(serverKey: "server-a", limit: 1).count == 1)
-        #expect(try await store.recentSongsAsync(serverKey: "server-b").map(\.title) == ["Other Server"])
+        #expect(try await store.recentSongs(serverKey: "server-a", limit: 1).count == 1)
+        #expect(try await store.recentSongs(serverKey: "server-b").map(\.title) == ["Other Server"])
     }
 
     @Test func albumShuffleKeepsAlbumsOrderedAndContiguous() async throws {
@@ -451,7 +451,7 @@ struct PersistenceTests {
         #expect(try await store.homeMetadata(serverKey: "server-a").recentlyAdded.map(\.id) == ["album"])
 
         try store.markPlayed(first, serverKey: "server-a")
-        #expect(try await store.recentSongsAsync(serverKey: "server-a").map(\.id) == ["first"])
+        #expect(try await store.recentSongs(serverKey: "server-a").map(\.id) == ["first"])
 
         try await store.apply(
             LibrarySnapshot(
@@ -468,7 +468,7 @@ struct PersistenceTests {
         #expect(try await store.songs(serverKey: "server-a", albumID: "album").map(\.id) == ["first"])
         #expect(try await store.playlists(serverKey: "server-a").isEmpty)
         #expect(try await store.favoriteSongs(serverKey: "server-a").isEmpty)
-        #expect(try await store.recentSongsAsync(serverKey: "server-a").map(\.id) == ["first"])
+        #expect(try await store.recentSongs(serverKey: "server-a").map(\.id) == ["first"])
     }
 
     @Test func deletingAProfilePurgesItsMetadataHistoryAndSyncState() async throws {
@@ -511,7 +511,7 @@ struct PersistenceTests {
         #expect(try await store.genres(serverKey: profile.serverKey).isEmpty)
         #expect(try await store.playlists(serverKey: profile.serverKey).isEmpty)
         #expect(try await store.favoriteSongs(serverKey: profile.serverKey).isEmpty)
-        #expect(try await store.recentSongsAsync(serverKey: profile.serverKey).isEmpty)
+        #expect(try await store.recentSongs(serverKey: profile.serverKey).isEmpty)
     }
 
     @Test func genresAreIndexedOrderedScopedAndReconciled() async throws {
@@ -577,7 +577,7 @@ struct PersistenceTests {
         #expect(try await store.randomSongs(serverKey: "server-a").first(where: { $0.id == alpha.id })?.genres == expectedAlphaGenres)
         #expect(try await store.songsShuffledByAlbum(serverKey: "server-a").first(where: { $0.id == alpha.id })?.genres == expectedAlphaGenres)
         try store.markPlayed(alpha, serverKey: "server-a")
-        #expect(try await store.recentSongsAsync(serverKey: "server-a").first?.genres == expectedAlphaGenres)
+        #expect(try await store.recentSongs(serverKey: "server-a").first?.genres == expectedAlphaGenres)
         #expect(try await store.genres(serverKey: "server-b").map(\.name) == ["Jazz"])
         #expect(try await store.metadataSyncState(serverKey: "server-a").catalogVersion == MetadataSyncState.currentCatalogVersion)
 
@@ -597,6 +597,34 @@ struct PersistenceTests {
         #expect(try await store.genres(serverKey: "server-a").map(\.name) == ["Electronic"])
         #expect(try await store.songs(serverKey: "server-a", genreID: "rock").isEmpty)
         #expect(try await store.songs(serverKey: "server-a", genreID: "electronic").map(\.id) == ["zebra"])
+    }
+
+    @Test func cachedSongsKeepTheFileFormatSonosNeedsToStreamTheOriginal() async throws {
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: MemoryCredentialStore()
+        )
+        let song = NavidromeSong(id: "lossless", title: "Lossless", albumId: "album", suffix: "flac")
+
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [song],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "scan",
+                checkedAt: Date()
+            ),
+            serverKey: "server-a"
+        )
+
+        let cached = try #require(try await store.songs(serverKey: "server-a", albumID: "album").first)
+        #expect(AppCoordinator.sonosStreamFormat(for: cached).format == "raw")
+
+        // A queue saved by an earlier version has no format and must not erase the cached one.
+        try store.markPlayed(NavidromeSong(id: "lossless", title: "Lossless", albumId: "album"), serverKey: "server-a")
+        #expect(try await store.recentSongs(serverKey: "server-a").first?.suffix == "flac")
     }
 
     @Test func staleCatalogVersionRequiresAFullRefresh() {
@@ -833,7 +861,7 @@ struct PersistenceTests {
             persistence: PersistenceController(inMemory: true),
             keychain: credentials
         )
-        #expect(try await rebuiltCache.recentSongsAsync(serverKey: "https://legacy.example|user").isEmpty)
+        #expect(try await rebuiltCache.recentSongs(serverKey: "https://legacy.example|user").isEmpty)
         #expect(!(try await rebuiltCache.metadataSyncState(serverKey: "https://legacy.example|user").isComplete))
     }
 

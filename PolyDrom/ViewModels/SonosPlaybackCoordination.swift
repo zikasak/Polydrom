@@ -1,6 +1,27 @@
 import Foundation
 import OSLog
 
+/// Sonos reports volume as a whole percentage; the player uses a 0...1 fraction.
+enum SonosVolume {
+    static func percent(from fraction: Double) -> Int {
+        Int((fraction * 100).rounded())
+    }
+
+    static func fraction(from percent: Int) -> Double {
+        Double(percent) / 100
+    }
+}
+
+/// Where a track starts on Sonos and whether that counts as a new play.
+private struct SonosTrackStart {
+    let seconds: Double
+    let autoplay: Bool
+    /// False when Sonos only takes over a song that was already being played.
+    let reportStart: Bool
+
+    static let fromBeginning = SonosTrackStart(seconds: 0, autoplay: true, reportStart: true)
+}
+
 struct SonosActiveSession {
     let group: SonosGroup
     let sourceURI: String?
@@ -51,15 +72,14 @@ extension AppCoordinator {
     }
 
     private func activateSonosGroup(_ group: SonosGroup, generation: Int) async {
-        guard isOnline, let client, let serverKey else {
+        guard isOnline, let client, let session = currentSession else {
             sonosMessage = "Connect to Navidrome before selecting Sonos."
             return
         }
-        let serverGeneration = sessionGeneration
         sonosPollTask?.cancel()
         await sonosPollTask?.value
         if let old = sonosSession { await stopOwnedTrack(old) }
-        guard generation == sonosGeneration, isCurrentSession(serverGeneration, serverKey: serverKey) else { return }
+        guard generation == sonosGeneration, isCurrentSession(session) else { return }
 
         do {
             let volume = try await sonosUPnP.groupVolume(on: group.coordinator)
@@ -75,25 +95,24 @@ extension AppCoordinator {
                     index = queue.count
                     queue.append(PlaybackQueueEntry(song: song))
                 }
-                let seconds = audioPlayer.currentTime
-                let shouldPlay = audioPlayer.isPlaying
+                // The song is already playing here, so Sonos picks it up where it is.
+                let handoff = SonosTrackStart(
+                    seconds: audioPlayer.currentTime, autoplay: audioPlayer.isPlaying, reportStart: false
+                )
                 try await loadSonosTrack(
                     queue,
                     currentIndex: index,
-                    song: song,
-                    seconds: seconds,
-                    autoplay: shouldPlay,
+                    start: handoff,
                     group: group,
                     groupVolume: volume,
                     client: client,
-                    generation: generation,
-                    reportStart: false
+                    generation: generation
                 )
             } else {
                 sonosSession = SonosActiveSession(
                     group: group, sourceURI: nil, trackURI: nil, startedAt: Date()
                 )
-                audioPlayer.selectSonosRoute(groupID: group.id, groupVolume: Double(volume) / 100)
+                audioPlayer.selectSonosRoute(groupID: group.id, groupVolume: SonosVolume.fraction(from: volume))
             }
             sonosMessage = nil
         } catch {
@@ -111,7 +130,6 @@ extension AppCoordinator {
 
     func playOnSonos(
         _ entry: PlaybackQueueEntry,
-        song: NavidromeSong,
         replacingQueueWith replacement: [PlaybackQueueEntry]?,
         client: NavidromeClient
     ) async throws {
@@ -120,66 +138,66 @@ extension AppCoordinator {
         guard let index = queue.firstIndex(where: { $0.id == entry.id }) else {
             throw SonosError.invalidResponse
         }
-        queue[index].song = song
+        queue[index].song = entry.song
         sonosGeneration += 1
         sonosPollTask?.cancel()
         try await loadSonosTrack(
-            queue, currentIndex: index, song: song, seconds: 0, autoplay: true,
-            group: active.group, groupVolume: Int((audioPlayer.volume * 100).rounded()),
-            client: client, generation: sonosGeneration, reportStart: true
+            queue, currentIndex: index, start: .fromBeginning,
+            group: active.group, groupVolume: SonosVolume.percent(from: audioPlayer.volume),
+            client: client, generation: sonosGeneration
         )
     }
 
     private func loadSonosTrack(
         _ queue: [PlaybackQueueEntry],
         currentIndex: Int,
-        song: NavidromeSong,
-        seconds: Double,
-        autoplay: Bool,
+        start: SonosTrackStart,
         group: SonosGroup,
         groupVolume: Int,
         client: NavidromeClient,
-        generation: Int,
-        reportStart: Bool
+        generation: Int
     ) async throws {
         guard queue.indices.contains(currentIndex) else { throw SonosError.invalidResponse }
         let device = group.coordinator
         let track = try Self.track(queue[currentIndex], client: client)
-        guard generation == sonosGeneration else { throw CancellationError() }
+        try checkSonosGeneration(generation)
         _ = try? await sonosUPnP.transport("Stop", on: device)
         var step = "RemoveAllTracksFromQueue"
         do {
-            guard generation == sonosGeneration else { throw CancellationError() }
+            try checkSonosGeneration(generation)
             try await sonosUPnP.clearQueue(device)
-            guard generation == sonosGeneration else { throw CancellationError() }
+            try checkSonosGeneration(generation)
             step = "AddURIToQueue"
             try await sonosUPnP.enqueueTrack(track, on: device)
-            guard generation == sonosGeneration else { throw CancellationError() }
+            try checkSonosGeneration(generation)
             step = "SetAVTransportURI"
             try await sonosUPnP.useQueue(device)
-            guard generation == sonosGeneration else { throw CancellationError() }
+            try checkSonosGeneration(generation)
             step = "Seek TRACK_NR"
             try await sonosUPnP.seekFirstTrack(on: device)
-            step = "Seek REL_TIME \(Int(seconds))s"
-            if seconds >= 1 { try await sonosUPnP.seekTime(seconds, on: device) }
-            guard generation == sonosGeneration else { throw CancellationError() }
+            step = "Seek REL_TIME \(Int(start.seconds))s"
+            if start.seconds >= 1 { try await sonosUPnP.seekTime(start.seconds, on: device) }
+            try checkSonosGeneration(generation)
             if audioPlayer.route == .local { audioPlayer.pauseForSonosHandoff() }
             step = "Play"
-            if autoplay { try await sonosUPnP.transport("Play", on: device) }
-            guard generation == sonosGeneration else { throw CancellationError() }
+            if start.autoplay { try await sonosUPnP.transport("Play", on: device) }
+            try checkSonosGeneration(generation)
         } catch {
             guard generation == sonosGeneration else { throw error }
             let failedStep = step
             let reason = Self.describe(error)
             AppLog.sonos.error("Sonos track load failed at \(failedStep, privacy: .public): \(reason, privacy: .public)")
             audioPlayer.resumeAfterFailedSonosHandoff()
-            if audioPlayer.route != .local { await detachSonos(with: error.localizedDescription) }
-            else { _ = try? await sonosUPnP.clearQueue(device) }
+            if audioPlayer.route != .local {
+                await detachSonos(with: error.localizedDescription)
+            } else {
+                _ = try? await sonosUPnP.clearQueue(device)
+            }
             throw error
         }
 
         guard generation == sonosGeneration else { return }
-        if reportStart, audioPlayer.route != .local, audioPlayer.currentSong != nil,
+        if start.reportStart, audioPlayer.route != .local, audioPlayer.currentSong != nil,
            audioPlayer.isPlaying {
             audioPlayer.endSonosTrack(finished: false)
         }
@@ -190,12 +208,17 @@ extension AppCoordinator {
         playbackQueue = queue
         currentPlaybackQueueEntryID = queue[currentIndex].id
         audioPlayer.beginSonosPlayback(
-            song: song, groupID: group.id, at: seconds, isPlaying: autoplay,
-            groupVolume: Double(groupVolume) / 100, reportStart: reportStart
+            song: queue[currentIndex].song, groupID: group.id, at: start.seconds, isPlaying: start.autoplay,
+            groupVolume: SonosVolume.fraction(from: groupVolume), reportStart: start.reportStart
         )
         sonosMessage = nil
         startSonosPolling(generation: generation)
         updateNowPlayingQueueState()
+    }
+
+    /// A newer Sonos request supersedes the one that captured `generation`.
+    private func checkSonosGeneration(_ generation: Int) throws {
+        guard generation == sonosGeneration else { throw CancellationError() }
     }
 
     nonisolated private static func describe(_ error: Error) -> String {
@@ -242,7 +265,7 @@ extension AppCoordinator {
     func handleSonosCommand(_ command: SonosPlaybackCommand) {
         guard let session = sonosSession else { return }
         if case .volume(let volume) = command {
-            pendingSonosVolume = Int((volume * 100).rounded())
+            pendingSonosVolume = SonosVolume.percent(from: volume)
             let generation = sonosGeneration
             if sonosVolumeTask != nil, sonosVolumeTaskGeneration == generation { return }
             sonosVolumeTaskGeneration = generation
@@ -261,40 +284,21 @@ extension AppCoordinator {
         let generation = sonosGeneration
         Task {
             do {
+                let device = session.group.coordinator
                 switch command {
                 case .play:
-                    try await sonosUPnP.transport("Play", on: session.group.coordinator)
+                    try await sonosUPnP.transport("Play", on: device)
                     guard generation == sonosGeneration else { return }
-                    sonosSession?.lastProgressAt = Date()
-                    if let song = audioPlayer.currentSong {
-                        audioPlayer.updateSonosPlayback(
-                            song: song, at: audioPlayer.currentTime, duration: audioPlayer.duration,
-                            isPlaying: true, event: .resumed
-                        )
-                    }
+                    showSonosPlayback(at: audioPlayer.currentTime, isPlaying: true, event: .resumed)
                 case .pause:
-                    try await sonosUPnP.transport("Pause", on: session.group.coordinator)
+                    try await sonosUPnP.transport("Pause", on: device)
                     guard generation == sonosGeneration else { return }
-                    sonosSession?.lastProgressAt = nil
-                    if let song = audioPlayer.currentSong {
-                        audioPlayer.updateSonosPlayback(
-                            song: song, at: audioPlayer.currentTime, duration: audioPlayer.duration,
-                            isPlaying: false, event: .paused
-                        )
-                    }
-                case .stop:
-                    break
+                    showSonosPlayback(at: audioPlayer.currentTime, isPlaying: false, event: .paused)
                 case .seek(let seconds):
-                    try await sonosUPnP.seekTime(seconds, on: session.group.coordinator)
+                    try await sonosUPnP.seekTime(seconds, on: device)
                     guard generation == sonosGeneration else { return }
-                    sonosSession?.lastProgressAt = audioPlayer.isPlaying ? Date() : nil
-                    if let song = audioPlayer.currentSong {
-                        audioPlayer.updateSonosPlayback(
-                            song: song, at: seconds, duration: audioPlayer.duration,
-                            isPlaying: audioPlayer.isPlaying, event: .seeked
-                        )
-                    }
-                case .volume:
+                    showSonosPlayback(at: seconds, isPlaying: audioPlayer.isPlaying, event: .seeked)
+                case .stop, .volume:
                     break
                 }
             } catch {
@@ -307,6 +311,15 @@ extension AppCoordinator {
                 }
             }
         }
+    }
+
+    /// Mirrors a transport change the speaker accepted in the player's state.
+    private func showSonosPlayback(at seconds: Double, isPlaying: Bool, event: AudioPlaybackEvent.Trigger) {
+        sonosSession?.lastProgressAt = isPlaying ? Date() : nil
+        guard let song = audioPlayer.currentSong else { return }
+        audioPlayer.updateSonosPlayback(
+            song: song, at: seconds, duration: audioPlayer.duration, isPlaying: isPlaying, event: event
+        )
     }
 
     private func sendPendingSonosVolume(on device: SonosDevice, generation: Int) async {
@@ -376,12 +389,19 @@ extension AppCoordinator {
         await stopOwnedTrack(session)
         sonosSession = nil
         sonosMessage = nil
-        let url: URL? = if let song, let client { try? client.streamURL(for: song) } else { nil }
-        let fallbackURL: URL? = if let song, let client { try? client.streamURL(for: song, format: "mp3") } else { nil }
-        audioPlayer.leaveSonosRoute(song: song, url: url, fallbackURL: fallbackURL, at: seconds, autoplay: autoplay)
-        if let song, url == nil { audioPlayer.restore(song: song, at: seconds) }
+        moveSonosPlaybackToLocalOutput(song: song, at: seconds, autoplay: autoplay)
         updateNowPlayingQueueState()
         persistPlaybackState()
+    }
+
+    /// Hands `song` back to the local player at the position Sonos reached. Without
+    /// a stream to load it is left ready to resume once the server is reachable.
+    private func moveSonosPlaybackToLocalOutput(song: NavidromeSong?, at seconds: Double, autoplay: Bool) {
+        let streams = song.flatMap { song in try? client?.playbackStreamURLs(for: song) }
+        audioPlayer.leaveSonosRoute(
+            song: song, url: streams?.url, fallbackURL: streams?.fallbackURL, at: seconds, autoplay: autoplay
+        )
+        if let song, streams == nil { audioPlayer.restore(song: song, at: seconds) }
     }
 
     private func stopOwnedTrack(_ session: SonosActiveSession) async {
@@ -415,12 +435,7 @@ extension AppCoordinator {
         await sonosCleanupTask?.value
         guard let session = sonosSession else { return }
         sonosPollTask?.cancel()
-        if let song = audioPlayer.currentSong {
-            audioPlayer.updateSonosPlayback(
-                song: song, at: audioPlayer.currentTime, duration: audioPlayer.duration,
-                isPlaying: false, event: .paused
-            )
-        }
+        showSonosPlayback(at: audioPlayer.currentTime, isPlaying: false, event: .paused)
         persistPlaybackState()
         await stopOwnedTrack(session)
         sonosSession = nil
@@ -530,7 +545,7 @@ extension AppCoordinator {
             if tick > 0, tick.isMultiple(of: 5) {
                 let volume = try? await sonosUPnP.groupVolume(on: current.group.coordinator)
                 guard generation == sonosGeneration else { return }
-                if let volume { audioPlayer.setSonosVolume(Double(volume) / 100) }
+                if let volume { audioPlayer.setSonosVolume(SonosVolume.fraction(from: volume)) }
             }
         } catch {
             guard generation == sonosGeneration else { return }
@@ -566,12 +581,7 @@ extension AppCoordinator {
         sonosSession = nil
         sonosMessage = message
         statusMessage = message
-        let song = audioPlayer.currentSong
-        let seconds = audioPlayer.currentTime
-        let url: URL? = if let song, let client { try? client.streamURL(for: song) } else { nil }
-        let fallbackURL: URL? = if let song, let client { try? client.streamURL(for: song, format: "mp3") } else { nil }
-        audioPlayer.leaveSonosRoute(song: song, url: url, fallbackURL: fallbackURL, at: seconds, autoplay: false)
-        if let song, url == nil { audioPlayer.restore(song: song, at: seconds) }
+        moveSonosPlaybackToLocalOutput(song: audioPlayer.currentSong, at: audioPlayer.currentTime, autoplay: false)
         persistPlaybackState()
     }
 }

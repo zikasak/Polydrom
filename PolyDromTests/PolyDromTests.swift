@@ -158,7 +158,7 @@ struct PolyDromTests {
             serverKey: serverKey
         )
         try store.markPlayed(song, serverKey: serverKey)
-        #expect(try await store.recentSongsAsync(serverKey: serverKey) == [song])
+        #expect(try await store.recentSongs(serverKey: serverKey) == [song])
     }
 
     @Test func playNextInsertsAfterCurrentSongAndQueueAppends() {

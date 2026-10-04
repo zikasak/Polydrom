@@ -166,7 +166,7 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
 
     var durationText: String {
         guard let duration else { return "--:--" }
-        return "\(duration / 60):\(String(format: "%02d", duration % 60))"
+        return PlaybackTime.text(duration)
     }
 
     private static func normalizedGenres(_ values: [String]) -> [String] {
@@ -193,11 +193,6 @@ struct PlaybackQueueEntry: Codable, Identifiable, Hashable, Sendable {
         self.id = id
         self.song = song
     }
-}
-
-struct PlaybackSessionIdentity: Sendable {
-    let generation: UInt
-    let serverKey: String
 }
 
 struct NavidromeAlbum: Decodable, Identifiable, Hashable, Sendable {
@@ -456,14 +451,14 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
         displayArtist = try? container.decode(String.self, forKey: .displayArtist)
         displayTitle = try? container.decode(String.self, forKey: .displayTitle)
         language = try? container.decode(String.self, forKey: .language)
-        offset = container.decodeFlexibleInt(forKey: .offset)
+        offset = container.decodeIntIfPresent(forKey: .offset)
         synced = (try? container.decode(Bool.self, forKey: .synced)) ?? false
         kind = try? container.decode(String.self, forKey: .kind)
-        let lines = ((try? container.decode(FlexibleArray<SongLyricsLine>.self, forKey: .lines)) ?? FlexibleArray(values: [])).values
+        let lines = container.decodeFlexibleArray(of: SongLyricsLine.self, forKey: .lines).values
         self.lines = lines
 
-        let agents = ((try? container.decode(FlexibleArray<SongLyricsAgent>.self, forKey: .agents)) ?? FlexibleArray(values: [])).values
-        let cueLines = ((try? container.decode(FlexibleArray<SongLyricsCueLine>.self, forKey: .cueLines)) ?? FlexibleArray(values: [])).values
+        let agents = container.decodeFlexibleArray(of: SongLyricsAgent.self, forKey: .agents).values
+        let cueLines = container.decodeFlexibleArray(of: SongLyricsCueLine.self, forKey: .cueLines).values
         let backgroundAgentIDs = Set(agents.filter { $0.role.caseInsensitiveCompare("bg") == .orderedSame }.map(\.id))
         let backgroundValuesByIndex = Dictionary(
             grouping: cueLines.filter { $0.agentId.map(backgroundAgentIDs.contains) ?? false },
@@ -559,7 +554,7 @@ struct SongLyricsSegment: Hashable, Sendable {
                 if depth == 0 { flush(isBackground: false) }
                 depth += 1
                 current.append(character)
-            } else if (character == ")" || character == "）"), depth > 0 {
+            } else if character == ")" || character == "）", depth > 0 {
                 current.append(character)
                 depth -= 1
                 if depth == 0 { flush(isBackground: true) }
@@ -597,7 +592,7 @@ struct SongLyricsLine: Decodable, Identifiable, Hashable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         value = (try? container.decode(String.self, forKey: .value)) ?? ""
-        start = container.decodeFlexibleInt(forKey: .start)
+        start = container.decodeIntIfPresent(forKey: .start)
     }
 }
 
@@ -639,10 +634,6 @@ private extension KeyedDecodingContainer {
         }
 
         return nil
-    }
-
-    func decodeFlexibleInt(forKey key: Key) -> Int? {
-        decodeIntIfPresent(forKey: key)
     }
 
     func decodeDateIfPresent(forKey key: Key) -> Date? {

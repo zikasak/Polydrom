@@ -43,7 +43,7 @@ struct PlaylistBrowserView: View {
         }
         .alert(
             "Delete Playlist?",
-            isPresented: deletionAlertIsPresented,
+            isPresented: Binding(isPresenting: $playlistPendingDeletion),
             presenting: playlistPendingDeletion,
             actions: deletionAlertActions,
             message: deletionAlertMessage
@@ -92,13 +92,6 @@ struct PlaylistBrowserView: View {
         }
     }
 
-    private var deletionAlertIsPresented: Binding<Bool> {
-        Binding(
-            get: { playlistPendingDeletion != nil },
-            set: { if !$0 { playlistPendingDeletion = nil } }
-        )
-    }
-
     @ViewBuilder
     private func deletionAlertActions(_ playlist: NavidromePlaylist) -> some View {
         Button("Delete", role: .destructive) {
@@ -130,15 +123,7 @@ struct PlaylistDetailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(currentPlaylist.name)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-
-                    Text(currentPlaylist.subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                LibraryDetailHeader(title: currentPlaylist.name, subtitle: currentPlaylist.subtitle)
 
                 Spacer()
 
@@ -205,51 +190,26 @@ struct PlaylistCreationSheet: View {
     @ObservedObject var viewModel: AppCoordinator
     let request: PlaylistCreationRequest
 
-    @State private var name = ""
     @State private var isSubmitting = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("New Playlist")
-                .font(.title2.bold())
-
-            TextField("Playlist name", text: $name)
-                .accessibilityIdentifier("playlistNameField")
-                .onSubmit(create)
-
-            if !request.songs.isEmpty {
-                Text("\(request.songs.count) selected \(request.songs.count == 1 ? "song" : "songs") will be added.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) {
-                    viewModel.playlistCreationRequest = nil
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button("Create", action: create)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(trimmedName.isEmpty || isSubmitting)
-                    .accessibilityIdentifier("createPlaylistButton")
-            }
-        }
-        .padding(24)
-        .frame(width: 420)
+        PlaylistNameForm(
+            title: "New Playlist",
+            actionTitle: "Create",
+            actionIdentifier: "createPlaylistButton",
+            note: request.songs.isEmpty
+                ? nil
+                : "\(request.songs.count) selected \(request.songs.count == 1 ? "song" : "songs") will be added.",
+            isSubmitting: isSubmitting,
+            submit: create,
+            cancel: { viewModel.playlistCreationRequest = nil }
+        )
     }
 
-    private var trimmedName: String {
-        name.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func create() {
-        guard !trimmedName.isEmpty, !isSubmitting else { return }
+    private func create(_ name: String) {
         isSubmitting = true
         Task {
-            if await viewModel.createPlaylist(name: trimmedName, songs: request.songs) {
+            if await viewModel.createPlaylist(name: name, songs: request.songs) {
                 request.onSuccess()
                 viewModel.playlistCreationRequest = nil
             } else {
@@ -264,31 +224,90 @@ private struct PlaylistRenameSheet: View {
     let playlist: NavidromePlaylist
 
     @Environment(\.dismiss) private var dismiss
-    @State private var name: String
     @State private var isSubmitting = false
 
-    init(viewModel: AppCoordinator, playlist: NavidromePlaylist) {
-        self.viewModel = viewModel
-        self.playlist = playlist
-        _name = State(initialValue: playlist.name)
+    var body: some View {
+        PlaylistNameForm(
+            title: "Rename Playlist",
+            actionTitle: "Rename",
+            actionIdentifier: "renamePlaylistButton",
+            initialName: playlist.name,
+            isSubmitting: isSubmitting,
+            submit: rename,
+            cancel: { dismiss() }
+        )
+    }
+
+    private func rename(to name: String) {
+        isSubmitting = true
+        Task {
+            if await viewModel.renamePlaylist(playlist, to: name) {
+                dismiss()
+            } else {
+                isSubmitting = false
+            }
+        }
+    }
+}
+
+/// The name field and buttons shared by the sheets that create and rename a
+/// playlist. `submit` receives the trimmed name, and only when it is not empty.
+private struct PlaylistNameForm: View {
+    let title: String
+    let actionTitle: String
+    let actionIdentifier: String
+    let note: String?
+    let isSubmitting: Bool
+    let submit: (String) -> Void
+    let cancel: () -> Void
+
+    @State private var name: String
+
+    init(
+        title: String,
+        actionTitle: String,
+        actionIdentifier: String,
+        initialName: String = "",
+        note: String? = nil,
+        isSubmitting: Bool,
+        submit: @escaping (String) -> Void,
+        cancel: @escaping () -> Void
+    ) {
+        self.title = title
+        self.actionTitle = actionTitle
+        self.actionIdentifier = actionIdentifier
+        self.note = note
+        self.isSubmitting = isSubmitting
+        self.submit = submit
+        self.cancel = cancel
+        _name = State(initialValue: initialName)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Rename Playlist")
+            Text(title)
                 .font(.title2.bold())
 
             TextField("Playlist name", text: $name)
-                .onSubmit(rename)
+                .accessibilityIdentifier("playlistNameField")
+                .onSubmit(submitIfValid)
+
+            if let note {
+                Text(note)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
 
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Cancel", role: .cancel, action: cancel)
                     .keyboardShortcut(.cancelAction)
-                Button("Rename", action: rename)
+
+                Button(actionTitle, action: submitIfValid)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(trimmedName.isEmpty || isSubmitting)
+                    .accessibilityIdentifier(actionIdentifier)
             }
         }
         .padding(24)
@@ -299,15 +318,8 @@ private struct PlaylistRenameSheet: View {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func rename() {
+    private func submitIfValid() {
         guard !trimmedName.isEmpty, !isSubmitting else { return }
-        isSubmitting = true
-        Task {
-            if await viewModel.renamePlaylist(playlist, to: trimmedName) {
-                dismiss()
-            } else {
-                isSubmitting = false
-            }
-        }
+        submit(trimmedName)
     }
 }

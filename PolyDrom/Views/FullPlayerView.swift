@@ -52,7 +52,7 @@ struct FullPlayerView: View {
 
                     if let detailPanel {
                         Divider()
-                        detailView(for: detailPanel)
+                        PlayerDetailPanelView(panel: detailPanel, viewModel: viewModel)
                             .frame(width: min(360, max(300, proxy.size.width * 0.32)))
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
@@ -110,26 +110,41 @@ struct FullPlayerView: View {
             )
             .shadow(color: .black.opacity(0.28), radius: 28, y: 16)
             .contextMenu {
-                if let album = currentAlbum {
-                    PlayerAlbumContextMenu(
-                        viewModel: viewModel,
-                        album: album,
-                        openRoute: openRoute
-                    )
+                if let album = audioPlayer.currentSong.flatMap(viewModel.albumForNavigation) {
+                    AlbumContextMenu(viewModel: viewModel, album: album) {
+                        openRoute(.album(album))
+                    }
                 }
             }
 
             VStack(spacing: 5) {
-                title
+                NowPlayingTitle(
+                    viewModel: viewModel,
+                    song: audioPlayer.currentSong,
+                    font: .system(size: 28, weight: .bold, design: .rounded),
+                    openRoute: openRoute
+                )
 
-                metadataLine
+                NowPlayingMetadataLine(
+                    viewModel: viewModel,
+                    song: audioPlayer.currentSong,
+                    statusMessage: audioPlayer.statusMessage,
+                    font: .title3,
+                    spacing: 6,
+                    openRoute: openRoute
+                )
             }
             .frame(maxWidth: 560)
 
             progressControls
                 .frame(maxWidth: 600)
 
-            transportControls
+            PlayerTransportControls(
+                viewModel: viewModel,
+                currentSong: audioPlayer.currentSong,
+                isPlaying: audioPlayer.isPlaying,
+                style: .full
+            )
 
             outputControls
 
@@ -141,111 +156,21 @@ struct FullPlayerView: View {
 
     private var progressControls: some View {
         VStack(spacing: 4) {
-            Slider(
-                value: Binding(
-                    get: { audioPlayer.currentTime },
-                    set: { audioPlayer.seek(to: $0) }
-                ),
-                in: 0...max(audioPlayer.duration, 1)
-            )
-            .disabled(audioPlayer.currentSong == nil || audioPlayer.duration <= 0)
+            PlayerSeekSlider(audioPlayer: audioPlayer)
 
             HStack {
-                Text(timeText(audioPlayer.currentTime))
+                Text(PlaybackTime.text(audioPlayer.currentTime))
                 Spacer()
-                Text("-\(timeText(max(audioPlayer.duration - audioPlayer.currentTime, 0)))")
+                Text("-\(PlaybackTime.text(max(audioPlayer.duration - audioPlayer.currentTime, 0)))")
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
         }
     }
 
-    private var transportControls: some View {
-        HStack(spacing: 34) {
-            Button {
-                viewModel.playPreviousTrack()
-            } label: {
-                Image(systemName: "backward.fill")
-                    .font(.title2)
-            }
-            .buttonStyle(.plain)
-            .disabled(!viewModel.canPlayPreviousTrack())
-            .help("Previous")
-
-            Button {
-                audioPlayer.togglePlayPause()
-            } label: {
-                Label(
-                    audioPlayer.isPlaying ? "Pause" : "Play",
-                    systemImage: audioPlayer.isPlaying ? "pause.fill" : "play.fill"
-                )
-                    .labelStyle(.iconOnly)
-                    .font(.system(size: 26, weight: .semibold))
-                    .frame(width: 62, height: 62)
-                    .foregroundStyle(Color(nsColor: .windowBackgroundColor))
-                    .background {
-                        Circle()
-                            .fill(Color(nsColor: .labelColor))
-                    }
-            }
-            .buttonStyle(.plain)
-            .disabled(audioPlayer.currentSong == nil)
-            .help(audioPlayer.isPlaying ? "Pause" : "Play")
-
-            Button {
-                viewModel.playNextTrack()
-            } label: {
-                Image(systemName: "forward.fill")
-                    .font(.title2)
-            }
-            .buttonStyle(.plain)
-            .disabled(!viewModel.canPlayNextTrack())
-            .help("Next")
-
-            Button {
-                audioPlayer.stop()
-            } label: {
-                Label("Stop", systemImage: "stop.fill")
-                    .labelStyle(.iconOnly)
-                    .font(.title2)
-            }
-            .buttonStyle(.plain)
-            .disabled(audioPlayer.currentSong == nil)
-            .help("Stop")
-
-            Button {
-                if let song = audioPlayer.currentSong {
-                    viewModel.toggleFavorite(song)
-                }
-            } label: {
-                Label(
-                    currentSongIsFavorite ? "Unfavorite" : "Favorite",
-                    systemImage: currentSongIsFavorite ? "heart.fill" : "heart"
-                )
-                .labelStyle(.iconOnly)
-                .font(.title2)
-            }
-            .buttonStyle(.plain)
-            .disabled(audioPlayer.currentSong == nil || !viewModel.isOnline)
-            .help(currentSongIsFavorite ? "Remove from favorites" : "Add to favorites")
-        }
-    }
-
     private var outputControls: some View {
         HStack(spacing: 12) {
-            Image(systemName: volumeSystemImage)
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-
-            Slider(
-                value: Binding(
-                    get: { audioPlayer.volume },
-                    set: { audioPlayer.setVolume($0) }
-                ),
-                in: 0...1
-            )
-            .frame(width: 180)
-            .help("Volume")
+            PlayerVolumeControl(audioPlayer: audioPlayer, spacing: 12, iconWidth: 20, sliderWidth: 180)
 
             Divider()
                 .frame(height: 24)
@@ -275,123 +200,6 @@ struct FullPlayerView: View {
         // Keep selection colors out of the panel's spring animation.
         .animation(nil, value: detailPanel)
         .help(panel.title)
-    }
-
-    @ViewBuilder
-    private func detailView(for panel: PlayerDetailPanel) -> some View {
-        switch panel {
-        case .queue:
-            PlayerQueueView(viewModel: viewModel)
-        case .lyrics:
-            PlayerLyricsView(viewModel: viewModel)
-        }
-    }
-
-    private var volumeSystemImage: String {
-        switch audioPlayer.volume {
-        case 0: "speaker.slash.fill"
-        case ..<0.4: "speaker.wave.1.fill"
-        case ..<0.75: "speaker.wave.2.fill"
-        default: "speaker.wave.3.fill"
-        }
-    }
-
-    private var currentSongIsFavorite: Bool {
-        audioPlayer.currentSong.map(viewModel.isFavorite) ?? false
-    }
-
-    @ViewBuilder
-    private var title: some View {
-        if let song = audioPlayer.currentSong, let album = currentAlbum {
-            Button {
-                openRoute(.album(album))
-            } label: {
-                Text(song.title)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-            }
-            .buttonStyle(.plain)
-            .help("Open album")
-            .contextMenu {
-                PlayerSongContextMenu(viewModel: viewModel, song: song)
-            }
-        } else {
-            Text(audioPlayer.currentSong?.title ?? "Nothing playing")
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-                .lineLimit(1)
-                .contextMenu {
-                    if let song = audioPlayer.currentSong {
-                        PlayerSongContextMenu(viewModel: viewModel, song: song)
-                    }
-                }
-        }
-    }
-
-    @ViewBuilder
-    private var metadataLine: some View {
-        if audioPlayer.currentSong == nil {
-            Text(audioPlayer.statusMessage)
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        } else {
-            HStack(spacing: 6) {
-                if let artist = currentArtist {
-                    Button {
-                        openRoute(.artist(artist))
-                    } label: {
-                        Text(artist.name)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open artist")
-                        .contextMenu {
-                            PlayerArtistContextMenu(
-                                viewModel: viewModel,
-                                artist: artist,
-                                openRoute: openRoute
-                            )
-                        }
-                }
-
-                if currentArtist != nil, currentAlbum != nil {
-                    Text("-")
-                }
-
-                if let album = currentAlbum {
-                    Button {
-                        openRoute(.album(album))
-                    } label: {
-                        Text(album.name)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Open album")
-                        .contextMenu {
-                            PlayerAlbumContextMenu(
-                                viewModel: viewModel,
-                                album: album,
-                                openRoute: openRoute
-                            )
-                        }
-                }
-            }
-            .font(.title3)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-        }
-    }
-
-    private var currentAlbum: NavidromeAlbum? {
-        audioPlayer.currentSong.flatMap(viewModel.albumForNavigation)
-    }
-
-    private var currentArtist: NavidromeArtist? {
-        audioPlayer.currentSong.flatMap(viewModel.artistForNavigation)
-    }
-
-    private func timeText(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds > 0 else { return "0:00" }
-        let totalSeconds = Int(seconds.rounded(.down))
-        return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
     }
 }
 
@@ -475,22 +283,7 @@ private struct PlayerArtworkBackground: View {
         if let cachedImage = CoverArtCache.shared.cachedImage(for: resource) {
             return cachedImage
         }
-
-        for attempt in 0..<3 {
-            do {
-                return try await CoverArtCache.shared.image(for: resource)
-            } catch {
-                guard !Task.isCancelled, attempt < 2 else { return nil }
-
-                do {
-                    try await Task.sleep(for: .milliseconds(attempt == 0 ? 400 : 900))
-                } catch {
-                    return nil
-                }
-            }
-        }
-
-        return nil
+        return await CoverArtCache.shared.imageRetrying(for: resource)
     }
 
     @MainActor
@@ -513,28 +306,8 @@ private struct PlayerArtworkBackground: View {
     }
 }
 
-enum PlayerDetailPanel: Equatable {
-    case queue
-    case lyrics
-
-    var title: String {
-        switch self {
-        case .queue: "Queue"
-        case .lyrics: "Lyrics"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .queue: "text.line.last.and.arrowtriangle.forward"
-        case .lyrics: "quote.bubble"
-        }
-    }
-}
-
 struct PlayerQueueView: View {
     @ObservedObject var viewModel: AppCoordinator
-    @State private var scrollActivity = LibraryScrollActivity()
     // Mirrors only the player state the queue shows. Observing the player itself
     // would rebuild every visible queue row on each playback-time tick.
     @State private var hasCurrentSong: Bool
@@ -609,10 +382,7 @@ struct PlayerQueueView: View {
                     .onChange(of: viewModel.currentPlaybackQueueEntryID) { _, _ in
                         scrollToCurrentEntry(with: proxy, animated: true)
                     }
-                    .onScrollPhaseChange { _, newPhase in
-                        scrollActivity.isScrolling = newPhase.isScrolling
-                    }
-                    .environment(scrollActivity)
+                    .tracksLibraryScrollActivity()
                 }
             }
         }

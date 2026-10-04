@@ -6,6 +6,16 @@ struct PlaylistCreationRequest: Identifiable {
     let onSuccess: @MainActor () -> Void
 }
 
+/// A playlist change the server accepted, with the state to show if the
+/// follow-up refresh fails.
+private struct CommittedPlaylistChange {
+    /// The playlist whose songs changed, if it still exists.
+    let focusID: String?
+    let fallbackPlaylists: [NavidromePlaylist]
+    let fallbackSongs: [NavidromeSong]?
+    let successMessage: String
+}
+
 extension AppCoordinator {
     func canEdit(_ playlist: NavidromePlaylist) -> Bool {
         guard isOnline, !isPlaylistMutating, !playlist.isReadOnly else { return false }
@@ -30,32 +40,20 @@ extension AppCoordinator {
             statusMessage = "Enter a playlist name."
             return false
         }
-        guard canCreatePlaylist, let client, let serverKey else {
+        guard canCreatePlaylist, let client, let session = currentSession else {
             statusMessage = "Connect to the server to create playlists."
             return false
         }
 
-        let generation = sessionGeneration
-        isPlaylistMutating = true
-        defer { isPlaylistMutating = false }
-
-        do {
-            let created = try await client.createPlaylist(name: trimmedName, songIDs: songs.map(\.id))
-            guard isCurrentSession(generation, serverKey: serverKey) else { return true }
-            await finishCommittedPlaylistMutation(
+        return await commitPlaylistChange(client: client, session: session) {
+            try await client.createPlaylist(name: trimmedName, songIDs: songs.map(\.id))
+        } describe: { created in
+            CommittedPlaylistChange(
                 focusID: created.id,
                 fallbackPlaylists: playlists + [created],
                 fallbackSongs: songs,
-                successMessage: "Created \(trimmedName)",
-                generation: generation,
-                serverKey: serverKey,
-                client: client
+                successMessage: "Created \(trimmedName)"
             )
-            return true
-        } catch {
-            guard isCurrentSession(generation, serverKey: serverKey) else { return false }
-            statusMessage = error.localizedDescription
-            return false
         }
     }
 
@@ -65,190 +63,142 @@ extension AppCoordinator {
             statusMessage = "Enter a playlist name."
             return false
         }
-        guard canEdit(playlist), let client, let serverKey else {
+        guard canEdit(playlist), let client, let session = currentSession else {
             statusMessage = "This playlist cannot be edited."
             return false
         }
 
-        let generation = sessionGeneration
-        isPlaylistMutating = true
-        defer { isPlaylistMutating = false }
-
-        do {
+        return await commitPlaylistChange(client: client, session: session) {
             try await client.updatePlaylist(playlistID: playlist.id, name: trimmedName)
-            guard isCurrentSession(generation, serverKey: serverKey) else { return true }
-            let updated = replacingPlaylist(playlist, name: trimmedName)
-            let fallback = playlists.map { $0.id == playlist.id ? updated : $0 }
-            let songs = try? await store.songs(serverKey: serverKey, playlistID: playlist.id)
-            await finishCommittedPlaylistMutation(
+        } describe: { _ in
+            let fallbackPlaylists = replacing(playlist, name: trimmedName)
+            return CommittedPlaylistChange(
                 focusID: playlist.id,
-                fallbackPlaylists: fallback,
-                fallbackSongs: songs,
-                successMessage: "Renamed playlist",
-                generation: generation,
-                serverKey: serverKey,
-                client: client
+                fallbackPlaylists: fallbackPlaylists,
+                fallbackSongs: try? await store.songs(serverKey: session.serverKey, playlistID: playlist.id),
+                successMessage: "Renamed playlist"
             )
-            return true
-        } catch {
-            guard isCurrentSession(generation, serverKey: serverKey) else { return false }
-            statusMessage = error.localizedDescription
-            return false
         }
     }
 
     func addSongs(_ songs: [NavidromeSong], to playlist: NavidromePlaylist) async -> Bool {
         guard !songs.isEmpty else { return false }
-        guard canEdit(playlist), let client, let serverKey else {
+        guard canEdit(playlist), let client, let session = currentSession else {
             statusMessage = "This playlist cannot be edited."
             return false
         }
 
-        let generation = sessionGeneration
-        isPlaylistMutating = true
-        defer { isPlaylistMutating = false }
-
-        do {
+        return await commitPlaylistChange(client: client, session: session) {
             try await client.updatePlaylist(playlistID: playlist.id, songIDsToAdd: songs.map(\.id))
-            guard isCurrentSession(generation, serverKey: serverKey) else { return true }
+        } describe: { _ in
             let existingSongs = (try? await store.songs(
-                serverKey: serverKey,
+                serverKey: session.serverKey,
                 playlistID: playlist.id
             )) ?? []
-            let updated = replacingPlaylist(
-                playlist,
-                songCount: (playlist.songCount ?? existingSongs.count) + songs.count
-            )
-            let fallback = playlists.map { $0.id == playlist.id ? updated : $0 }
-            let message = songs.count == 1
-                ? "Added to \(playlist.name)"
-                : "Added \(songs.count) songs to \(playlist.name)"
-            await finishCommittedPlaylistMutation(
+            return CommittedPlaylistChange(
                 focusID: playlist.id,
-                fallbackPlaylists: fallback,
+                fallbackPlaylists: replacing(
+                    playlist,
+                    songCount: (playlist.songCount ?? existingSongs.count) + songs.count
+                ),
                 fallbackSongs: existingSongs + songs,
-                successMessage: message,
-                generation: generation,
-                serverKey: serverKey,
-                client: client
+                successMessage: songs.count == 1
+                    ? "Added to \(playlist.name)"
+                    : "Added \(songs.count) songs to \(playlist.name)"
             )
-            return true
-        } catch {
-            guard isCurrentSession(generation, serverKey: serverKey) else { return false }
-            statusMessage = error.localizedDescription
-            return false
         }
     }
 
     func removeSongs(at indices: IndexSet, from playlist: NavidromePlaylist) async -> Bool {
         let validIndices = IndexSet(indices.filter { playlistSongs.indices.contains($0) })
         guard !validIndices.isEmpty else { return false }
-        guard canEdit(playlist), selectedPlaylist?.id == playlist.id, let client, let serverKey else {
+        guard canEdit(playlist), selectedPlaylist?.id == playlist.id, let client, let session = currentSession else {
             statusMessage = "This playlist cannot be edited."
             return false
         }
 
-        let generation = sessionGeneration
-        isPlaylistMutating = true
-        defer { isPlaylistMutating = false }
-
-        do {
+        return await commitPlaylistChange(client: client, session: session) {
             try await client.updatePlaylist(
                 playlistID: playlist.id,
                 indicesToRemove: Array(validIndices)
             )
-            guard isCurrentSession(generation, serverKey: serverKey) else { return true }
+        } describe: { _ in
             let remainingSongs = playlistSongs.enumerated().compactMap { index, song in
                 validIndices.contains(index) ? nil : song
             }
-            let updated = replacingPlaylist(playlist, songCount: remainingSongs.count)
-            let fallback = playlists.map { $0.id == playlist.id ? updated : $0 }
-            let message = validIndices.count == 1
-                ? "Removed song from \(playlist.name)"
-                : "Removed \(validIndices.count) songs from \(playlist.name)"
-            await finishCommittedPlaylistMutation(
+            return CommittedPlaylistChange(
                 focusID: playlist.id,
-                fallbackPlaylists: fallback,
+                fallbackPlaylists: replacing(playlist, songCount: remainingSongs.count),
                 fallbackSongs: remainingSongs,
-                successMessage: message,
-                generation: generation,
-                serverKey: serverKey,
-                client: client
+                successMessage: validIndices.count == 1
+                    ? "Removed song from \(playlist.name)"
+                    : "Removed \(validIndices.count) songs from \(playlist.name)"
             )
-            return true
-        } catch {
-            guard isCurrentSession(generation, serverKey: serverKey) else { return false }
-            statusMessage = error.localizedDescription
-            return false
         }
     }
 
     func deletePlaylist(_ playlist: NavidromePlaylist) async -> Bool {
-        guard canEdit(playlist), let client, let serverKey else {
+        guard canEdit(playlist), let client, let session = currentSession else {
             statusMessage = "This playlist cannot be deleted."
             return false
         }
 
-        let generation = sessionGeneration
+        return await commitPlaylistChange(client: client, session: session) {
+            try await client.deletePlaylist(id: playlist.id)
+        } describe: { _ in
+            CommittedPlaylistChange(
+                focusID: nil,
+                fallbackPlaylists: playlists.filter { $0.id != playlist.id },
+                fallbackSongs: nil,
+                successMessage: "Deleted \(playlist.name)"
+            )
+        }
+    }
+
+    /// Sends a playlist change to the server, then brings the cache and the UI in
+    /// line with it. Returns whether the server accepted the change; a session
+    /// that ended in the meantime still counts, as the change was made.
+    private func commitPlaylistChange<Response>(
+        client: NavidromeClient,
+        session: SessionIdentity,
+        send: () async throws -> Response,
+        describe: (Response) async -> CommittedPlaylistChange
+    ) async -> Bool {
         isPlaylistMutating = true
         defer { isPlaylistMutating = false }
 
         do {
-            try await client.deletePlaylist(id: playlist.id)
-            guard isCurrentSession(generation, serverKey: serverKey) else { return true }
-            await finishCommittedPlaylistMutation(
-                focusID: nil,
-                fallbackPlaylists: playlists.filter { $0.id != playlist.id },
-                fallbackSongs: nil,
-                successMessage: "Deleted \(playlist.name)",
-                generation: generation,
-                serverKey: serverKey,
-                client: client
-            )
+            let response = try await send()
+            guard isCurrentSession(session) else { return true }
+            await finishCommittedPlaylistChange(await describe(response), session: session, client: client)
             return true
         } catch {
-            guard isCurrentSession(generation, serverKey: serverKey) else { return false }
+            guard isCurrentSession(session) else { return false }
             statusMessage = error.localizedDescription
             return false
         }
     }
 
-    private func finishCommittedPlaylistMutation(
-        focusID: String?,
-        fallbackPlaylists: [NavidromePlaylist],
-        fallbackSongs: [NavidromeSong]?,
-        successMessage: String,
-        generation: UInt,
-        serverKey: String,
+    private func finishCommittedPlaylistChange(
+        _ change: CommittedPlaylistChange,
+        session: SessionIdentity,
         client: NavidromeClient
     ) async {
         do {
-            try await reconcilePlaylistState(
-                focusID: focusID,
-                generation: generation,
-                serverKey: serverKey,
-                client: client
-            )
-            guard isCurrentSession(generation, serverKey: serverKey) else { return }
-            statusMessage = successMessage
+            try await reconcilePlaylistState(focusID: change.focusID, session: session, client: client)
+            guard isCurrentSession(session) else { return }
+            statusMessage = change.successMessage
         } catch {
-            guard isCurrentSession(generation, serverKey: serverKey) else { return }
-            await applyPlaylistFallback(
-                playlists: fallbackPlaylists,
-                focusID: focusID,
-                songs: fallbackSongs,
-                generation: generation,
-                serverKey: serverKey
-            )
+            guard isCurrentSession(session) else { return }
+            await applyPlaylistFallback(change, session: session)
             statusMessage = "Playlist saved, but refresh failed. \(error.localizedDescription)"
-            schedulePlaylistReconciliation(generation: generation, serverKey: serverKey)
+            schedulePlaylistReconciliation(for: session)
         }
     }
 
     private func reconcilePlaylistState(
         focusID: String?,
-        generation: UInt,
-        serverKey: String,
+        session: SessionIdentity,
         client: NavidromeClient
     ) async throws {
         let remotePlaylists = try await client.playlists()
@@ -262,56 +212,47 @@ extension AppCoordinator {
             ]
         }
         try Task.checkCancellation()
-        guard isCurrentSession(generation, serverKey: serverKey) else { return }
+        guard isCurrentSession(session) else { return }
         try await store.applyPlaylistMetadata(
             playlists: remotePlaylists,
             refreshedPlaylists: refreshed,
-            serverKey: serverKey
+            serverKey: session.serverKey
         )
         try await loadReconciledPlaylistState(
             focusID: focusID,
             focusSongs: refreshed.first?.songs,
-            generation: generation,
-            serverKey: serverKey
+            session: session
         )
     }
 
-    private func applyPlaylistFallback(
-        playlists: [NavidromePlaylist],
-        focusID: String?,
-        songs: [NavidromeSong]?,
-        generation: UInt,
-        serverKey: String
-    ) async {
+    private func applyPlaylistFallback(_ change: CommittedPlaylistChange, session: SessionIdentity) async {
         let refreshed: PlaylistMetadataSnapshot?
-        if let focusID,
-           let playlist = playlists.first(where: { $0.id == focusID }),
-           let songs {
+        if let focusID = change.focusID,
+           let playlist = change.fallbackPlaylists.first(where: { $0.id == focusID }),
+           let songs = change.fallbackSongs {
             refreshed = PlaylistMetadataSnapshot(playlist: playlist, songs: songs)
         } else {
             refreshed = nil
         }
         try? await store.applyPlaylistMetadata(
-            playlists: playlists,
+            playlists: change.fallbackPlaylists,
             refreshedPlaylists: refreshed.map { [$0] } ?? [],
-            serverKey: serverKey
+            serverKey: session.serverKey
         )
         try? await loadReconciledPlaylistState(
-            focusID: focusID,
-            focusSongs: songs,
-            generation: generation,
-            serverKey: serverKey
+            focusID: change.focusID,
+            focusSongs: change.fallbackSongs,
+            session: session
         )
     }
 
     private func loadReconciledPlaylistState(
         focusID: String?,
         focusSongs: [NavidromeSong]?,
-        generation: UInt,
-        serverKey: String
+        session: SessionIdentity
     ) async throws {
-        let loadedPlaylists = try await store.playlists(serverKey: serverKey)
-        guard isCurrentSession(generation, serverKey: serverKey) else { return }
+        let loadedPlaylists = try await store.playlists(serverKey: session.serverKey)
+        guard isCurrentSession(session) else { return }
         playlists = loadedPlaylists
 
         if let selectedID = selectedPlaylist?.id {
@@ -321,7 +262,7 @@ extension AppCoordinator {
                 loadedPlaylistSongsID = nil
             } else if focusID == selectedID, let focusSongs {
                 await warmCachedSongCovers(focusSongs)
-                guard isCurrentSession(generation, serverKey: serverKey) else { return }
+                guard isCurrentSession(session) else { return }
                 playlistSongs = focusSongs
                 loadedPlaylistSongsID = selectedID
                 prefetchSongCovers(focusSongs)
@@ -329,20 +270,22 @@ extension AppCoordinator {
         }
     }
 
-    private func schedulePlaylistReconciliation(generation: UInt, serverKey: String) {
+    private func schedulePlaylistReconciliation(for session: SessionIdentity) {
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
-            guard let self, self.isCurrentSession(generation, serverKey: serverKey) else { return }
-            await self.refreshMetadata(for: generation)
+            guard let self, self.isCurrentSession(session) else { return }
+            await self.refreshMetadata(for: session.generation)
         }
     }
 
-    private func replacingPlaylist(
+    /// The loaded playlists with `playlist` updated as the server is expected to
+    /// have changed it.
+    private func replacing(
         _ playlist: NavidromePlaylist,
         name: String? = nil,
         songCount: Int? = nil
-    ) -> NavidromePlaylist {
-        NavidromePlaylist(
+    ) -> [NavidromePlaylist] {
+        let updated = NavidromePlaylist(
             id: playlist.id,
             name: name ?? playlist.name,
             songCount: songCount ?? playlist.songCount,
@@ -350,5 +293,6 @@ extension AppCoordinator {
             changed: Date(),
             isReadOnly: playlist.isReadOnly
         )
+        return playlists.map { $0.id == playlist.id ? updated : $0 }
     }
 }

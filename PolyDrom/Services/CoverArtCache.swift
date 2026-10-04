@@ -64,6 +64,21 @@ private actor AsyncPermitPool {
         availablePermits = min(limit, availablePermits + 1)
     }
 
+    /// Runs `operation` while holding a permit.
+    nonisolated func withPermit<Value: Sendable>(
+        _ operation: @Sendable () async throws -> Value
+    ) async throws -> Value {
+        try await acquire()
+        do {
+            let value = try await operation()
+            await release()
+            return value
+        } catch {
+            await release()
+            throw error
+        }
+    }
+
     private func cancelWaiter(_ waiterID: UUID) {
         guard let continuation = waiters.removeValue(forKey: waiterID) else { return }
         continuation.resume(throwing: CancellationError())
@@ -171,6 +186,51 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
     }
 }
 
+/// A download or decode that several callers are waiting for.
+private struct InFlightRequest<Value: Sendable> {
+    let task: Task<Value, Error>
+    var consumers: Set<UUID>
+}
+
+private extension Dictionary where Key == String {
+    /// Adds `consumerID` to the request for `key`, starting one if none is running.
+    mutating func join<Output>(
+        consumer consumerID: UUID,
+        forKey key: String,
+        startingWith start: () -> Task<Output, Error>
+    ) -> Task<Output, Error> where Value == InFlightRequest<Output> {
+        if var request = self[key] {
+            request.consumers.insert(consumerID)
+            self[key] = request
+            return request.task
+        }
+
+        let task = start()
+        self[key] = InFlightRequest(task: task, consumers: [consumerID])
+        return task
+    }
+
+    /// Withdraws `consumerID` from the request for `key`. The request is dropped
+    /// once nobody waits for it, and canceled as well if `cancelIfUnused`.
+    mutating func release<Output>(
+        consumer consumerID: UUID,
+        forKey key: String,
+        cancelIfUnused: Bool
+    ) where Value == InFlightRequest<Output> {
+        guard var request = self[key] else { return }
+
+        request.consumers.remove(consumerID)
+        if request.consumers.isEmpty {
+            if cancelIfUnused {
+                request.task.cancel()
+            }
+            self[key] = nil
+        } else {
+            self[key] = request
+        }
+    }
+}
+
 struct CoverArtResource: Hashable {
     let cacheKey: String
     let url: URL
@@ -268,16 +328,6 @@ enum CoverArtCacheLimit: Int, CaseIterable, Identifiable, Sendable {
 actor CoverArtCache {
     static let shared = CoverArtCache()
 
-    private struct InFlightRequest {
-        let task: Task<Data, Error>
-        var consumers: Set<UUID>
-    }
-
-    private struct InFlightImageRequest {
-        let task: Task<CGImage, Error>
-        var consumers: Set<UUID>
-    }
-
     private struct DiskEntry {
         var size: Int
         var lastAccess: Date
@@ -301,8 +351,8 @@ actor CoverArtCache {
     private let session: URLSession
     private let requestPermits = AsyncPermitPool(limit: 5)
     private let decodePermits = AsyncPermitPool(limit: 2)
-    private var inFlightRequests: [String: InFlightRequest] = [:]
-    private var inFlightImageRequests: [String: InFlightImageRequest] = [:]
+    private var inFlightRequests: [String: InFlightRequest<Data>] = [:]
+    private var inFlightImageRequests: [String: InFlightRequest<CGImage>] = [:]
     private var cacheGeneration: UInt = 0
     /// Files in the disk directory by name, loaded on first use. The last access
     /// is mirrored to each file's modification date so it survives relaunches.
@@ -378,22 +428,12 @@ actor CoverArtCache {
 
         let consumerID = UUID()
         let requestGeneration = cacheGeneration
-        let task: Task<Data, Error>
-
-        if var request = inFlightRequests[resource.cacheKey] {
-            request.consumers.insert(consumerID)
-            inFlightRequests[resource.cacheKey] = request
-            task = request.task
-        } else {
-            let session = session
-            let requestPermits = requestPermits
-            task = Task<Data, Error> {
+        let session = session
+        let requestPermits = requestPermits
+        let task = inFlightRequests.join(consumer: consumerID, forKey: resource.cacheKey) {
+            Task {
                 try await Self.download(resource, session: session, requestPermits: requestPermits, isCrawl: isCrawl)
             }
-            inFlightRequests[resource.cacheKey] = InFlightRequest(
-                task: task,
-                consumers: [consumerID]
-            )
         }
 
         return try await withTaskCancellationHandler {
@@ -480,20 +520,10 @@ actor CoverArtCache {
 
         let consumerID = UUID()
         let requestGeneration = cacheGeneration
-        let task: Task<CGImage, Error>
-
-        if var request = inFlightImageRequests[resource.cacheKey] {
-            request.consumers.insert(consumerID)
-            inFlightImageRequests[resource.cacheKey] = request
-            task = request.task
-        } else {
-            task = Task { [self] in
+        let task = inFlightImageRequests.join(consumer: consumerID, forKey: resource.cacheKey) {
+            Task { [self] in
                 try await decodeImage(for: resource, generation: requestGeneration)
             }
-            inFlightImageRequests[resource.cacheKey] = InFlightImageRequest(
-                task: task,
-                consumers: [consumerID]
-            )
         }
 
         return try await withTaskCancellationHandler {
@@ -519,6 +549,27 @@ actor CoverArtCache {
                 )
             }
         }
+    }
+
+    /// Loads a cover, trying up to three times with a short pause in between as
+    /// long as `shouldRetry` accepts the failure. Returns nil when it gives up
+    /// or the task is canceled.
+    nonisolated func imageRetrying(
+        for resource: CoverArtResource,
+        where shouldRetry: @Sendable (Error) -> Bool = { _ in true }
+    ) async -> CGImage? {
+        let pauses: [Duration] = [.milliseconds(400), .milliseconds(900)]
+        for attempt in 0...pauses.count {
+            do {
+                return try await image(for: resource)
+            } catch {
+                guard !Task.isCancelled, attempt < pauses.count, shouldRetry(error),
+                      (try? await Task.sleep(for: pauses[attempt])) != nil else {
+                    return nil
+                }
+            }
+        }
+        return nil
     }
 
     /// Removes downloaded and decoded cover art. Requests that were in flight
@@ -555,26 +606,7 @@ actor CoverArtCache {
         let cachedResources = resources.filter {
             seenKeys.insert($0.cacheKey).inserted && hasCachedData(for: $0)
         }
-        let limit = max(1, maxConcurrentDecodes)
-
-        await withTaskGroup(of: Void.self) { group in
-            var iterator = cachedResources.makeIterator()
-
-            for _ in 0..<limit {
-                guard let resource = iterator.next() else { break }
-                group.addTask { _ = try? await self.image(for: resource) }
-            }
-
-            while await group.next() != nil {
-                if Task.isCancelled {
-                    group.cancelAll()
-                    return
-                }
-
-                guard let resource = iterator.next() else { continue }
-                group.addTask { _ = try? await self.image(for: resource) }
-            }
-        }
+        await loadImages(cachedResources, maxConcurrent: maxConcurrentDecodes)
     }
 
     private func decodeImage(for resource: CoverArtResource, generation: UInt) async throws -> CGImage {
@@ -600,12 +632,16 @@ actor CoverArtCache {
     func prefetch(_ resources: [CoverArtResource], maxConcurrentRequests: Int = 2) async {
         var seenKeys = Set<String>()
         let uniqueResources = resources.filter { seenKeys.insert($0.cacheKey).inserted }
-        let limit = max(1, maxConcurrentRequests)
+        await loadImages(uniqueResources, maxConcurrent: maxConcurrentRequests)
+    }
 
+    /// Loads each image, ignoring failures, with at most `maxConcurrent` in
+    /// progress at a time.
+    private func loadImages(_ resources: [CoverArtResource], maxConcurrent: Int) async {
         await withTaskGroup(of: Void.self) { group in
-            var iterator = uniqueResources.makeIterator()
+            var iterator = resources.makeIterator()
 
-            for _ in 0..<limit {
+            for _ in 0..<max(1, maxConcurrent) {
                 guard let resource = iterator.next() else { break }
                 group.addTask { _ = try? await self.image(for: resource) }
             }
@@ -829,31 +865,11 @@ actor CoverArtCache {
     }
 
     private func releaseConsumer(_ consumerID: UUID, forKey key: String, cancelIfUnused: Bool) {
-        guard var request = inFlightRequests[key] else { return }
-
-        request.consumers.remove(consumerID)
-        if request.consumers.isEmpty {
-            if cancelIfUnused {
-                request.task.cancel()
-            }
-            inFlightRequests[key] = nil
-        } else {
-            inFlightRequests[key] = request
-        }
+        inFlightRequests.release(consumer: consumerID, forKey: key, cancelIfUnused: cancelIfUnused)
     }
 
     private func releaseImageConsumer(_ consumerID: UUID, forKey key: String, cancelIfUnused: Bool) {
-        guard var request = inFlightImageRequests[key] else { return }
-
-        request.consumers.remove(consumerID)
-        if request.consumers.isEmpty {
-            if cancelIfUnused {
-                request.task.cancel()
-            }
-            inFlightImageRequests[key] = nil
-        } else {
-            inFlightImageRequests[key] = request
-        }
+        inFlightImageRequests.release(consumer: consumerID, forKey: key, cancelIfUnused: cancelIfUnused)
     }
 
     private func fileURL(for key: String) -> URL {
@@ -910,14 +926,7 @@ actor CoverArtCache {
         requestPermits: AsyncPermitPool,
         isCrawl: Bool
     ) async throws -> Data {
-        // The crawl is already limited by its own concurrency and must
-        // not hold permits that on-screen loads are waiting for.
-        if !isCrawl {
-            try await requestPermits.acquire()
-        }
-
-        let result: (Data, URLResponse)
-        do {
+        let fetch: @Sendable () async throws -> (Data, URLResponse) = {
             try Task.checkCancellation()
             var request = URLRequest(url: resource.url)
             request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -925,19 +934,12 @@ actor CoverArtCache {
             if isCrawl {
                 request.networkServiceType = .background
             }
-
-            result = try await session.data(for: request)
-            if !isCrawl {
-                await requestPermits.release()
-            }
-        } catch {
-            if !isCrawl {
-                await requestPermits.release()
-            }
-            throw error
+            return try await session.data(for: request)
         }
 
-        let (data, response) = result
+        // The crawl is already limited by its own concurrency and must
+        // not hold permits that on-screen loads are waiting for.
+        let (data, response) = isCrawl ? try await fetch() : try await requestPermits.withPermit(fetch)
         if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
             throw CoverArtError.http(statusCode: httpResponse.statusCode)
         }
@@ -963,10 +965,8 @@ actor CoverArtCache {
     }
 
     private func decode(_ data: Data) async throws -> CGImage {
-        try await decodePermits.acquire()
-
-        do {
-            let image = try await Task.detached(priority: .utility) {
+        try await decodePermits.withPermit {
+            try await Task.detached(priority: .utility) {
                 guard let source = CGImageSourceCreateWithData(data as CFData, nil),
                       let image = CGImageSourceCreateImageAtIndex(
                           source,
@@ -977,11 +977,6 @@ actor CoverArtCache {
                 }
                 return image
             }.value
-            await decodePermits.release()
-            return image
-        } catch {
-            await decodePermits.release()
-            throw error
         }
     }
 }

@@ -56,48 +56,29 @@ struct NavidromeClient: Sendable {
     }
 
     func artistPage(size: Int, offset: Int) async throws -> [NavidromeArtist] {
-        let response: SearchEnvelope = try await request(
-            "search3",
-            queryItems: [
-                URLQueryItem(name: "query", value: ""),
-                URLQueryItem(name: "artistCount", value: String(size)),
-                URLQueryItem(name: "artistOffset", value: String(offset)),
-                URLQueryItem(name: "albumCount", value: "0"),
-                URLQueryItem(name: "songCount", value: "0")
-            ]
-        )
-        try response.subsonicResponse.throwIfNeeded()
-        return response.subsonicResponse.searchResult3?.artists.values ?? []
+        try await catalogPage(of: "artist", size: size, offset: offset)?.artists.values ?? []
     }
 
     func albumMetadataPage(size: Int, offset: Int) async throws -> [NavidromeAlbum] {
-        let response: SearchEnvelope = try await request(
-            "search3",
-            queryItems: [
-                URLQueryItem(name: "query", value: ""),
-                URLQueryItem(name: "artistCount", value: "0"),
-                URLQueryItem(name: "albumCount", value: String(size)),
-                URLQueryItem(name: "albumOffset", value: String(offset)),
-                URLQueryItem(name: "songCount", value: "0")
-            ]
-        )
-        try response.subsonicResponse.throwIfNeeded()
-        return response.subsonicResponse.searchResult3?.albums.values ?? []
+        try await catalogPage(of: "album", size: size, offset: offset)?.albums.values ?? []
     }
 
     func songMetadataPage(size: Int, offset: Int) async throws -> [NavidromeSong] {
-        let response: SearchEnvelope = try await request(
-            "search3",
-            queryItems: [
-                URLQueryItem(name: "query", value: ""),
-                URLQueryItem(name: "artistCount", value: "0"),
-                URLQueryItem(name: "albumCount", value: "0"),
-                URLQueryItem(name: "songCount", value: String(size)),
-                URLQueryItem(name: "songOffset", value: String(offset))
-            ]
-        )
+        try await catalogPage(of: "song", size: size, offset: offset)?.songs.values ?? []
+    }
+
+    /// An empty search lists the whole catalog, so asking for one kind of
+    /// record at a time pages through it.
+    private func catalogPage(of kind: String, size: Int, offset: Int) async throws -> SearchResult? {
+        var queryItems = [URLQueryItem(name: "query", value: "")]
+        for otherKind in ["artist", "album", "song"] {
+            queryItems.append(URLQueryItem(name: "\(otherKind)Count", value: otherKind == kind ? String(size) : "0"))
+        }
+        queryItems.append(URLQueryItem(name: "\(kind)Offset", value: String(offset)))
+
+        let response: SearchEnvelope = try await request("search3", queryItems: queryItems)
         try response.subsonicResponse.throwIfNeeded()
-        return response.subsonicResponse.searchResult3?.songs.values ?? []
+        return response.subsonicResponse.searchResult3
     }
 
     func playlists() async throws -> [NavidromePlaylist] {
@@ -164,13 +145,14 @@ struct NavidromeClient: Sendable {
         return response.subsonicResponse.lyricsList?.structuredLyrics.values ?? []
     }
 
-    func starredItems() async throws -> (artists: [NavidromeArtist], albums: [NavidromeAlbum], songs: [NavidromeSong]) {
+    func starredItems() async throws -> StarredItems {
         let response: StarredEnvelope = try await request("getStarred2")
         try response.subsonicResponse.throwIfNeeded()
-        return (
-            artists: response.subsonicResponse.starred2?.artists.values ?? [],
-            albums: response.subsonicResponse.starred2?.albums.values ?? [],
-            songs: response.subsonicResponse.starred2?.songs.values ?? []
+        let starred = response.subsonicResponse.starred2
+        return StarredItems(
+            artists: starred?.artists.values ?? [],
+            albums: starred?.albums.values ?? [],
+            songs: starred?.songs.values ?? []
         )
     }
 
@@ -221,6 +203,12 @@ struct NavidromeClient: Sendable {
                 URLQueryItem(name: "format", value: format)
             ]
         )
+    }
+
+    /// The stream to play, and the MP3 transcode to fall back to when the
+    /// original format cannot be played.
+    func playbackStreamURLs(for song: NavidromeSong) throws -> (url: URL, fallbackURL: URL) {
+        (try streamURL(for: song), try streamURL(for: song, format: "mp3"))
     }
 
     func coverArtURL(id: String, size: Int = 160) throws -> URL {
@@ -338,7 +326,7 @@ struct NavidromeClient: Sendable {
 
         if let url = URL(string: trimmedAddress),
            let scheme = url.scheme?.lowercased(),
-           (scheme == "http" || scheme == "https"),
+           scheme == "http" || scheme == "https",
            url.host != nil {
             return url
         }

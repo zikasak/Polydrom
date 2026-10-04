@@ -25,14 +25,14 @@ struct SettingsView: View {
         }
         .alert(
             "Delete Server?",
-            isPresented: deletionAlertIsPresented,
+            isPresented: Binding(isPresenting: $serverPendingDeletion),
             presenting: serverPendingDeletion,
             actions: deletionAlertActions,
             message: deletionAlertMessage
         )
         .alert(
             "Clear \(pendingCacheClear?.title ?? "Cache")?",
-            isPresented: cacheClearAlertIsPresented,
+            isPresented: Binding(isPresenting: $pendingCacheClear),
             presenting: pendingCacheClear,
             actions: cacheClearAlertActions,
             message: cacheClearAlertMessage
@@ -222,28 +222,6 @@ struct SettingsView: View {
 
     private var activeServerID: UUID? {
         viewModel.activeServer?.id
-    }
-
-    private var deletionAlertIsPresented: Binding<Bool> {
-        Binding(
-            get: { serverPendingDeletion != nil },
-            set: { isPresented in
-                if !isPresented {
-                    serverPendingDeletion = nil
-                }
-            }
-        )
-    }
-
-    private var cacheClearAlertIsPresented: Binding<Bool> {
-        Binding(
-            get: { pendingCacheClear != nil },
-            set: { isPresented in
-                if !isPresented {
-                    pendingCacheClear = nil
-                }
-            }
-        )
     }
 
     @ViewBuilder

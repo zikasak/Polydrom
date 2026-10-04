@@ -26,7 +26,7 @@ final class LibraryStore {
     }
 
     func servers() throws -> [ServerProfile] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "VDServer")
+        let request = NSFetchRequest<NSManagedObject>(entityName: LibraryEntity.server.rawValue)
         request.sortDescriptors = [
             NSSortDescriptor(key: "lastConnectedAt", ascending: false),
             NSSortDescriptor(key: "createdAt", ascending: false)
@@ -49,12 +49,18 @@ final class LibraryStore {
     }
 
     func markPlayed(_ song: NavidromeSong, serverKey: String) throws {
-        let songObject = try Self.upsertSong(song, serverKey: serverKey, isFavorite: nil, in: context)
+        let songObject = Self.upsertSong(
+            song,
+            serverKey: serverKey,
+            isFavorite: nil,
+            existing: try Self.object(.song, id: song.id, serverKey: serverKey, in: context),
+            in: context
+        )
         let now = Date()
         songObject.setValue(now, forKey: "lastPlayedAt")
 
         if let albumID = song.albumId,
-           let album = try Self.object(entityName: "VDAlbum", idKey: "albumID", id: albumID, serverKey: serverKey, in: context) {
+           let album = try Self.object(.album, id: albumID, serverKey: serverKey, in: context) {
             album.setValue(now, forKey: "lastPlayedAt")
         }
         try save()
@@ -73,47 +79,38 @@ final class LibraryStore {
                 )
             }
             return MetadataSyncState(
-                catalogToken: object.value(forKey: "catalogToken") as? String,
-                lastCheckedAt: object.value(forKey: "lastCheckedAt") as? Date,
-                isComplete: object.value(forKey: "isComplete") as? Bool ?? false,
-                catalogVersion: Self.int(object.value(forKey: "catalogVersion")).map(Int64.init) ?? 0
+                catalogToken: object.string("catalogToken"),
+                lastCheckedAt: object.date("lastCheckedAt"),
+                isComplete: object.bool("isComplete"),
+                catalogVersion: object.int("catalogVersion").map(Int64.init) ?? 0
             )
         }
     }
 
     func artists(serverKey: String) async throws -> [NavidromeArtist] {
         try await performBackground { context in
-            let request = NSFetchRequest<NSManagedObject>(entityName: "VDArtist")
-            request.predicate = NSPredicate(format: "serverKey == %@ AND (albumCount == nil OR albumCount > 0)", serverKey)
-            request.sortDescriptors = [
-                NSSortDescriptor(
-                    key: "name",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                )
-            ]
+            let request = Self.request(
+                .artist,
+                serverKey: serverKey,
+                matching: NSPredicate(format: "albumCount == nil OR albumCount > 0"),
+                sortedBy: [.caseInsensitive("name")]
+            )
             return try context.fetch(request).map(Self.artist(from:))
         }
     }
 
     func albums(serverKey: String, artistID: String? = nil) async throws -> [NavidromeAlbum] {
         try await performBackground { context in
-            let request = NSFetchRequest<NSManagedObject>(entityName: "VDAlbum")
+            let request: NSFetchRequest<NSManagedObject>
             if let artistID {
-                request.predicate = NSPredicate(format: "serverKey == %@ AND artistID == %@", serverKey, artistID)
-                request.sortDescriptors = [
-                    NSSortDescriptor(key: "year", ascending: true),
-                    NSSortDescriptor(key: "name", ascending: true, selector: #selector(NSString.localizedCaseInsensitiveCompare(_:)))
-                ]
+                request = Self.request(
+                    .album,
+                    serverKey: serverKey,
+                    matching: NSPredicate(format: "artistID == %@", artistID),
+                    sortedBy: [.ascending("year"), .caseInsensitive("name")]
+                )
             } else {
-                request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-                request.sortDescriptors = [
-                    NSSortDescriptor(
-                        key: "name",
-                        ascending: true,
-                        selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                    )
-                ]
+                request = Self.request(.album, serverKey: serverKey, sortedBy: [.caseInsensitive("name")])
             }
             return try context.fetch(request).map(Self.album(from:))
         }
@@ -121,99 +118,64 @@ final class LibraryStore {
 
     func songs(serverKey: String, albumID: String) async throws -> [NavidromeSong] {
         try await performBackground { context in
-            let request = Self.songFetchRequest()
-            request.predicate = NSPredicate(format: "serverKey == %@ AND albumId == %@", serverKey, albumID)
-            request.sortDescriptors = [
-                NSSortDescriptor(key: "discNumber", ascending: true),
-                NSSortDescriptor(key: "track", ascending: true),
-                NSSortDescriptor(key: "title", ascending: true, selector: #selector(NSString.localizedCaseInsensitiveCompare(_:)))
-            ]
+            let request = Self.request(
+                .song,
+                serverKey: serverKey,
+                matching: NSPredicate(format: "albumId == %@", albumID),
+                sortedBy: Self.albumTrackOrder
+            )
             return try context.fetch(request).map(Self.song(from:))
         }
     }
 
     func genres(serverKey: String) async throws -> [NavidromeGenre] {
         try await performBackground { context in
-            let request = NSFetchRequest<NSManagedObject>(entityName: "VDGenre")
-            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-            request.sortDescriptors = [
-                NSSortDescriptor(
-                    key: "name",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                )
-            ]
+            let request = Self.request(.genre, serverKey: serverKey, sortedBy: [.caseInsensitive("name")])
             return try context.fetch(request).map(Self.genre(from:))
         }
     }
 
     func songs(serverKey: String, genreID: String) async throws -> [NavidromeSong] {
         try await performBackground { context in
-            let membershipRequest = NSFetchRequest<NSManagedObject>(entityName: "VDGenreSong")
-            membershipRequest.predicate = NSPredicate(
-                format: "serverKey == %@ AND genreID == %@",
-                serverKey,
-                genreID
+            let membershipRequest = Self.request(
+                .genreSong,
+                serverKey: serverKey,
+                matching: NSPredicate(format: "genreID == %@", genreID)
             )
-            let songIDs = try context.fetch(membershipRequest).compactMap {
-                $0.value(forKey: "songID") as? String
-            }
+            let songIDs = try context.fetch(membershipRequest).compactMap { $0.string("songID") }
             guard !songIDs.isEmpty else { return [] }
 
-            let request = Self.songFetchRequest()
-            request.predicate = NSPredicate(
-                format: "serverKey == %@ AND songID IN %@",
-                serverKey,
-                songIDs
+            let request = Self.request(
+                .song,
+                serverKey: serverKey,
+                matching: NSPredicate(format: "songID IN %@", songIDs),
+                sortedBy: [
+                    .caseInsensitive("title"),
+                    .caseInsensitive("artist"),
+                    .caseInsensitive("album"),
+                    .ascending("discNumber"),
+                    .ascending("track"),
+                    .ascending("songID")
+                ]
             )
-            request.sortDescriptors = [
-                NSSortDescriptor(
-                    key: "title",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                ),
-                NSSortDescriptor(
-                    key: "artist",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                ),
-                NSSortDescriptor(
-                    key: "album",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                ),
-                NSSortDescriptor(key: "discNumber", ascending: true),
-                NSSortDescriptor(key: "track", ascending: true),
-                NSSortDescriptor(key: "songID", ascending: true)
-            ]
             return try context.fetch(request).map(Self.song(from:))
         }
     }
 
     func playlists(serverKey: String) async throws -> [NavidromePlaylist] {
         try await performBackground { context in
-            let request = NSFetchRequest<NSManagedObject>(entityName: "VDPlaylist")
-            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-            request.sortDescriptors = [
-                NSSortDescriptor(
-                    key: "name",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                )
-            ]
+            let request = Self.request(.playlist, serverKey: serverKey, sortedBy: [.caseInsensitive("name")])
             return try context.fetch(request).map(Self.playlist(from:))
         }
     }
 
     func playlistDescriptors(serverKey: String) async throws -> [CachedPlaylistDescriptor] {
         try await performBackground { context in
-            let request = NSFetchRequest<NSManagedObject>(entityName: "VDPlaylist")
-            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-            return try context.fetch(request).map {
+            try context.fetch(Self.request(.playlist, serverKey: serverKey)).map {
                 CachedPlaylistDescriptor(
-                    id: $0.value(forKey: "playlistID") as? String ?? "",
-                    changed: $0.value(forKey: "changedAt") as? Date,
-                    songCount: Self.int($0.value(forKey: "songCount"))
+                    id: $0.string("playlistID") ?? "",
+                    changed: $0.date("changedAt"),
+                    songCount: $0.int("songCount")
                 )
             }
         }
@@ -221,16 +183,17 @@ final class LibraryStore {
 
     func songs(serverKey: String, playlistID: String) async throws -> [NavidromeSong] {
         try await performBackground { context in
-            let entryRequest = NSFetchRequest<NSManagedObject>(entityName: "VDPlaylistEntry")
-            entryRequest.predicate = NSPredicate(format: "serverKey == %@ AND playlistID == %@", serverKey, playlistID)
-            entryRequest.sortDescriptors = [NSSortDescriptor(key: "position", ascending: true)]
-            let songIDs = try context.fetch(entryRequest).compactMap { $0.value(forKey: "songID") as? String }
+            let entryRequest = Self.playlistEntryRequest(playlistID: playlistID, serverKey: serverKey)
+            let songIDs = try context.fetch(entryRequest).compactMap { $0.string("songID") }
             guard !songIDs.isEmpty else { return [] }
 
-            let songRequest = Self.songFetchRequest()
-            songRequest.predicate = NSPredicate(format: "serverKey == %@ AND songID IN %@", serverKey, songIDs)
+            let songRequest = Self.request(
+                .song,
+                serverKey: serverKey,
+                matching: NSPredicate(format: "songID IN %@", songIDs)
+            )
             let songsByID = Dictionary(uniqueKeysWithValues: try context.fetch(songRequest).map {
-                (($0.value(forKey: "songID") as? String ?? ""), Self.song(from: $0))
+                ($0.string("songID") ?? "", Self.song(from: $0))
             })
             return songIDs.compactMap { songsByID[$0] }
         }
@@ -238,54 +201,33 @@ final class LibraryStore {
 
     func favoriteArtists(serverKey: String) async throws -> [NavidromeArtist] {
         try await performBackground { context in
-            let request = NSFetchRequest<NSManagedObject>(entityName: "VDArtist")
-            request.predicate = NSPredicate(format: "serverKey == %@ AND isFavorite == YES", serverKey)
-            request.sortDescriptors = [
-                NSSortDescriptor(
-                    key: "name",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                )
-            ]
-            return try context.fetch(request).map(Self.artist(from:))
+            try context.fetch(Self.favoritesRequest(.artist, serverKey: serverKey, sortKey: "name"))
+                .map(Self.artist(from:))
         }
     }
 
     func favoriteAlbums(serverKey: String) async throws -> [NavidromeAlbum] {
         try await performBackground { context in
-            let request = NSFetchRequest<NSManagedObject>(entityName: "VDAlbum")
-            request.predicate = NSPredicate(format: "serverKey == %@ AND isFavorite == YES", serverKey)
-            request.sortDescriptors = [
-                NSSortDescriptor(
-                    key: "name",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                )
-            ]
-            return try context.fetch(request).map(Self.album(from:))
+            try context.fetch(Self.favoritesRequest(.album, serverKey: serverKey, sortKey: "name"))
+                .map(Self.album(from:))
         }
     }
 
     func favoriteSongs(serverKey: String) async throws -> [NavidromeSong] {
         try await performBackground { context in
-            let request = Self.songFetchRequest()
-            request.predicate = NSPredicate(format: "serverKey == %@ AND isFavorite == YES", serverKey)
-            request.sortDescriptors = [
-                NSSortDescriptor(
-                    key: "title",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                )
-            ]
-            return try context.fetch(request).map(Self.song(from:))
+            try context.fetch(Self.favoritesRequest(.song, serverKey: serverKey, sortKey: "title"))
+                .map(Self.song(from:))
         }
     }
 
-    func recentSongsAsync(serverKey: String, limit: Int = 50) async throws -> [NavidromeSong] {
+    func recentSongs(serverKey: String, limit: Int = 50) async throws -> [NavidromeSong] {
         try await performBackground { context in
-            let request = Self.songFetchRequest()
-            request.predicate = NSPredicate(format: "serverKey == %@ AND lastPlayedAt != nil", serverKey)
-            request.sortDescriptors = [NSSortDescriptor(key: "lastPlayedAt", ascending: false)]
+            let request = Self.request(
+                .song,
+                serverKey: serverKey,
+                matching: NSPredicate(format: "lastPlayedAt != nil"),
+                sortedBy: [NSSortDescriptor(key: "lastPlayedAt", ascending: false)]
+            )
             request.fetchLimit = limit
             return try context.fetch(request).map(Self.song(from:))
         }
@@ -293,22 +235,16 @@ final class LibraryStore {
 
     func searchSongs(_ query: String, serverKey: String, limit: Int = 100) async throws -> [NavidromeSong] {
         try await performBackground { context in
-            let request = Self.songFetchRequest()
-            request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-                NSPredicate(format: "serverKey == %@", serverKey),
-                NSCompoundPredicate(orPredicateWithSubpredicates: [
+            let request = Self.request(
+                .song,
+                serverKey: serverKey,
+                matching: NSCompoundPredicate(orPredicateWithSubpredicates: [
                     NSPredicate(format: "title CONTAINS[cd] %@", query),
                     NSPredicate(format: "artist CONTAINS[cd] %@", query),
                     NSPredicate(format: "album CONTAINS[cd] %@", query)
-                ])
-            ])
-            request.sortDescriptors = [
-                NSSortDescriptor(
-                    key: "title",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                )
-            ]
+                ]),
+                sortedBy: [.caseInsensitive("title")]
+            )
             request.fetchLimit = limit
             return try context.fetch(request).map(Self.song(from:))
         }
@@ -316,30 +252,17 @@ final class LibraryStore {
 
     func randomSongs(serverKey: String, count: Int? = nil) async throws -> [NavidromeSong] {
         try await performBackground { context in
-            let request = Self.songFetchRequest()
-            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-            let shuffledSongs = try context.fetch(request).shuffled()
+            let shuffledSongs = try context.fetch(Self.request(.song, serverKey: serverKey)).shuffled()
             guard let count else {
                 return shuffledSongs.map(Self.song(from:))
             }
-            return Array(shuffledSongs.prefix(max(0, count))).map(Self.song(from:))
+            return shuffledSongs.prefix(max(0, count)).map(Self.song(from:))
         }
     }
 
     func songsShuffledByAlbum(serverKey: String) async throws -> [NavidromeSong] {
         try await performBackground { context in
-            let request = Self.songFetchRequest()
-            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-            request.sortDescriptors = [
-                NSSortDescriptor(key: "discNumber", ascending: true),
-                NSSortDescriptor(key: "track", ascending: true),
-                NSSortDescriptor(
-                    key: "title",
-                    ascending: true,
-                    selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
-                )
-            ]
-
+            let request = Self.request(.song, serverKey: serverKey, sortedBy: Self.albumTrackOrder)
             let songs = try context.fetch(request).map(Self.song(from:))
             let albumGroups = Dictionary(grouping: songs) { song in
                 if let albumID = song.albumId, !albumID.isEmpty {
@@ -353,29 +276,23 @@ final class LibraryStore {
 
     func homeMetadata(serverKey: String) async throws -> CachedHomeMetadata {
         try await performBackground { context in
-            let request = NSFetchRequest<NSManagedObject>(entityName: "VDAlbum")
-            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-            let objects = try context.fetch(request)
-            let added = objects
-                .filter { $0.value(forKey: "created") is Date }
-                .sorted { ($0.value(forKey: "created") as? Date ?? .distantPast) > ($1.value(forKey: "created") as? Date ?? .distantPast) }
-                .prefix(12)
-                .map(Self.album(from:))
-            let played = objects
-                .filter { ($0.value(forKey: "lastPlayedAt") as? Date) != nil || ($0.value(forKey: "serverPlayedAt") as? Date) != nil }
-                .sorted {
-                    let lhs = ($0.value(forKey: "lastPlayedAt") as? Date) ?? ($0.value(forKey: "serverPlayedAt") as? Date) ?? .distantPast
-                    let rhs = ($1.value(forKey: "lastPlayedAt") as? Date) ?? ($1.value(forKey: "serverPlayedAt") as? Date) ?? .distantPast
-                    return lhs > rhs
-                }
-                .prefix(12)
-                .map(Self.album(from:))
+            let shelfSize = 12
+            let objects = try context.fetch(Self.request(.album, serverKey: serverKey))
+
+            func newest(by date: (NSManagedObject) -> Date?) -> [NavidromeAlbum] {
+                objects
+                    .compactMap { object in date(object).map { (object: object, date: $0) } }
+                    .sorted { $0.date > $1.date }
+                    .prefix(shelfSize)
+                    .map { Self.album(from: $0.object) }
+            }
+
             let shuffled = objects.shuffled()
             return CachedHomeMetadata(
-                recentlyAdded: Array(added),
-                recentlyPlayed: Array(played),
-                random: Array(shuffled.prefix(12).map(Self.album(from:))),
-                featured: Array(shuffled.prefix(5).map(Self.album(from:)))
+                recentlyAdded: newest { $0.date("created") },
+                recentlyPlayed: newest { $0.date("lastPlayedAt") ?? $0.date("serverPlayedAt") },
+                random: shuffled.prefix(shelfSize).map(Self.album(from:)),
+                featured: shuffled.prefix(5).map(Self.album(from:))
             )
         }
     }
@@ -384,43 +301,28 @@ final class LibraryStore {
 
     func apply(_ snapshot: LibrarySnapshot, serverKey: String) async throws {
         try await performBackground { context in
-            let now = snapshot.checkedAt
-            let favoriteArtists = snapshot.favorites.artistIDs
-            let favoriteAlbums = snapshot.favorites.albumIDs
-            let favoriteSongs = snapshot.favorites.songIDs
+            let favorites = snapshot.favorites
 
-            let existingArtists = try Self.objectsByID(
-                entityName: "VDArtist",
-                idKey: "artistID",
-                serverKey: serverKey,
-                in: context
-            )
+            let existingArtists = try Self.objectsByID(.artist, serverKey: serverKey, in: context)
             Self.deleteMissing(existingArtists, incomingIDs: Set(snapshot.artists.map(\.id)), in: context)
             for artist in snapshot.artists {
-                try Self.upsertArtist(
+                Self.upsertArtist(
                     artist,
                     serverKey: serverKey,
-                    isFavorite: favoriteArtists.contains(artist.id),
+                    isFavorite: favorites.artistIDs.contains(artist.id),
                     existing: existingArtists[artist.id],
-                    existingObjectsArePreloaded: true,
                     in: context
                 )
             }
 
-            let existingAlbums = try Self.objectsByID(
-                entityName: "VDAlbum",
-                idKey: "albumID",
-                serverKey: serverKey,
-                in: context
-            )
+            let existingAlbums = try Self.objectsByID(.album, serverKey: serverKey, in: context)
             Self.deleteMissing(existingAlbums, incomingIDs: Set(snapshot.albums.map(\.id)), in: context)
             for album in snapshot.albums {
-                try Self.upsertAlbum(
+                Self.upsertAlbum(
                     album,
                     serverKey: serverKey,
-                    isFavorite: favoriteAlbums.contains(album.id),
+                    isFavorite: favorites.albumIDs.contains(album.id),
                     existing: existingAlbums[album.id],
-                    existingObjectsArePreloaded: true,
                     in: context
                 )
             }
@@ -430,21 +332,15 @@ final class LibraryStore {
             for song in snapshot.playlists.flatMap(\.songs) where knownSongIDs.insert(song.id).inserted {
                 allSongs.append(song)
             }
-            let existingSongs = try Self.objectsByID(
-                entityName: "VDSong",
-                idKey: "songID",
-                serverKey: serverKey,
-                in: context
-            )
+            let existingSongs = try Self.objectsByID(.song, serverKey: serverKey, in: context)
             Self.deleteMissing(existingSongs, incomingIDs: knownSongIDs, in: context)
             for song in allSongs {
-                _ = try Self.upsertSong(
+                Self.upsertSong(
                     song,
                     serverKey: serverKey,
-                    isFavorite: favoriteSongs.contains(song.id),
+                    isFavorite: favorites.songIDs.contains(song.id),
                     replaceGenres: true,
                     existing: existingSongs[song.id],
-                    existingObjectsArePreloaded: true,
                     in: context
                 )
             }
@@ -461,7 +357,7 @@ final class LibraryStore {
 
             let state = try Self.syncStateObject(serverKey: serverKey, createIfMissing: true, in: context)
             state?.setValue(snapshot.catalogToken, forKey: "catalogToken")
-            state?.setValue(now, forKey: "lastCheckedAt")
+            state?.setValue(snapshot.checkedAt, forKey: "lastCheckedAt")
             state?.setValue(true, forKey: "isComplete")
             state?.setValue(MetadataSyncState.currentCatalogVersion, forKey: "catalogVersion")
             try context.save()
@@ -483,27 +379,9 @@ final class LibraryStore {
                 serverKey: serverKey,
                 in: context
             )
-            try Self.replaceFavoriteFlags(
-                entityName: "VDArtist",
-                idKey: "artistID",
-                favoriteIDs: favorites.artistIDs,
-                serverKey: serverKey,
-                in: context
-            )
-            try Self.replaceFavoriteFlags(
-                entityName: "VDAlbum",
-                idKey: "albumID",
-                favoriteIDs: favorites.albumIDs,
-                serverKey: serverKey,
-                in: context
-            )
-            try Self.replaceFavoriteFlags(
-                entityName: "VDSong",
-                idKey: "songID",
-                favoriteIDs: favorites.songIDs,
-                serverKey: serverKey,
-                in: context
-            )
+            try Self.replaceFavoriteFlags(.artist, favoriteIDs: favorites.artistIDs, serverKey: serverKey, in: context)
+            try Self.replaceFavoriteFlags(.album, favoriteIDs: favorites.albumIDs, serverKey: serverKey, in: context)
+            try Self.replaceFavoriteFlags(.song, favoriteIDs: favorites.songIDs, serverKey: serverKey, in: context)
             // Checked before the timestamp is stamped, which always dirties the context.
             let didChange = context.hasChanges
             let state = try Self.syncStateObject(serverKey: serverKey, createIfMissing: true, in: context)
@@ -529,34 +407,16 @@ final class LibraryStore {
         }
     }
 
-    func setFavorite(_ isFavorite: Bool, artistID: String, serverKey: String) async throws {
-        try await setFavorite(isFavorite, entityName: "VDArtist", idKey: "artistID", id: artistID, serverKey: serverKey)
-    }
-
-    func setFavorite(_ isFavorite: Bool, albumID: String, serverKey: String) async throws {
-        try await setFavorite(isFavorite, entityName: "VDAlbum", idKey: "albumID", id: albumID, serverKey: serverKey)
-    }
-
-    func setFavorite(_ isFavorite: Bool, songID: String, serverKey: String) async throws {
-        try await setFavorite(isFavorite, entityName: "VDSong", idKey: "songID", id: songID, serverKey: serverKey)
-    }
-
-    // MARK: - Core Data helpers
-
-    private func setFavorite(
-        _ isFavorite: Bool,
-        entityName: String,
-        idKey: String,
-        id: String,
-        serverKey: String
-    ) async throws {
+    func setFavorite(_ isFavorite: Bool, _ record: LibraryRecord, id: String, serverKey: String) async throws {
         try await performBackground { context in
-            if let object = try Self.object(entityName: entityName, idKey: idKey, id: id, serverKey: serverKey, in: context) {
+            if let object = try Self.object(record, id: id, serverKey: serverKey, in: context) {
                 object.setValue(isFavorite, forKey: "isFavorite")
                 try context.save()
             }
         }
     }
+
+    // MARK: - Core Data helpers
 
     private func performBackground<T>(
         _ operation: @escaping @Sendable (NSManagedObjectContext) throws -> T
@@ -569,17 +429,125 @@ final class LibraryStore {
     }
 
     private func purgeMetadata(serverKey: String?, in context: NSManagedObjectContext) throws {
-        for entityName in [
-            "VDPlaylistEntry", "VDPlaylist", "VDGenreSong", "VDGenre", "VDSong", "VDAlbum", "VDArtist",
-            "VDMetadataSyncState"
-        ] {
-            let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
+        for entity in LibraryEntity.libraryCache {
+            let request = NSFetchRequest<NSManagedObject>(entityName: entity.rawValue)
             if let serverKey {
                 request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
             }
             try context.fetch(request).forEach(context.delete)
         }
     }
+
+    private func save() throws {
+        guard context.hasChanges else { return }
+        try context.save()
+    }
+
+    // MARK: - Requests
+
+    /// Disc, then track, then title: the order songs have on their album.
+    private nonisolated static var albumTrackOrder: [NSSortDescriptor] {
+        [.ascending("discNumber"), .ascending("track"), .caseInsensitive("title")]
+    }
+
+    /// A request for one server's rows of `entity`, optionally narrowed by `condition`.
+    private nonisolated static func request(
+        _ entity: LibraryEntity,
+        serverKey: String,
+        matching condition: NSPredicate? = nil,
+        sortedBy sortDescriptors: [NSSortDescriptor] = []
+    ) -> NSFetchRequest<NSManagedObject> {
+        let request = NSFetchRequest<NSManagedObject>(entityName: entity.rawValue)
+        let serverScope = NSPredicate(format: "serverKey == %@", serverKey)
+        request.predicate = condition.map {
+            NSCompoundPredicate(andPredicateWithSubpredicates: [serverScope, $0])
+        } ?? serverScope
+        request.sortDescriptors = sortDescriptors
+        return request
+    }
+
+    private nonisolated static func favoritesRequest(
+        _ entity: LibraryEntity,
+        serverKey: String,
+        sortKey: String
+    ) -> NSFetchRequest<NSManagedObject> {
+        request(
+            entity,
+            serverKey: serverKey,
+            matching: NSPredicate(format: "isFavorite == YES"),
+            sortedBy: [.caseInsensitive(sortKey)]
+        )
+    }
+
+    private nonisolated static func playlistEntryRequest(
+        playlistID: String,
+        serverKey: String
+    ) -> NSFetchRequest<NSManagedObject> {
+        request(
+            .playlistEntry,
+            serverKey: serverKey,
+            matching: NSPredicate(format: "playlistID == %@", playlistID),
+            sortedBy: [.ascending("position")]
+        )
+    }
+
+    private nonisolated static func object(
+        _ record: LibraryRecord,
+        id: String,
+        serverKey: String,
+        in context: NSManagedObjectContext
+    ) throws -> NSManagedObject? {
+        let request = request(
+            record.entity,
+            serverKey: serverKey,
+            matching: NSPredicate(format: "%K == %@", record.idKey, id)
+        )
+        request.fetchLimit = 1
+        return try context.fetch(request).first
+    }
+
+    private nonisolated static func objectsByID(
+        _ record: LibraryRecord,
+        serverKey: String,
+        ids: Set<String>? = nil,
+        in context: NSManagedObjectContext
+    ) throws -> [String: NSManagedObject] {
+        let request = request(
+            record.entity,
+            serverKey: serverKey,
+            matching: ids.map { NSPredicate(format: "%K IN %@", record.idKey, Array($0)) }
+        )
+        return Dictionary(
+            uniqueKeysWithValues: try context.fetch(request).compactMap { object in
+                guard let id = object.string(record.idKey) else { return nil }
+                return (id, object)
+            }
+        )
+    }
+
+    private nonisolated static func syncStateObject(
+        serverKey: String,
+        createIfMissing: Bool = false,
+        in context: NSManagedObjectContext
+    ) throws -> NSManagedObject? {
+        let request = request(.syncState, serverKey: serverKey)
+        request.fetchLimit = 1
+        if let object = try context.fetch(request).first { return object }
+        guard createIfMissing else { return nil }
+        let object = insert(.syncState, into: context)
+        object.setValue(serverKey, forKey: "serverKey")
+        object.setValue(false, forKey: "isComplete")
+        return object
+    }
+
+    private nonisolated static func insert(
+        _ entity: LibraryEntity,
+        into context: NSManagedObjectContext
+    ) -> NSManagedObject {
+        NSEntityDescription.insertNewObject(forEntityName: entity.rawValue, into: context)
+    }
+
+    // MARK: - Reconciliation
 
     private nonisolated static func replaceGenres(
         with songs: [NavidromeSong],
@@ -601,13 +569,11 @@ final class LibraryStore {
 
         // Memberships are diffed rather than rebuilt: there is one row per song
         // and genre, and almost none of them change between scans.
-        var staleGenres = try objectsByID(entityName: "VDGenre", idKey: "genreID", serverKey: serverKey, in: context)
+        var staleGenres = try objectsByID(.genre, serverKey: serverKey, in: context)
         var staleMemberships: [String: [String: NSManagedObject]] = [:]
-        let membershipRequest = NSFetchRequest<NSManagedObject>(entityName: "VDGenreSong")
-        membershipRequest.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-        for membership in try context.fetch(membershipRequest) {
-            guard let genreID = membership.value(forKey: "genreID") as? String,
-                  let songID = membership.value(forKey: "songID") as? String else {
+        for membership in try context.fetch(request(.genreSong, serverKey: serverKey)) {
+            guard let genreID = membership.string("genreID"),
+                  let songID = membership.string("songID") else {
                 context.delete(membership)
                 continue
             }
@@ -616,8 +582,7 @@ final class LibraryStore {
 
         for (genreID, songIDs) in songIDsByGenre {
             guard let name = displayNames[genreID] else { continue }
-            let genre = staleGenres.removeValue(forKey: genreID)
-                ?? NSEntityDescription.insertNewObject(forEntityName: "VDGenre", into: context)
+            let genre = staleGenres.removeValue(forKey: genreID) ?? insert(.genre, into: context)
             assign(serverKey, forKey: "serverKey", to: genre)
             assign(genreID, forKey: "genreID", to: genre)
             assign(name, forKey: "name", to: genre)
@@ -625,7 +590,7 @@ final class LibraryStore {
 
             var staleSongs = staleMemberships.removeValue(forKey: genreID) ?? [:]
             for songID in songIDs where staleSongs.removeValue(forKey: songID) == nil {
-                let membership = NSEntityDescription.insertNewObject(forEntityName: "VDGenreSong", into: context)
+                let membership = insert(.genreSong, into: context)
                 membership.setValue(serverKey, forKey: "serverKey")
                 membership.setValue(genreID, forKey: "genreID")
                 membership.setValue(songID, forKey: "songID")
@@ -647,34 +612,18 @@ final class LibraryStore {
         in context: NSManagedObjectContext
     ) throws {
         let incomingIDs = Set(summaries.map(\.id))
-        let existingPlaylists = try objectsByID(
-            entityName: "VDPlaylist",
-            idKey: "playlistID",
-            serverKey: serverKey,
-            in: context
-        )
+        let existingPlaylists = try objectsByID(.playlist, serverKey: serverKey, in: context)
         deleteMissing(existingPlaylists, incomingIDs: incomingIDs, in: context)
 
-        let staleEntryRequest = NSFetchRequest<NSManagedObject>(entityName: "VDPlaylistEntry")
-        if incomingIDs.isEmpty {
-            staleEntryRequest.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-        } else {
-            staleEntryRequest.predicate = NSPredicate(
-                format: "serverKey == %@ AND NOT (playlistID IN %@)",
-                serverKey,
-                Array(incomingIDs)
-            )
-        }
+        let staleEntryRequest = request(
+            .playlistEntry,
+            serverKey: serverKey,
+            matching: incomingIDs.isEmpty ? nil : NSPredicate(format: "NOT (playlistID IN %@)", Array(incomingIDs))
+        )
         try context.fetch(staleEntryRequest).forEach(context.delete)
 
         for playlist in summaries {
-            try upsertPlaylist(
-                playlist,
-                serverKey: serverKey,
-                existing: existingPlaylists[playlist.id],
-                existingObjectsArePreloaded: true,
-                in: context
-            )
+            upsertPlaylist(playlist, serverKey: serverKey, existing: existingPlaylists[playlist.id], in: context)
         }
 
         // Only the songs these playlists reference are loaded, not the library.
@@ -682,41 +631,25 @@ final class LibraryStore {
         if upsertsSongs {
             let playlistSongIDs = Set(refreshed.flatMap { $0.songs.map(\.id) })
             if !playlistSongIDs.isEmpty {
-                existingSongs = try objectsByID(
-                    entityName: "VDSong",
-                    idKey: "songID",
-                    serverKey: serverKey,
-                    ids: playlistSongIDs,
-                    in: context
-                )
+                existingSongs = try objectsByID(.song, serverKey: serverKey, ids: playlistSongIDs, in: context)
             }
         }
         for snapshot in refreshed {
             if upsertsSongs {
                 for song in snapshot.songs {
-                    let object = try upsertSong(
+                    existingSongs[song.id] = upsertSong(
                         song,
                         serverKey: serverKey,
                         isFavorite: nil,
                         existing: existingSongs[song.id],
-                        existingObjectsArePreloaded: true,
                         in: context
                     )
-                    existingSongs[song.id] = object
                 }
             }
-            let entryRequest = NSFetchRequest<NSManagedObject>(entityName: "VDPlaylistEntry")
-            entryRequest.predicate = NSPredicate(
-                format: "serverKey == %@ AND playlistID == %@",
-                serverKey,
-                snapshot.playlist.id
-            )
-            entryRequest.sortDescriptors = [NSSortDescriptor(key: "position", ascending: true)]
+            let entryRequest = playlistEntryRequest(playlistID: snapshot.playlist.id, serverKey: serverKey)
             let oldEntries = try context.fetch(entryRequest)
             for (position, song) in snapshot.songs.enumerated() {
-                let entry = position < oldEntries.count
-                    ? oldEntries[position]
-                    : NSEntityDescription.insertNewObject(forEntityName: "VDPlaylistEntry", into: context)
+                let entry = position < oldEntries.count ? oldEntries[position] : insert(.playlistEntry, into: context)
                 assign(serverKey, forKey: "serverKey", to: entry)
                 assign(snapshot.playlist.id, forKey: "playlistID", to: entry)
                 assign(song.id, forKey: "songID", to: entry)
@@ -727,22 +660,19 @@ final class LibraryStore {
     }
 
     private nonisolated static func replaceFavoriteFlags(
-        entityName: String,
-        idKey: String,
+        _ record: LibraryRecord,
         favoriteIDs: Set<String>,
         serverKey: String,
         in context: NSManagedObjectContext
     ) throws {
         // Only rows whose flag can change are loaded: current favorites and new ones.
-        let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-        request.predicate = NSPredicate(
-            format: "serverKey == %@ AND (isFavorite == YES OR %K IN %@)",
-            serverKey,
-            idKey,
-            Array(favoriteIDs)
+        let request = request(
+            record.entity,
+            serverKey: serverKey,
+            matching: NSPredicate(format: "isFavorite == YES OR %K IN %@", record.idKey, Array(favoriteIDs))
         )
         for object in try context.fetch(request) {
-            let id = object.value(forKey: idKey) as? String ?? ""
+            let id = object.string(record.idKey) ?? ""
             assign(favoriteIDs.contains(id), forKey: "isFavorite", to: object)
         }
     }
@@ -757,27 +687,6 @@ final class LibraryStore {
         }
     }
 
-    private nonisolated static func objectsByID(
-        entityName: String,
-        idKey: String,
-        serverKey: String,
-        ids: Set<String>? = nil,
-        in context: NSManagedObjectContext
-    ) throws -> [String: NSManagedObject] {
-        let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-        if let ids {
-            request.predicate = NSPredicate(format: "serverKey == %@ AND %K IN %@", serverKey, idKey, Array(ids))
-        } else {
-            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-        }
-        return Dictionary(
-            uniqueKeysWithValues: try context.fetch(request).compactMap { object in
-                guard let id = object.value(forKey: idKey) as? String else { return nil }
-                return (id, object)
-            }
-        )
-    }
-
     /// Assigning an attribute marks the object as changed even when the value is
     /// identical, which makes a save rewrite every row of an unchanged library.
     private nonisolated static func assign(_ value: Any?, forKey key: String, to object: NSManagedObject) {
@@ -787,24 +696,14 @@ final class LibraryStore {
         object.setValue(value, forKey: key)
     }
 
-    @discardableResult
     private nonisolated static func upsertArtist(
         _ artist: NavidromeArtist,
         serverKey: String,
         isFavorite: Bool,
-        existing: NSManagedObject? = nil,
-        existingObjectsArePreloaded: Bool = false,
+        existing: NSManagedObject?,
         in context: NSManagedObjectContext
-    ) throws -> NSManagedObject {
-        let object = try resolvedObject(
-            existing: existing,
-            existingObjectsArePreloaded: existingObjectsArePreloaded,
-            entityName: "VDArtist",
-            idKey: "artistID",
-            id: artist.id,
-            serverKey: serverKey,
-            in: context
-        )
+    ) {
+        let object = existing ?? insert(.artist, into: context)
         assign(serverKey, forKey: "serverKey", to: object)
         assign(artist.id, forKey: "artistID", to: object)
         assign(artist.name, forKey: "name", to: object)
@@ -812,27 +711,16 @@ final class LibraryStore {
         assign(artist.coverArt, forKey: "coverArt", to: object)
         assign(artist.artistImageURL, forKey: "artistImageURL", to: object)
         assign(isFavorite, forKey: "isFavorite", to: object)
-        return object
     }
 
-    @discardableResult
     private nonisolated static func upsertAlbum(
         _ album: NavidromeAlbum,
         serverKey: String,
         isFavorite: Bool,
-        existing: NSManagedObject? = nil,
-        existingObjectsArePreloaded: Bool = false,
+        existing: NSManagedObject?,
         in context: NSManagedObjectContext
-    ) throws -> NSManagedObject {
-        let object = try resolvedObject(
-            existing: existing,
-            existingObjectsArePreloaded: existingObjectsArePreloaded,
-            entityName: "VDAlbum",
-            idKey: "albumID",
-            id: album.id,
-            serverKey: serverKey,
-            in: context
-        )
+    ) {
+        let object = existing ?? insert(.album, into: context)
         assign(serverKey, forKey: "serverKey", to: object)
         assign(album.id, forKey: "albumID", to: object)
         assign(album.name, forKey: "name", to: object)
@@ -844,29 +732,21 @@ final class LibraryStore {
         assign(album.created, forKey: "created", to: object)
         assign(album.played, forKey: "serverPlayedAt", to: object)
         assign(isFavorite, forKey: "isFavorite", to: object)
-        return object
     }
 
+    /// `isFavorite` is left untouched when nil. Genres are only written for a
+    /// new row unless `replaceGenres` is set, as playlist entries may omit them.
+    /// A missing file format likewise never erases a known one.
     @discardableResult
     private nonisolated static func upsertSong(
         _ song: NavidromeSong,
         serverKey: String,
         isFavorite: Bool?,
         replaceGenres: Bool = false,
-        existing: NSManagedObject? = nil,
-        existingObjectsArePreloaded: Bool = false,
+        existing: NSManagedObject?,
         in context: NSManagedObjectContext
-    ) throws -> NSManagedObject {
-        let object = try resolvedObject(
-            existing: existing,
-            existingObjectsArePreloaded: existingObjectsArePreloaded,
-            entityName: "VDSong",
-            idKey: "songID",
-            id: song.id,
-            serverKey: serverKey,
-            in: context
-        )
-
+    ) -> NSManagedObject {
+        let object = existing ?? insert(.song, into: context)
         assign(serverKey, forKey: "serverKey", to: object)
         assign(song.id, forKey: "songID", to: object)
         assign(song.title, forKey: "title", to: object)
@@ -884,27 +764,18 @@ final class LibraryStore {
            let genresData = try? genresEncoder.encode(song.genres) {
             assign(genresData, forKey: "genresData", to: object)
         }
+        if let suffix = song.suffix { assign(suffix, forKey: "suffix", to: object) }
         if let isFavorite { assign(isFavorite, forKey: "isFavorite", to: object) }
         return object
     }
 
-    @discardableResult
     private nonisolated static func upsertPlaylist(
         _ playlist: NavidromePlaylist,
         serverKey: String,
-        existing: NSManagedObject? = nil,
-        existingObjectsArePreloaded: Bool = false,
+        existing: NSManagedObject?,
         in context: NSManagedObjectContext
-    ) throws -> NSManagedObject {
-        let object = try resolvedObject(
-            existing: existing,
-            existingObjectsArePreloaded: existingObjectsArePreloaded,
-            entityName: "VDPlaylist",
-            idKey: "playlistID",
-            id: playlist.id,
-            serverKey: serverKey,
-            in: context
-        )
+    ) {
+        let object = existing ?? insert(.playlist, into: context)
         assign(serverKey, forKey: "serverKey", to: object)
         assign(playlist.id, forKey: "playlistID", to: object)
         assign(playlist.name, forKey: "name", to: object)
@@ -912,99 +783,43 @@ final class LibraryStore {
         assign(playlist.owner, forKey: "owner", to: object)
         assign(playlist.changed, forKey: "changedAt", to: object)
         assign(playlist.isReadOnly, forKey: "isReadOnly", to: object)
-        return object
     }
 
-    private nonisolated static func resolvedObject(
-        existing: NSManagedObject?,
-        existingObjectsArePreloaded: Bool,
-        entityName: String,
-        idKey: String,
-        id: String,
-        serverKey: String,
-        in context: NSManagedObjectContext
-    ) throws -> NSManagedObject {
-        if let existing {
-            return existing
-        }
-        if !existingObjectsArePreloaded,
-           let fetched = try object(
-               entityName: entityName,
-               idKey: idKey,
-               id: id,
-               serverKey: serverKey,
-               in: context
-           ) {
-            return fetched
-        }
-        return NSEntityDescription.insertNewObject(forEntityName: entityName, into: context)
-    }
+    // MARK: - Model mapping
 
-    private nonisolated static func syncStateObject(
-        serverKey: String,
-        createIfMissing: Bool = false,
-        in context: NSManagedObjectContext
-    ) throws -> NSManagedObject? {
-        let request = NSFetchRequest<NSManagedObject>(entityName: "VDMetadataSyncState")
-        request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-        request.fetchLimit = 1
-        if let object = try context.fetch(request).first { return object }
-        guard createIfMissing else { return nil }
-        let object = NSEntityDescription.insertNewObject(forEntityName: "VDMetadataSyncState", into: context)
-        object.setValue(serverKey, forKey: "serverKey")
-        object.setValue(false, forKey: "isComplete")
-        return object
-    }
-
-    private nonisolated static func object(
-        entityName: String,
-        idKey: String,
-        id: String,
-        serverKey: String,
-        in context: NSManagedObjectContext
-    ) throws -> NSManagedObject? {
-        let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-        request.predicate = NSPredicate(format: "%K == %@ AND serverKey == %@", idKey, id, serverKey)
-        request.fetchLimit = 1
-        return try context.fetch(request).first
-    }
-
-    private nonisolated static func songFetchRequest() -> NSFetchRequest<NSManagedObject> {
-        NSFetchRequest<NSManagedObject>(entityName: "VDSong")
-    }
+    private nonisolated static let genresEncoder = JSONEncoder()
 
     private func serverProfile(from object: NSManagedObject) throws -> ServerProfile {
-        let credentialID = object.value(forKey: "credentialID") as? String ?? UUID().uuidString
+        let credentialID = object.string("credentialID") ?? UUID().uuidString
         let password = try keychain.password(for: credentialID) ?? ""
 
         return ServerProfile(
             id: object.value(forKey: "uuid") as? UUID ?? UUID(),
-            name: object.value(forKey: "name") as? String ?? "",
-            address: object.value(forKey: "address") as? String ?? "",
-            username: object.value(forKey: "username") as? String ?? "",
+            name: object.string("name") ?? "",
+            address: object.string("address") ?? "",
+            username: object.string("username") ?? "",
             credentialID: credentialID,
             password: password,
-            createdAt: object.value(forKey: "createdAt") as? Date ?? Date(),
-            lastConnectedAt: object.value(forKey: "lastConnectedAt") as? Date
+            createdAt: object.date("createdAt") ?? Date(),
+            lastConnectedAt: object.date("lastConnectedAt")
         )
     }
 
-    private nonisolated static let genresEncoder = JSONEncoder()
-
     private nonisolated static func song(from object: NSManagedObject) -> NavidromeSong {
         NavidromeSong(
-            id: object.value(forKey: "songID") as? String ?? "",
-            title: object.value(forKey: "title") as? String ?? "Untitled",
-            artist: object.value(forKey: "artist") as? String,
-            album: object.value(forKey: "album") as? String,
-            duration: int(object.value(forKey: "duration")),
-            coverArt: object.value(forKey: "coverArt") as? String,
-            albumId: object.value(forKey: "albumId") as? String,
-            artistId: object.value(forKey: "artistId") as? String,
-            track: int(object.value(forKey: "track")),
-            discNumber: int(object.value(forKey: "discNumber")),
-            created: object.value(forKey: "created") as? Date,
-            played: object.value(forKey: "serverPlayedAt") as? Date,
+            id: object.string("songID") ?? "",
+            title: object.string("title") ?? "Untitled",
+            artist: object.string("artist"),
+            album: object.string("album"),
+            duration: object.int("duration"),
+            coverArt: object.string("coverArt"),
+            albumId: object.string("albumId"),
+            artistId: object.string("artistId"),
+            track: object.int("track"),
+            discNumber: object.int("discNumber"),
+            created: object.date("created"),
+            played: object.date("serverPlayedAt"),
+            suffix: object.string("suffix"),
             genres: decodedGenres(from: object)
         )
     }
@@ -1016,54 +831,77 @@ final class LibraryStore {
 
     private nonisolated static func album(from object: NSManagedObject) -> NavidromeAlbum {
         NavidromeAlbum(
-            id: object.value(forKey: "albumID") as? String ?? "",
-            name: object.value(forKey: "name") as? String ?? "Untitled Album",
-            artist: object.value(forKey: "artist") as? String,
-            artistId: object.value(forKey: "artistID") as? String,
-            songCount: int(object.value(forKey: "songCount")),
-            year: int(object.value(forKey: "year")),
-            coverArt: object.value(forKey: "coverArt") as? String,
-            created: object.value(forKey: "created") as? Date,
-            played: object.value(forKey: "serverPlayedAt") as? Date
+            id: object.string("albumID") ?? "",
+            name: object.string("name") ?? "Untitled Album",
+            artist: object.string("artist"),
+            artistId: object.string("artistID"),
+            songCount: object.int("songCount"),
+            year: object.int("year"),
+            coverArt: object.string("coverArt"),
+            created: object.date("created"),
+            played: object.date("serverPlayedAt")
         )
     }
 
     private nonisolated static func genre(from object: NSManagedObject) -> NavidromeGenre {
         NavidromeGenre(
-            name: object.value(forKey: "name") as? String ?? "",
-            songCount: int(object.value(forKey: "songCount")) ?? 0
+            name: object.string("name") ?? "",
+            songCount: object.int("songCount") ?? 0
         )
     }
 
     private nonisolated static func artist(from object: NSManagedObject) -> NavidromeArtist {
         NavidromeArtist(
-            id: object.value(forKey: "artistID") as? String ?? "",
-            name: object.value(forKey: "name") as? String ?? "",
-            albumCount: int(object.value(forKey: "albumCount")),
-            coverArt: object.value(forKey: "coverArt") as? String,
-            artistImageURL: object.value(forKey: "artistImageURL") as? String
+            id: object.string("artistID") ?? "",
+            name: object.string("name") ?? "",
+            albumCount: object.int("albumCount"),
+            coverArt: object.string("coverArt"),
+            artistImageURL: object.string("artistImageURL")
         )
     }
 
     private nonisolated static func playlist(from object: NSManagedObject) -> NavidromePlaylist {
         NavidromePlaylist(
-            id: object.value(forKey: "playlistID") as? String ?? "",
-            name: object.value(forKey: "name") as? String ?? "Untitled Playlist",
-            songCount: int(object.value(forKey: "songCount")),
-            owner: object.value(forKey: "owner") as? String,
-            changed: object.value(forKey: "changedAt") as? Date,
-            isReadOnly: object.value(forKey: "isReadOnly") as? Bool ?? false
+            id: object.string("playlistID") ?? "",
+            name: object.string("name") ?? "Untitled Playlist",
+            songCount: object.int("songCount"),
+            owner: object.string("owner"),
+            changed: object.date("changedAt"),
+            isReadOnly: object.bool("isReadOnly")
         )
     }
+}
 
-    private nonisolated static func int(_ value: Any?) -> Int? {
-        if let value = value as? Int64 { return Int(value) }
-        if let value = value as? NSNumber { return value.intValue }
-        return nil
+private extension NSSortDescriptor {
+    nonisolated static func ascending(_ key: String) -> NSSortDescriptor {
+        NSSortDescriptor(key: key, ascending: true)
     }
 
-    private func save() throws {
-        guard context.hasChanges else { return }
-        try context.save()
+    nonisolated static func caseInsensitive(_ key: String) -> NSSortDescriptor {
+        NSSortDescriptor(
+            key: key,
+            ascending: true,
+            selector: #selector(NSString.localizedCaseInsensitiveCompare(_:))
+        )
+    }
+}
+
+private extension NSManagedObject {
+    nonisolated func string(_ key: String) -> String? {
+        value(forKey: key) as? String
+    }
+
+    nonisolated func date(_ key: String) -> Date? {
+        value(forKey: key) as? Date
+    }
+
+    nonisolated func bool(_ key: String) -> Bool {
+        value(forKey: key) as? Bool ?? false
+    }
+
+    nonisolated func int(_ key: String) -> Int? {
+        if let value = value(forKey: key) as? Int64 { return Int(value) }
+        if let value = value(forKey: key) as? NSNumber { return value.intValue }
+        return nil
     }
 }

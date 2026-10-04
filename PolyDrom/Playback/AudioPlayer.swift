@@ -46,6 +46,8 @@ final class AudioPlayer: ObservableObject {
         player.currentItem != nil || (route != .local && currentSong != nil)
     }
 
+    private static let playingStatusMessage = "Playing through the selected audio route."
+
     private let nowPlayingController = NowPlayingController()
     private var timeObserver: Any?
     private var songFinishedObserver: Any?
@@ -77,21 +79,8 @@ final class AudioPlayer: ObservableObject {
     }
 
     isolated deinit {
-        if let timeObserver {
-            player.removeTimeObserver(timeObserver)
-        }
-        if let songFinishedObserver {
-            NotificationCenter.default.removeObserver(songFinishedObserver)
-        }
-        if let songFailedObserver {
-            NotificationCenter.default.removeObserver(songFailedObserver)
-        }
-        if let playbackStalledObserver {
-            NotificationCenter.default.removeObserver(playbackStalledObserver)
-        }
-        itemStatusObservation?.invalidate()
+        removeItemObservers()
         timeControlStatusObservation?.invalidate()
-        stallCheckTimer?.invalidate()
     }
 
     func play(
@@ -127,7 +116,7 @@ final class AudioPlayer: ObservableObject {
         hasFinishedCurrentSong = false
         currentTime = targetTime
         duration = Double(song.duration ?? 0)
-        statusMessage = autoplay ? "Playing through the selected audio route." : "Paused"
+        statusMessage = autoplay ? Self.playingStatusMessage : "Paused"
 
         if targetTime > 0 {
             let target = CMTime(seconds: targetTime, preferredTimescale: 600)
@@ -165,11 +154,7 @@ final class AudioPlayer: ObservableObject {
         playbackGeneration += 1
         fallbackStreamURL = nil
         hasAttemptedLocalPlayback = false
-        removeTimeObserver()
-        removeSongFinishedObserver()
-        removePlaybackFailureObserver()
-        removePlaybackStalledObserver()
-        removeStallCheckTimer()
+        removeItemObservers()
         player.pause()
         player.replaceCurrentItem(with: nil)
         isHandoffInProgress = false
@@ -178,7 +163,7 @@ final class AudioPlayer: ObservableObject {
         currentTime = normalizedPlaybackTime(seconds, duration: Double(song.duration ?? 0))
         duration = Double(song.duration ?? 0)
         self.isPlaying = isPlaying
-        volume = min(max(groupVolume, 0), 1)
+        volume = Self.clampedVolume(groupVolume)
         hasFinishedCurrentSong = false
         statusMessage = isPlaying ? "Playing on Sonos" : "Paused on Sonos"
         updateNowPlayingInfo()
@@ -188,7 +173,7 @@ final class AudioPlayer: ObservableObject {
     func selectSonosRoute(groupID: String, groupVolume: Double) {
         guard currentSong == nil else { return }
         route = .sonos(groupID)
-        volume = min(max(groupVolume, 0), 1)
+        volume = Self.clampedVolume(groupVolume)
         statusMessage = "Sonos selected"
     }
 
@@ -242,7 +227,7 @@ final class AudioPlayer: ObservableObject {
 
     func setSonosVolume(_ nextVolume: Double) {
         guard route != .local else { return }
-        volume = min(max(nextVolume, 0), 1)
+        volume = Self.clampedVolume(nextVolume)
     }
 
     func restore(song: NavidromeSong, at seconds: Double) {
@@ -283,13 +268,8 @@ final class AudioPlayer: ObservableObject {
             failCurrentSong(error: item.error)
             return
         }
-        resetStallTracking(at: currentTime)
-        startStallCheckTimer()
-        isPlaying = true
+        showLocalPlayback()
         player.play()
-        statusMessage = "Playing through the selected audio route."
-        updateNowPlayingInfo()
-        notifyPlaybackStateChanged(event: .resumed)
     }
 
     func pauseCurrentSong() {
@@ -302,11 +282,7 @@ final class AudioPlayer: ObservableObject {
 
         AppLog.playback.debug("Pausing current song at \(self.currentTime, privacy: .public) seconds")
         player.pause()
-        removeStallCheckTimer()
-        isPlaying = false
-        statusMessage = "Paused"
-        updateNowPlayingInfo()
-        notifyPlaybackStateChanged(event: .paused)
+        showLocalPause()
     }
 
     func stop() {
@@ -322,11 +298,7 @@ final class AudioPlayer: ObservableObject {
         playbackGeneration += 1
         fallbackStreamURL = nil
         hasAttemptedLocalPlayback = false
-        removeTimeObserver()
-        removeSongFinishedObserver()
-        removePlaybackFailureObserver()
-        removePlaybackStalledObserver()
-        removeStallCheckTimer()
+        removeItemObservers()
         player.pause()
         isPlaying = false
         if let event = playbackEvent(trigger: .stopped) {
@@ -362,7 +334,7 @@ final class AudioPlayer: ObservableObject {
     }
 
     func setVolume(_ nextVolume: Double) {
-        let clampedVolume = min(max(nextVolume, 0), 1)
+        let clampedVolume = Self.clampedVolume(nextVolume)
         volume = clampedVolume
         if route != .local {
             onSonosCommand?(.volume(clampedVolume))
@@ -540,22 +512,39 @@ final class AudioPlayer: ObservableObject {
             // Resuming right after a pause makes AVPlayer report `.paused` once more while its
             // rate is already non-zero; that is a pending play, not a pause.
             guard isPlaying, player.rate == 0 else { return }
-            removeStallCheckTimer()
-            isPlaying = false
-            statusMessage = "Paused"
-            updateNowPlayingInfo()
-            notifyPlaybackStateChanged(event: .paused)
+            showLocalPause()
         case .waitingToPlayAtSpecifiedRate, .playing:
             guard !isPlaying else { return }
-            resetStallTracking(at: currentTime)
-            startStallCheckTimer()
-            isPlaying = true
-            statusMessage = "Playing through the selected audio route."
-            updateNowPlayingInfo()
-            notifyPlaybackStateChanged(event: .resumed)
+            showLocalPlayback()
         @unknown default:
             break
         }
+    }
+
+    private func showLocalPlayback() {
+        resetStallTracking(at: currentTime)
+        startStallCheckTimer()
+        isPlaying = true
+        statusMessage = Self.playingStatusMessage
+        updateNowPlayingInfo()
+        notifyPlaybackStateChanged(event: .resumed)
+    }
+
+    private func showLocalPause() {
+        removeStallCheckTimer()
+        isPlaying = false
+        statusMessage = "Paused"
+        updateNowPlayingInfo()
+        notifyPlaybackStateChanged(event: .paused)
+    }
+
+    /// Stops following the current item: its time, end, failure, and stalls.
+    private func removeItemObservers() {
+        removeTimeObserver()
+        removeSongFinishedObserver()
+        removePlaybackFailureObserver()
+        removePlaybackStalledObserver()
+        removeStallCheckTimer()
     }
 
     private func removeSongFinishedObserver() {
@@ -695,6 +684,10 @@ final class AudioPlayer: ObservableObject {
             canPlayPrevious: canPlayPreviousInNowPlaying,
             canPlayNext: canPlayNextInNowPlaying
         )
+    }
+
+    private static func clampedVolume(_ volume: Double) -> Double {
+        min(max(volume, 0), 1)
     }
 
     private func normalizedPlaybackTime(_ seconds: Double, duration: Double) -> Double {

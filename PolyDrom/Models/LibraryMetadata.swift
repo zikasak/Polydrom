@@ -35,7 +35,10 @@ struct CatalogChangeState: Equatable, Sendable {
 }
 
 struct MetadataSyncState: Equatable, Sendable {
-    static let currentCatalogVersion: Int64 = 1
+    /// Raised whenever the cache starts keeping something an existing cache
+    /// lacks, which makes the next refresh download the whole catalog again.
+    /// Version 2 added each song's file format.
+    static let currentCatalogVersion: Int64 = 2
 
     let catalogToken: String?
     let lastCheckedAt: Date?
@@ -45,6 +48,13 @@ struct MetadataSyncState: Equatable, Sendable {
     var requiresCatalogUpgrade: Bool {
         catalogVersion < Self.currentCatalogVersion
     }
+}
+
+/// Everything the user has starred on the server.
+struct StarredItems: Sendable {
+    let artists: [NavidromeArtist]
+    let albums: [NavidromeAlbum]
+    let songs: [NavidromeSong]
 }
 
 struct FavoriteMetadata: Equatable, Sendable {
@@ -60,6 +70,14 @@ struct FavoriteMetadata: Equatable, Sendable {
         self.artistIDs = artistIDs
         self.albumIDs = albumIDs
         self.songIDs = songIDs
+    }
+
+    init(starred: StarredItems) {
+        self.init(
+            artistIDs: Set(starred.artists.map(\.id)),
+            albumIDs: Set(starred.albums.map(\.id)),
+            songIDs: Set(starred.songs.map(\.id))
+        )
     }
 }
 

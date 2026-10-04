@@ -122,25 +122,6 @@ struct ScanStatus: Decodable, Sendable {
     }
 }
 
-struct StarredContainer: Decodable {
-    let artists: FlexibleArray<NavidromeArtist>
-    let albums: FlexibleArray<NavidromeAlbum>
-    let songs: FlexibleArray<NavidromeSong>
-
-    enum CodingKeys: String, CodingKey {
-        case artists = "artist"
-        case albums = "album"
-        case songs = "song"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        artists = (try? container.decode(FlexibleArray<NavidromeArtist>.self, forKey: .artists)) ?? FlexibleArray(values: [])
-        albums = (try? container.decode(FlexibleArray<NavidromeAlbum>.self, forKey: .albums)) ?? FlexibleArray(values: [])
-        songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
-    }
-}
-
 struct LyricsList: Decodable {
     let structuredLyrics: FlexibleArray<SongLyrics>
 
@@ -150,10 +131,11 @@ struct LyricsList: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        structuredLyrics = (try? container.decode(FlexibleArray<SongLyrics>.self, forKey: .structuredLyrics)) ?? FlexibleArray(values: [])
+        structuredLyrics = container.decodeFlexibleArray(of: SongLyrics.self, forKey: .structuredLyrics)
     }
 }
 
+/// The artists, albums, and songs of a search or starred listing.
 struct SearchResult: Decodable {
     let artists: FlexibleArray<NavidromeArtist>
     let albums: FlexibleArray<NavidromeAlbum>
@@ -167,11 +149,13 @@ struct SearchResult: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        artists = (try? container.decode(FlexibleArray<NavidromeArtist>.self, forKey: .artists)) ?? FlexibleArray(values: [])
-        albums = (try? container.decode(FlexibleArray<NavidromeAlbum>.self, forKey: .albums)) ?? FlexibleArray(values: [])
-        songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
+        artists = container.decodeFlexibleArray(of: NavidromeArtist.self, forKey: .artists)
+        albums = container.decodeFlexibleArray(of: NavidromeAlbum.self, forKey: .albums)
+        songs = container.decodeFlexibleArray(of: NavidromeSong.self, forKey: .songs)
     }
 }
+
+typealias StarredContainer = SearchResult
 
 struct PlaylistContainer: Decodable {
     let playlists: FlexibleArray<NavidromePlaylist>
@@ -182,7 +166,7 @@ struct PlaylistContainer: Decodable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        playlists = (try? container.decode(FlexibleArray<NavidromePlaylist>.self, forKey: .playlists)) ?? FlexibleArray(values: [])
+        playlists = container.decodeFlexibleArray(of: NavidromePlaylist.self, forKey: .playlists)
     }
 }
 
@@ -197,12 +181,20 @@ struct PlaylistDetail: Decodable {
     init(from decoder: Decoder) throws {
         summary = try? NavidromePlaylist(from: decoder)
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        songs = (try? container.decode(FlexibleArray<NavidromeSong>.self, forKey: .songs)) ?? FlexibleArray(values: [])
+        songs = container.decodeFlexibleArray(of: NavidromeSong.self, forKey: .songs)
     }
 }
 
 struct SubsonicServerError: Decodable {
     let message: String
+}
+
+extension KeyedDecodingContainer {
+    /// Subsonic servers write a list with a single element as that element, and
+    /// leave an empty list out; both decode to an array here.
+    func decodeFlexibleArray<Element: Decodable>(of type: Element.Type, forKey key: Key) -> FlexibleArray<Element> {
+        (try? decode(FlexibleArray<Element>.self, forKey: key)) ?? FlexibleArray(values: [])
+    }
 }
 
 struct FlexibleArray<Element: Decodable>: Decodable {

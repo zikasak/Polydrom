@@ -192,7 +192,7 @@ private struct FeaturedHero: View {
                 .id(selected.id)
                 .transition(.opacity)
                 .contextMenu {
-                    AlbumContextMenu(viewModel: viewModel, album: selected, openAlbum: openAlbum)
+                    AlbumContextMenu(viewModel: viewModel, album: selected) { openAlbum(selected) }
                 }
             }
 
@@ -492,14 +492,14 @@ private struct AlbumShelf: View {
                         ForEach(albums) { album in
                             HomeAlbumCard(
                                 album: album,
-                                coverArtResource: viewModel.coverArtResource(for: album, size: 220),
+                                coverArtResource: viewModel.coverArtResource(for: album, size: viewModel.gridCoverSize),
                                 width: cardWidth,
                                 isOnline: viewModel.isOnline,
                                 open: { openAlbum(album) },
                                 play: { viewModel.play(album) }
                             )
                             .contextMenu {
-                                AlbumContextMenu(viewModel: viewModel, album: album, openAlbum: openAlbum)
+                                AlbumContextMenu(viewModel: viewModel, album: album) { openAlbum(album) }
                             }
                         }
                     }
@@ -612,36 +612,5 @@ private struct HomeEmptySection: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, minHeight: 96, alignment: .center)
             .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-}
-
-private struct AlbumContextMenu: View {
-    @ObservedObject var viewModel: AppCoordinator
-    let album: NavidromeAlbum
-    let openAlbum: (NavidromeAlbum) -> Void
-
-    var body: some View {
-        Button { viewModel.play(album) } label: {
-            Label("Play", systemImage: "play.fill")
-        }
-        .disabled(!viewModel.isOnline)
-        Button { viewModel.playNext(album) } label: {
-            Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
-        }
-        Button { viewModel.addToQueue(album) } label: {
-            Label("Add to Queue", systemImage: "text.badge.plus")
-        }
-        Button { viewModel.toggleFavorite(album) } label: {
-            Label(
-                viewModel.isFavorite(album) ? "Remove from Favorites" : "Add to Favorites",
-                systemImage: viewModel.isFavorite(album) ? "heart.slash" : "heart"
-            )
-        }
-        .disabled(!viewModel.isOnline)
-        Divider()
-        Button { openAlbum(album) } label: {
-            Label("Open Album", systemImage: "rectangle.stack")
-        }
-        OpenInSpotifyLink(album: album)
     }
 }

@@ -29,14 +29,12 @@ struct SonosUPnPTests {
         let url = try #require(URL(string: "http://192.168.1.20:1400/xml/device_description.xml"))
         let device = try await upnp.describe(url, expectedHost: "192.168.1.20")
         #expect(device.id == "RINCON-1")
-        #expect(device.name == "Living Room")
         #expect(device.services["AVTransport"]?.url.path == "/MediaRenderer/AVTransport/Control")
         #expect(device.services["GroupRenderingControl"]?.url.path == "/MediaRenderer/GroupRenderingControl/Control")
         let topology = try SonosXML.parse(Data(Self.topology.utf8))
         let groups = SonosUPnP.groups(from: topology, devices: [device.id: device])
         #expect(groups.count == 1)
         #expect(groups.first?.name == "Living Room + Kitchen")
-        #expect(groups.first?.memberIDs == ["RINCON-1", "RINCON-2"])
         #expect(groups.first?.coordinator.id == "RINCON-1")
         await #expect(throws: SonosError.self) {
             try await upnp.describe(url, expectedHost: "192.168.1.99")
@@ -119,7 +117,6 @@ struct SonosUPnPTests {
         })
         let device = Self.device()
         let position = try await upnp.position(on: device)
-        #expect(position.track == 1)
         #expect(position.seconds == 37)
         #expect(position.duration == 185)
         #expect(position.transportState == "PLAYING")
@@ -752,15 +749,11 @@ struct SonosUPnPTests {
                 url: URL(string: "\(host)/MediaRenderer/\(name)/Control")!
             ))
         })
-        return SonosDevice(
-            id: "RINCON-1", name: "Living Room",
-            descriptionURL: URL(string: "\(host)/xml/device_description.xml")!,
-            services: services
-        )
+        return SonosDevice(id: "RINCON-1", services: services)
     }
 
     private static func group() -> SonosGroup {
-        SonosGroup(id: "group-1", name: "Living Room", coordinator: device(), memberIDs: ["RINCON-1"])
+        SonosGroup(id: "group-1", name: "Living Room", coordinator: device())
     }
 
     nonisolated private static let description = """

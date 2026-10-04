@@ -82,7 +82,7 @@ struct LibraryDetailView: View {
         case .albums:
             AlbumBrowserView(viewModel: viewModel, albums: viewModel.albums)
         case .artists:
-            ArtistBrowserView(viewModel: viewModel)
+            ArtistBrowserView(viewModel: viewModel, artists: viewModel.artists)
         case .genres:
             GenreBrowserView(viewModel: viewModel)
         case .playlists:
@@ -126,7 +126,7 @@ private struct FavoriteLibraryView: View {
                     ContentUnavailableView("No favorite artists yet.", systemImage: "music.mic")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    FavoriteArtistBrowserView(viewModel: viewModel)
+                    ArtistBrowserView(viewModel: viewModel, artists: viewModel.favoriteArtists)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             case .albums:
@@ -164,11 +164,4 @@ private struct FavoriteLibraryView: View {
         case albums
         case songs
     }
-}
-
-enum LibraryRoute: Hashable {
-    case album(NavidromeAlbum)
-    case artist(NavidromeArtist)
-    case genre(NavidromeGenre)
-    case playlist(NavidromePlaylist)
 }

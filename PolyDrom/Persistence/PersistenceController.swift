@@ -51,9 +51,7 @@ final class PersistenceController {
     }
 
     static var libraryCacheURL: URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("PolyDrom", isDirectory: true)
-            .appendingPathComponent("LibraryCache.sqlite")
+        AppDirectories.applicationSupport?.appendingPathComponent("LibraryCache.sqlite")
     }
 
     /// The location used by the pre-registry release. It is read only for the
@@ -110,24 +108,22 @@ final class PersistenceController {
 
     private static func makeModel() -> NSManagedObjectModel {
         let model = NSManagedObjectModel()
-        let server = serverEntity()
-        let song = songEntity()
-        let artist = artistEntity()
-        let album = albumEntity()
-        let genre = genreEntity()
-        let genreSong = genreSongEntity()
-        let playlist = playlistEntity()
-        let playlistEntry = playlistEntryEntity()
-        let syncState = syncStateEntity()
-        model.entities = [server, song, artist, album, genre, genreSong, playlist, playlistEntry, syncState]
+        model.entities = [
+            serverEntity(),
+            songEntity(),
+            artistEntity(),
+            albumEntity(),
+            genreEntity(),
+            genreSongEntity(),
+            playlistEntity(),
+            playlistEntryEntity(),
+            syncStateEntity()
+        ]
         return model
     }
 
     private static func serverEntity() -> NSEntityDescription {
-        let entity = NSEntityDescription()
-        entity.name = "VDServer"
-        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
-        entity.properties = [
+        entity(.server, uniqueBy: ["address", "username"], attributes: [
             attribute("uuid", .UUIDAttributeType, isOptional: false),
             attribute("name", .stringAttributeType),
             attribute("address", .stringAttributeType, isOptional: false),
@@ -135,16 +131,11 @@ final class PersistenceController {
             attribute("credentialID", .stringAttributeType),
             attribute("createdAt", .dateAttributeType, isOptional: false),
             attribute("lastConnectedAt", .dateAttributeType)
-        ]
-        entity.uniquenessConstraints = [["address", "username"]]
-        return entity
+        ])
     }
 
     private static func songEntity() -> NSEntityDescription {
-        let entity = NSEntityDescription()
-        entity.name = "VDSong"
-        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
-        entity.properties = [
+        entity(.song, uniqueBy: ["serverKey", "songID"], attributes: [
             attribute("songID", .stringAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("title", .stringAttributeType, isOptional: false),
@@ -159,18 +150,14 @@ final class PersistenceController {
             attribute("created", .dateAttributeType),
             attribute("serverPlayedAt", .dateAttributeType),
             attribute("genresData", .binaryDataAttributeType),
+            attribute("suffix", .stringAttributeType),
             attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false),
             attribute("lastPlayedAt", .dateAttributeType)
-        ]
-        entity.uniquenessConstraints = [["serverKey", "songID"]]
-        return entity
+        ])
     }
 
     private static func artistEntity() -> NSEntityDescription {
-        let entity = NSEntityDescription()
-        entity.name = "VDArtist"
-        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
-        entity.properties = [
+        entity(.artist, uniqueBy: ["serverKey", "artistID"], attributes: [
             attribute("artistID", .stringAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("name", .stringAttributeType, isOptional: false),
@@ -178,16 +165,11 @@ final class PersistenceController {
             attribute("coverArt", .stringAttributeType),
             attribute("artistImageURL", .stringAttributeType),
             attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false)
-        ]
-        entity.uniquenessConstraints = [["serverKey", "artistID"]]
-        return entity
+        ])
     }
 
     private static func albumEntity() -> NSEntityDescription {
-        let entity = NSEntityDescription()
-        entity.name = "VDAlbum"
-        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
-        entity.properties = [
+        entity(.album, uniqueBy: ["serverKey", "albumID"], attributes: [
             attribute("albumID", .stringAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("name", .stringAttributeType, isOptional: false),
@@ -200,43 +182,28 @@ final class PersistenceController {
             attribute("serverPlayedAt", .dateAttributeType),
             attribute("lastPlayedAt", .dateAttributeType),
             attribute("isFavorite", .booleanAttributeType, isOptional: false, defaultValue: false)
-        ]
-        entity.uniquenessConstraints = [["serverKey", "albumID"]]
-        return entity
+        ])
     }
 
     private static func genreEntity() -> NSEntityDescription {
-        let entity = NSEntityDescription()
-        entity.name = "VDGenre"
-        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
-        entity.properties = [
+        entity(.genre, uniqueBy: ["serverKey", "genreID"], attributes: [
             attribute("genreID", .stringAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("name", .stringAttributeType, isOptional: false),
             attribute("songCount", .integer64AttributeType, isOptional: false)
-        ]
-        entity.uniquenessConstraints = [["serverKey", "genreID"]]
-        return entity
+        ])
     }
 
     private static func genreSongEntity() -> NSEntityDescription {
-        let entity = NSEntityDescription()
-        entity.name = "VDGenreSong"
-        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
-        entity.properties = [
+        entity(.genreSong, uniqueBy: ["serverKey", "genreID", "songID"], attributes: [
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("genreID", .stringAttributeType, isOptional: false),
             attribute("songID", .stringAttributeType, isOptional: false)
-        ]
-        entity.uniquenessConstraints = [["serverKey", "genreID", "songID"]]
-        return entity
+        ])
     }
 
     private static func playlistEntity() -> NSEntityDescription {
-        let entity = NSEntityDescription()
-        entity.name = "VDPlaylist"
-        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
-        entity.properties = [
+        entity(.playlist, uniqueBy: ["serverKey", "playlistID"], attributes: [
             attribute("playlistID", .stringAttributeType, isOptional: false),
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("name", .stringAttributeType, isOptional: false),
@@ -244,38 +211,39 @@ final class PersistenceController {
             attribute("owner", .stringAttributeType),
             attribute("changedAt", .dateAttributeType),
             attribute("isReadOnly", .booleanAttributeType, isOptional: false, defaultValue: false)
-        ]
-        entity.uniquenessConstraints = [["serverKey", "playlistID"]]
-        return entity
+        ])
     }
 
     private static func playlistEntryEntity() -> NSEntityDescription {
-        let entity = NSEntityDescription()
-        entity.name = "VDPlaylistEntry"
-        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
-        entity.properties = [
+        entity(.playlistEntry, uniqueBy: ["serverKey", "playlistID", "position"], attributes: [
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("playlistID", .stringAttributeType, isOptional: false),
             attribute("songID", .stringAttributeType, isOptional: false),
             attribute("position", .integer64AttributeType, isOptional: false)
-        ]
-        entity.uniquenessConstraints = [["serverKey", "playlistID", "position"]]
-        return entity
+        ])
     }
 
     private static func syncStateEntity() -> NSEntityDescription {
-        let entity = NSEntityDescription()
-        entity.name = "VDMetadataSyncState"
-        entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
-        entity.properties = [
+        entity(.syncState, uniqueBy: ["serverKey"], attributes: [
             attribute("serverKey", .stringAttributeType, isOptional: false),
             attribute("catalogToken", .stringAttributeType),
             attribute("lastCheckedAt", .dateAttributeType),
             attribute("isComplete", .booleanAttributeType, isOptional: false, defaultValue: false),
             attribute("catalogVersion", .integer64AttributeType, isOptional: false, defaultValue: 0)
-        ]
-        entity.uniquenessConstraints = [["serverKey"]]
-        return entity
+        ])
+    }
+
+    private static func entity(
+        _ entity: LibraryEntity,
+        uniqueBy uniqueKeys: [String],
+        attributes: [NSAttributeDescription]
+    ) -> NSEntityDescription {
+        let description = NSEntityDescription()
+        description.name = entity.rawValue
+        description.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
+        description.properties = attributes
+        description.uniquenessConstraints = [uniqueKeys]
+        return description
     }
 
     private static func attribute(

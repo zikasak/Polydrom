@@ -40,9 +40,9 @@ struct ViewRenderingTests {
         await render(SearchView(viewModel: viewModel, openRoute: { _ in }))
         await render(HomeView(viewModel: viewModel, openAlbum: { _ in }))
         await render(AlbumBrowserView(viewModel: viewModel, albums: [album]))
-        await render(ArtistBrowserView(viewModel: viewModel))
+        await render(ArtistBrowserView(viewModel: viewModel, artists: viewModel.artists))
         await render(GenreBrowserView(viewModel: viewModel))
-        await render(FavoriteArtistBrowserView(viewModel: viewModel))
+        await render(ArtistBrowserView(viewModel: viewModel, artists: viewModel.favoriteArtists))
         await render(PlaylistBrowserView(viewModel: viewModel))
         await render(
             PlaylistCreationSheet(
