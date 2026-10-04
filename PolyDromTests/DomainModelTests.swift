@@ -166,7 +166,7 @@ struct DomainModelTests {
         #expect(try JSONDecoder().decode(SongLyrics.self, from: data).lineSegments == [expected])
     }
 
-    @Test func attributedCueLinesSeparateBackgroundVocalsFromTheLead() throws {
+    @Test func attributedBackgroundVocalsKeepTheirPlaceInTheCombinedLine() throws {
         let lyrics = try JSONDecoder().decode(
             SongLyrics.self,
             from: Data(#"""
@@ -175,14 +175,22 @@ struct DomainModelTests {
               "synced": true,
               "agents": [{"id": "lead", "role": "main"}, {"id": "backing", "role": "bg"}],
               "line": [
-                {"start": 0, "value": "Hello echo"},
-                {"start": 1000, "value": "Lead only (aside)"},
-                {"start": 2000, "value": "No cues"}
+                {"start": 0, "value": "I (echo) know"},
+                {"start": 1000, "value": "Hello echo  again"},
+                {"start": 2000, "value": "I know (know)"},
+                {"start": 3000, "value": "Lead only (aside)"},
+                {"start": 4000, "value": "Not in (the) line"},
+                {"start": 5000, "value": "No cues"}
               ],
               "cueLine": [
-                {"index": 0, "agentId": "lead", "value": "Hello", "cue": []},
-                {"index": 0, "agentId": "backing", "value": "echo", "cue": []},
-                {"index": 1, "agentId": "lead", "value": "Lead only (aside)", "cue": []}
+                {"index": 0, "agentId": "lead", "value": "I know", "cue": []},
+                {"index": 0, "agentId": "backing", "value": "(echo)", "cue": []},
+                {"index": 1, "agentId": "lead", "value": "Hello again", "cue": []},
+                {"index": 1, "agentId": "backing", "value": " echo ", "cue": []},
+                {"index": 2, "agentId": "lead", "value": "I know", "cue": []},
+                {"index": 2, "agentId": "backing", "value": "know", "cue": []},
+                {"index": 3, "agentId": "lead", "value": "Lead only (aside)", "cue": []},
+                {"index": 4, "agentId": "backing", "value": "missing", "cue": []}
               ]
             }
             """#.utf8)
@@ -190,8 +198,23 @@ struct DomainModelTests {
         let translation = try JSONDecoder().decode(SongLyrics.self, from: Data(#"{"kind":"translation"}"#.utf8))
 
         #expect(lyrics.lineSegments == [
-            [SongLyricsSegment(text: "Hello", isBackground: false), SongLyricsSegment(text: " echo", isBackground: true)],
+            [
+                SongLyricsSegment(text: "I ", isBackground: false),
+                SongLyricsSegment(text: "(echo)", isBackground: true),
+                SongLyricsSegment(text: " know", isBackground: false)
+            ],
+            [
+                SongLyricsSegment(text: "Hello ", isBackground: false),
+                SongLyricsSegment(text: "echo", isBackground: true),
+                SongLyricsSegment(text: "  again", isBackground: false)
+            ],
+            [SongLyricsSegment(text: "I know ", isBackground: false), SongLyricsSegment(text: "(know)", isBackground: true)],
             [SongLyricsSegment(text: "Lead only ", isBackground: false), SongLyricsSegment(text: "(aside)", isBackground: true)],
+            [
+                SongLyricsSegment(text: "Not in ", isBackground: false),
+                SongLyricsSegment(text: "(the)", isBackground: true),
+                SongLyricsSegment(text: " line", isBackground: false)
+            ],
             [SongLyricsSegment(text: "No cues", isBackground: false)]
         ])
         #expect(lyrics.isMainLayer)
