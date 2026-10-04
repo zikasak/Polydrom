@@ -216,12 +216,13 @@ enum CoverArtError: LocalizedError, Equatable {
         }
     }
 
-    /// Whether asking again would get the same answer. Server-side and
-    /// rate-limit responses are expected to clear up on their own.
+    /// Whether asking again for this particular cover would get the same answer.
     var isPermanent: Bool {
         switch self {
         case .http(let statusCode):
-            (400...499).contains(statusCode) && statusCode != 408 && statusCode != 429
+            // Only "not found" is about this cover. Other statuses, including
+            // rejected credentials, affect every request until they are resolved.
+            statusCode == 404 || statusCode == 410
         case .subsonic(let code):
             // Only "data not found" is about this cover; authentication and
             // protocol errors affect every request until they are resolved.

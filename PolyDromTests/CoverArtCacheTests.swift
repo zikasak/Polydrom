@@ -424,13 +424,19 @@ struct CoverArtCacheTests {
         #expect(await cache.diskUsageBytes() == onePixelPNG.count)
     }
 
-    @Test func crawlStopsOnRejectedCredentialsAndRetriesOnceAccepted() async throws {
+    /// Navidrome rejects credentials in an HTTP 200 error document; a proxy in
+    /// front of it answers with 401 or 403.
+    @Test(arguments: [200, 401, 403])
+    func crawlStopsOnRejectedCredentialsAndRetriesOnceAccepted(rejectionStatusCode: Int) async throws {
         let isAuthorized = Mutex(false)
         let requests = Mutex(0)
         let session = StubURLProtocol.session { _ in
             requests.withLock { $0 += 1 }
             guard isAuthorized.withLock({ $0 }) else {
-                return envelope(#"{"status":"failed","error":{"code":40,"message":"Wrong username or password"}}"#)
+                return StubURLProtocol.Response(
+                    statusCode: rejectionStatusCode,
+                    json: #"{"subsonic-response":{"status":"failed","error":{"code":40,"message":"Wrong username or password"}}}"#
+                )
             }
             return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
         }
