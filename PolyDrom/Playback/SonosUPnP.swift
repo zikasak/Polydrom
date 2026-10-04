@@ -8,8 +8,6 @@ struct SonosServiceEndpoint: Sendable {
 
 struct SonosDevice: Sendable, Identifiable {
     let id: String
-    let name: String
-    let descriptionURL: URL
     let services: [String: SonosServiceEndpoint]
 
     func service(_ name: String) throws -> SonosServiceEndpoint {
@@ -22,7 +20,6 @@ struct SonosGroup: Sendable, Identifiable {
     let id: String
     let name: String
     let coordinator: SonosDevice
-    let memberIDs: [String]
 }
 
 struct SonosTrack: Sendable {
@@ -34,7 +31,6 @@ struct SonosTrack: Sendable {
 }
 
 struct SonosPosition: Sendable {
-    let track: Int
     let trackURI: String
     let seconds: Double
     let duration: Double
@@ -115,15 +111,12 @@ struct SonosUPnP: Sendable {
             let members = node.descendants(named: "ZoneGroupMember")
                 .filter { $0.attributes["Invisible"] != "1" }
             guard !members.isEmpty else { continue }
-            let memberIDs = members.compactMap { $0.attributes["UUID"] }
             let names = members.compactMap { $0.attributes["ZoneName"] }
-            let coordinator = devices[coordinatorID]
-            guard let coordinator else { continue }
+            guard let coordinator = devices[coordinatorID] else { continue }
             groups.append(SonosGroup(
                 id: groupID,
                 name: names.joined(separator: " + "),
-                coordinator: coordinator,
-                memberIDs: memberIDs
+                coordinator: coordinator
             ))
         }
         return groups.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -150,13 +143,7 @@ struct SonosUPnP: Sendable {
                   let name = type.split(separator: ":").dropLast().last.map(String.init) else { continue }
             services[name] = SonosServiceEndpoint(type: type, url: serviceURL)
         }
-        return SonosDevice(
-            id: String(rawID.dropFirst(5)),
-            name: root.firstDescendant(named: "roomName")?.text
-                ?? root.firstDescendant(named: "friendlyName")?.text ?? "Sonos",
-            descriptionURL: url,
-            services: services
-        )
+        return SonosDevice(id: String(rawID.dropFirst(5)), services: services)
     }
 
     func action(
@@ -192,15 +179,22 @@ struct SonosUPnP: Sendable {
         return result
     }
 
+    /// Runs an action on the speaker's only AVTransport instance.
+    @discardableResult
+    private func avTransport(
+        _ name: String,
+        on device: SonosDevice,
+        arguments: [(String, String)] = []
+    ) async throws -> SonosXMLNode {
+        try await action(device, service: "AVTransport", name: name, arguments: [Self.instance] + arguments)
+    }
+
     func clearQueue(_ device: SonosDevice) async throws {
-        _ = try await action(device, service: "AVTransport", name: "RemoveAllTracksFromQueue", arguments: [
-            ("InstanceID", "0")
-        ])
+        try await avTransport("RemoveAllTracksFromQueue", on: device)
     }
 
     func enqueueTrack(_ track: SonosTrack, on device: SonosDevice) async throws {
-        let response = try await action(device, service: "AVTransport", name: "AddURIToQueue", arguments: [
-            ("InstanceID", "0"),
+        let response = try await avTransport("AddURIToQueue", on: device, arguments: [
             ("EnqueuedURI", track.streamURL.absoluteString),
             ("EnqueuedURIMetaData", Self.didl(for: track)),
             ("DesiredFirstTrackNumberEnqueued", "0"),
@@ -212,8 +206,7 @@ struct SonosUPnP: Sendable {
     }
 
     func useQueue(_ device: SonosDevice) async throws {
-        _ = try await action(device, service: "AVTransport", name: "SetAVTransportURI", arguments: [
-            ("InstanceID", "0"),
+        try await avTransport("SetAVTransportURI", on: device, arguments: [
             ("CurrentURI", Self.queueURI(for: device)),
             ("CurrentURIMetaData", "")
         ])
@@ -228,34 +221,22 @@ struct SonosUPnP: Sendable {
     }
 
     func seekTime(_ seconds: Double, on device: SonosDevice) async throws {
-        let value = max(Int(seconds.rounded()), 0)
-        let target = String(format: "%02d:%02d:%02d", value / 3600, (value / 60) % 60, value % 60)
-        try await seek(unit: "REL_TIME", target: target, on: device)
+        try await seek(unit: "REL_TIME", target: Self.timeText(Int(seconds.rounded())), on: device)
     }
 
     private func seek(unit: String, target: String, on device: SonosDevice) async throws {
-        _ = try await action(device, service: "AVTransport", name: "Seek", arguments: [
-            ("InstanceID", "0"), ("Unit", unit), ("Target", target)
-        ])
+        try await avTransport("Seek", on: device, arguments: [("Unit", unit), ("Target", target)])
     }
 
     func transport(_ command: String, on device: SonosDevice) async throws {
-        let arguments = [("InstanceID", "0"), ("Speed", "1")]
-        _ = try await action(device, service: "AVTransport", name: command, arguments: arguments)
+        try await avTransport(command, on: device, arguments: [("Speed", "1")])
     }
 
     func position(on device: SonosDevice) async throws -> SonosPosition {
-        let transport = try await action(device, service: "AVTransport", name: "GetTransportInfo", arguments: [
-            ("InstanceID", "0")
-        ])
-        let position = try await action(device, service: "AVTransport", name: "GetPositionInfo", arguments: [
-            ("InstanceID", "0")
-        ])
-        let media = try await action(device, service: "AVTransport", name: "GetMediaInfo", arguments: [
-            ("InstanceID", "0")
-        ])
+        let transport = try await avTransport("GetTransportInfo", on: device)
+        let position = try await avTransport("GetPositionInfo", on: device)
+        let media = try await avTransport("GetMediaInfo", on: device)
         return SonosPosition(
-            track: Int(position.child(named: "Track")?.text ?? "") ?? 0,
             trackURI: position.child(named: "TrackURI")?.text ?? "",
             seconds: Self.seconds(position.child(named: "RelTime")?.text) ?? 0,
             duration: Self.seconds(position.child(named: "TrackDuration")?.text) ?? 0,
@@ -266,16 +247,25 @@ struct SonosUPnP: Sendable {
     }
 
     func groupVolume(on device: SonosDevice) async throws -> Int {
-        let result = try await action(device, service: "GroupRenderingControl", name: "GetGroupVolume", arguments: [
-            ("InstanceID", "0")
-        ])
+        let result = try await action(
+            device, service: "GroupRenderingControl", name: "GetGroupVolume", arguments: [Self.instance]
+        )
         return Int(result.child(named: "CurrentVolume")?.text ?? "") ?? 0
     }
 
     func setGroupVolume(_ volume: Int, on device: SonosDevice) async throws {
         _ = try await action(device, service: "GroupRenderingControl", name: "SetGroupVolume", arguments: [
-            ("InstanceID", "0"), ("DesiredVolume", String(min(max(volume, 0), 100)))
+            Self.instance, ("DesiredVolume", String(min(max(volume, 0), 100)))
         ])
+    }
+
+    /// Sonos speakers expose a single instance of each service.
+    private static let instance = ("InstanceID", "0")
+
+    /// A duration or position as UPnP writes it, e.g. "00:03:05".
+    private static func timeText(_ seconds: Int) -> String {
+        let value = max(seconds, 0)
+        return String(format: "%02d:%02d:%02d", value / 3600, (value / 60) % 60, value % 60)
     }
 
     static func seconds(_ time: String?) -> Double? {
@@ -287,15 +277,21 @@ struct SonosUPnP: Sendable {
 
     static func didl(for item: SonosTrack) -> String {
         let song = item.song
-        let duration = max(song.duration ?? 0, 0)
-        let time = String(format: "%02d:%02d:%02d", duration / 3600, (duration / 60) % 60, duration % 60)
+        let time = timeText(song.duration ?? 0)
         let artist = song.artist.map { "<dc:creator>\(SonosXML.escape($0))</dc:creator>" } ?? ""
         let album = song.album.map { "<upnp:album>\(SonosXML.escape($0))</upnp:album>" } ?? ""
         let artwork = item.artworkURL.map {
             "<upnp:albumArtURI>\(SonosXML.escape($0.absoluteString))</upnp:albumArtURI>"
         } ?? ""
         return """
-        <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"><item id="\(item.entryID.uuidString)" parentID="0" restricted="true"><dc:title>\(SonosXML.escape(song.title))</dc:title>\(artist)\(album)\(artwork)<upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="http-get:*:\(item.mimeType):*" duration="\(time)">\(SonosXML.escape(item.streamURL.absoluteString))</res></item></DIDL-Lite>
+        <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" \
+        xmlns:dc="http://purl.org/dc/elements/1.1/" \
+        xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">\
+        <item id="\(item.entryID.uuidString)" parentID="0" restricted="true">\
+        <dc:title>\(SonosXML.escape(song.title))</dc:title>\(artist)\(album)\(artwork)\
+        <upnp:class>object.item.audioItem.musicTrack</upnp:class>\
+        <res protocolInfo="http-get:*:\(item.mimeType):*" duration="\(time)">\
+        \(SonosXML.escape(item.streamURL.absoluteString))</res></item></DIDL-Lite>
         """
     }
 }
@@ -321,11 +317,11 @@ enum SonosSSDP {
     }
 
     private static func scan() throws -> [SonosSSDPAddress] {
-        let fd = socket(AF_INET, SOCK_DGRAM, 0)
-        guard fd >= 0 else { throw SonosError.discoveryUnavailable }
-        defer { close(fd) }
+        let socketDescriptor = socket(AF_INET, SOCK_DGRAM, 0)
+        guard socketDescriptor >= 0 else { throw SonosError.discoveryUnavailable }
+        defer { close(socketDescriptor) }
         var timeout = timeval(tv_sec: 1, tv_usec: 0)
-        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        _ = setsockopt(socketDescriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
         var local = sockaddr_in()
         local.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -333,7 +329,7 @@ enum SonosSSDP {
         local.sin_addr = in_addr(s_addr: INADDR_ANY)
         let bound = withUnsafePointer(to: &local) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                bind(socketDescriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
         guard bound == 0 else { throw SonosError.discoveryUnavailable }
@@ -343,13 +339,21 @@ enum SonosSSDP {
         target.sin_family = sa_family_t(AF_INET)
         target.sin_port = UInt16(1900).bigEndian
         _ = "239.255.255.250".withCString { inet_pton(AF_INET, $0, &target.sin_addr) }
-        let query = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: urn:schemas-upnp-org:device:ZonePlayer:1\r\n\r\n"
+        let query = [
+            "M-SEARCH * HTTP/1.1",
+            "HOST: 239.255.255.250:1900",
+            "MAN: \"ssdp:discover\"",
+            "MX: 2",
+            "ST: urn:schemas-upnp-org:device:ZonePlayer:1",
+            "",
+            ""
+        ].joined(separator: "\r\n")
         let destination = target
         func sendQuery() -> Bool {
             query.utf8CString.withUnsafeBytes { bytes in
                 withUnsafePointer(to: destination) {
                     $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                        sendto(fd, bytes.baseAddress, bytes.count - 1, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                        sendto(socketDescriptor, bytes.baseAddress, bytes.count - 1, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
                     }
                 }
             } >= 0
@@ -368,7 +372,7 @@ enum SonosSSDP {
             let count = buffer.withUnsafeMutableBytes { bytes in
                 withUnsafeMutablePointer(to: &source) {
                     $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                        recvfrom(fd, bytes.baseAddress, bytes.count, 0, $0, &sourceLength)
+                        recvfrom(socketDescriptor, bytes.baseAddress, bytes.count, 0, $0, &sourceLength)
                     }
                 }
             }
@@ -378,11 +382,11 @@ enum SonosSSDP {
                     var address = ipv4.pointee.sin_addr
                     var chars = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
                     _ = inet_ntop(AF_INET, &address, &chars, socklen_t(chars.count))
-                    return String(decoding: chars.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+                    return String(bytes: chars.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, encoding: .utf8) ?? ""
                 }
             }
-            let message = String(decoding: buffer.prefix(count), as: UTF8.self)
-            if let result = parseResponse(message, from: host) {
+            if let message = String(bytes: buffer.prefix(count), encoding: .utf8),
+               let result = parseResponse(message, from: host) {
                 results[result.location] = result
             }
         }
@@ -397,12 +401,17 @@ struct SonosXMLNode: Sendable {
     var text: String = ""
     var children: [SonosXMLNode] = []
 
+    /// Whether the element is called `target` once its namespace prefix is dropped.
+    private func isNamed(_ target: String) -> Bool {
+        name.split(separator: ":").last == Substring(target)
+    }
+
     func child(named target: String) -> SonosXMLNode? {
-        children.first { $0.name.split(separator: ":").last == Substring(target) }
+        children.first { $0.isNamed(target) }
     }
 
     func firstDescendant(named target: String) -> SonosXMLNode? {
-        if name.split(separator: ":").last == Substring(target) { return self }
+        if isNamed(target) { return self }
         for child in children {
             if let found = child.firstDescendant(named: target) { return found }
         }
@@ -410,7 +419,7 @@ struct SonosXMLNode: Sendable {
     }
 
     func descendants(named target: String) -> [SonosXMLNode] {
-        var matches: [SonosXMLNode] = name.split(separator: ":").last == Substring(target) ? [self] : []
+        var matches: [SonosXMLNode] = isNamed(target) ? [self] : []
         for child in children { matches += child.descendants(named: target) }
         return matches
     }

@@ -12,16 +12,15 @@ extension AppCoordinator {
             // setting back on later picks up what changed in the meantime.
             coverArtCrawledServerKey = nil
         }
-        guard coverArtCrawlEnabled, isOnline, let serverKey else { return }
-        if !restart, coverArtCrawl != nil || coverArtCrawledServerKey == serverKey {
+        guard coverArtCrawlEnabled, isOnline, let session = currentSession else { return }
+        if !restart, coverArtCrawl != nil || coverArtCrawledServerKey == session.serverKey {
             return
         }
 
         let id = UUID()
-        let generation = sessionGeneration
         let task = Task(priority: .background) { [weak self] in
             guard let self else { return }
-            await self.crawlCoverArt(id: id, serverKey: serverKey, generation: generation, retryingRejectedCovers: restart)
+            await self.crawlCoverArt(id: id, session: session, retryingRejectedCovers: restart)
         }
         coverArtCrawl = (id, task)
     }
@@ -62,7 +61,8 @@ extension AppCoordinator {
         }
     }
 
-    private func crawlCoverArt(id: UUID, serverKey: String, generation: UInt, retryingRejectedCovers: Bool) async {
+    private func crawlCoverArt(id: UUID, session: SessionIdentity, retryingRejectedCovers: Bool) async {
+        let serverKey = session.serverKey
         defer {
             if coverArtCrawl?.id == id {
                 coverArtCrawl = nil
@@ -83,7 +83,7 @@ extension AppCoordinator {
         var outcome = CoverArtCrawlOutcome.finished
         var isIncomplete = false
         for start in stride(from: 0, to: total, by: batchSize) {
-            guard !Task.isCancelled, isCurrentSession(generation, serverKey: serverKey) else { return }
+            guard !Task.isCancelled, isCurrentSession(session) else { return }
             let resources = (start..<min(start + batchSize, total)).compactMap { index in
                 index < albums.count
                     ? coverArtResource(for: albums[index], size: gridCoverSize)
@@ -99,7 +99,7 @@ extension AppCoordinator {
 
         // A crawl that was canceled or replaced while its last batch returned
         // must not restore the marker its successor just cleared.
-        guard coverArtCrawl?.id == id, isCurrentSession(generation, serverKey: serverKey) else { return }
+        guard coverArtCrawl?.id == id, isCurrentSession(session) else { return }
         switch outcome {
         case .finished where isIncomplete, .incomplete:
             // Left unmarked so the next library refresh retries what is missing.

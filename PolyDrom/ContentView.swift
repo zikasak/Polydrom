@@ -169,30 +169,6 @@ struct ContentView: View {
     }
 }
 
-private extension LibraryRoute {
-    func identifiesPlaylist(_ id: String) -> Bool {
-        if case .playlist(let playlist) = self {
-            return playlist.id == id
-        }
-        return false
-    }
-
-    func identifiesSameDestination(as other: LibraryRoute) -> Bool {
-        switch (self, other) {
-        case (.album(let lhs), .album(let rhs)):
-            return lhs.id == rhs.id
-        case (.artist(let lhs), .artist(let rhs)):
-            return lhs.id == rhs.id
-        case (.genre(let lhs), .genre(let rhs)):
-            return lhs.id == rhs.id
-        case (.playlist(let lhs), .playlist(let rhs)):
-            return lhs.id == rhs.id
-        default:
-            return false
-        }
-    }
-}
-
 private struct OpenLibraryRouteKey: EnvironmentKey {
     static let defaultValue: @MainActor @Sendable (LibraryRoute) -> Void = { _ in }
 }

@@ -190,8 +190,9 @@ PolyDrom/
 ├── Persistence/     Core Data, server registry, credentials, playback state
 ├── Playback/        AVPlayer, Now Playing, and AirPlay integration
 ├── Services/        Navidrome API, synchronization, updates, cover art
-├── ViewModels/      Application and playlist coordination
-└── Views/           SwiftUI library, settings, and player views
+├── Support/         Logging, file locations, and formatting shared across layers
+├── ViewModels/      AppCoordinator, one file per concern (browsing, playback, favorites, playlists, Sonos, …)
+└── Views/           SwiftUI library, settings, and player views, plus the components they share
 PolyDromTests/       Unit, integration, persistence, and rendering tests
 PolyDromUITests/     End-to-end macOS UI tests
 Config/              Info.plist and sandbox entitlements

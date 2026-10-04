@@ -108,9 +108,7 @@ final class PlaybackReporter {
     }
 
     func finishForApplicationTermination(at date: Date = Date()) async {
-        if activeSession != nil {
-            finishActiveSession(at: date, naturalCompletion: false)
-        }
+        finishActiveSession(at: date, naturalCompletion: false)
 
         configuration = nil
         activeSession = nil
@@ -141,10 +139,9 @@ final class PlaybackReporter {
         }
     }
 
+    /// Ends whatever was being reported and starts reporting the event's song.
     private func startNewSession(for event: AudioPlaybackEvent) {
-        if activeSession != nil {
-            finishActiveSession(at: event.occurredAt, naturalCompletion: false)
-        }
+        finishActiveSession(at: event.occurredAt, naturalCompletion: false)
 
         activeSession = ActiveSession(
             song: event.snapshot.song,
@@ -160,15 +157,11 @@ final class PlaybackReporter {
     }
 
     private func resumeSession(for event: AudioPlaybackEvent) {
-        guard activeSession?.song.id == event.snapshot.song.id else {
-            if activeSession != nil {
-                finishActiveSession(at: event.occurredAt, naturalCompletion: false)
-            }
+        guard var session = currentSession(for: event) else {
             startNewSession(for: event)
             return
         }
 
-        guard var session = activeSession else { return }
         let wasPlaying = session.isPlaying
         update(&session, with: event.snapshot, at: event.occurredAt)
         if !wasPlaying {
@@ -179,8 +172,7 @@ final class PlaybackReporter {
     }
 
     private func pauseSession(for event: AudioPlaybackEvent) {
-        guard var session = activeSession,
-              session.song.id == event.snapshot.song.id else { return }
+        guard var session = currentSession(for: event) else { return }
         let wasPlaying = session.isPlaying
         update(&session, with: event.snapshot, at: event.occurredAt)
         if wasPlaying, configuration?.mode == .modern {
@@ -191,16 +183,13 @@ final class PlaybackReporter {
     }
 
     private func seekSession(for event: AudioPlaybackEvent) {
-        guard activeSession?.song.id == event.snapshot.song.id else {
-            guard event.snapshot.isPlaying else { return }
-            if activeSession != nil {
-                finishActiveSession(at: event.occurredAt, naturalCompletion: false)
+        guard var session = currentSession(for: event) else {
+            if event.snapshot.isPlaying {
+                startNewSession(for: event)
             }
-            startNewSession(for: event)
             return
         }
 
-        guard var session = activeSession else { return }
         update(&session, with: event.snapshot, at: event.occurredAt)
         switch configuration?.mode {
         case .modern:
@@ -219,16 +208,13 @@ final class PlaybackReporter {
     }
 
     private func updateProgress(for event: AudioPlaybackEvent) {
-        guard activeSession?.song.id == event.snapshot.song.id else {
-            guard event.snapshot.isPlaying else { return }
-            if activeSession != nil {
-                finishActiveSession(at: event.occurredAt, naturalCompletion: false)
+        guard var session = currentSession(for: event) else {
+            if event.snapshot.isPlaying {
+                startNewSession(for: event)
             }
-            startNewSession(for: event)
             return
         }
 
-        guard var session = activeSession else { return }
         let wasPlaying = session.isPlaying
         update(&session, with: event.snapshot, at: event.occurredAt)
 
@@ -247,11 +233,16 @@ final class PlaybackReporter {
     }
 
     private func finishSession(for event: AudioPlaybackEvent, naturalCompletion: Bool) {
-        guard var session = activeSession,
-              session.song.id == event.snapshot.song.id else { return }
+        guard var session = currentSession(for: event) else { return }
         update(&session, with: event.snapshot, at: event.occurredAt)
         activeSession = session
         finishActiveSession(at: event.occurredAt, naturalCompletion: naturalCompletion)
+    }
+
+    /// The session being reported, if the event is about the same song.
+    private func currentSession(for event: AudioPlaybackEvent) -> ActiveSession? {
+        guard let activeSession, activeSession.song.id == event.snapshot.song.id else { return nil }
+        return activeSession
     }
 
     private func finishActiveSession(at date: Date, naturalCompletion: Bool) {
@@ -274,15 +265,10 @@ final class PlaybackReporter {
 
     private func reportSessionStart(at date: Date) {
         guard var session = activeSession else { return }
-        switch configuration?.mode {
-        case .modern:
+        if configuration?.mode == .modern {
             reportModern(.starting, session: &session, at: date)
-            reportModern(.playing, session: &session, at: date)
-        case .legacy:
-            reportLegacyNowPlaying(session: &session, at: date)
-        case .none:
-            break
         }
+        reportPlaying(&session, at: date)
         activeSession = session
     }
 

@@ -45,15 +45,7 @@ struct GenreDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(genre.name)
-                    .font(.title2)
-                    .fontWeight(.semibold)
-
-                Text(genre.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+            LibraryDetailHeader(title: genre.name, subtitle: genre.subtitle)
 
             SongListView(
                 title: "Songs",

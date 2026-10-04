@@ -178,11 +178,7 @@ final class LibrarySyncCoordinator {
                     albums: albums,
                     songs: songs,
                     playlists: playlistSnapshots,
-                    favorites: FavoriteMetadata(
-                        artistIDs: Set(starred.artists.map(\.id)),
-                        albumIDs: Set(starred.albums.map(\.id)),
-                        songIDs: Set(starred.songs.map(\.id))
-                    ),
+                    favorites: FavoriteMetadata(starred: starred),
                     catalogToken: finalChangeState.token,
                     checkedAt: Date()
                 ),
@@ -214,11 +210,7 @@ final class LibrarySyncCoordinator {
         let didChange = try await store.applyUserMetadata(
             playlists: playlists,
             refreshedPlaylists: refreshed,
-            favorites: FavoriteMetadata(
-                artistIDs: Set(starred.artists.map(\.id)),
-                albumIDs: Set(starred.albums.map(\.id)),
-                songIDs: Set(starred.songs.map(\.id))
-            ),
+            favorites: FavoriteMetadata(starred: starred),
             serverKey: serverKey,
             checkedAt: Date()
         )

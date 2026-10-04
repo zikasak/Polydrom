@@ -175,9 +175,7 @@ final class ServerRegistry {
     }
 
     private static func defaultFileURL() -> URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("PolyDrom", isDirectory: true)
-            .appendingPathComponent("servers.json")
+        AppDirectories.applicationSupport?.appendingPathComponent("servers.json")
     }
 }
 

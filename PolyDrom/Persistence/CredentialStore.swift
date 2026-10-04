@@ -103,9 +103,7 @@ struct FileCredentialStore: CredentialStoring {
     }
 
     static func defaultFileURL(named fileName: String) -> URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("PolyDrom", isDirectory: true)
-            .appendingPathComponent(fileName)
+        AppDirectories.applicationSupport?.appendingPathComponent(fileName)
     }
 
     private func read() throws -> [String: String] {
