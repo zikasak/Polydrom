@@ -87,7 +87,7 @@ struct LibrarySyncCoordinatorTests {
                 }
                 let offset = Int(queryValue("songOffset", in: request) ?? "") ?? 0
                 requestedOffsets.withLock { $0.append(offset) }
-                let songs = (offset..<min(offset + 10, songCount)).map {
+                let songs = (min(offset, songCount)..<min(offset + 10, songCount)).map {
                     #"{"id":"song-\#($0)","title":"Song \#($0)","albumId":"album"}"#
                 }
                 return envelope(#"{"status":"ok","searchResult3":{"song":[\#(songs.joined(separator: ","))]}}"#)
