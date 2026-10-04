@@ -5,12 +5,15 @@ extension AppCoordinator {
     /// Downloads grid-size album and artist covers in the background so the
     /// browsers never wait on the network. Larger artwork stays on demand.
     func startCoverArtCrawl(restart: Bool) {
-        guard coverArtCrawlEnabled, isOnline, let serverKey else { return }
         if restart {
             cancelCoverArtCrawl()
             // Only the restarted crawl's own result may mark the server done.
+            // This holds even when no crawl can start right now, so turning the
+            // setting back on later picks up what changed in the meantime.
             coverArtCrawledServerKey = nil
-        } else if coverArtCrawl != nil || coverArtCrawledServerKey == serverKey {
+        }
+        guard coverArtCrawlEnabled, isOnline, let serverKey else { return }
+        if !restart, coverArtCrawl != nil || coverArtCrawledServerKey == serverKey {
             return
         }
 
@@ -43,7 +46,6 @@ extension AppCoordinator {
             await refreshCoverArtCacheSize()
             // A crawl that stopped at the old limit may have room to continue. One
             // still running may be about to stop for that limit, so it starts over.
-            coverArtCrawledServerKey = nil
             startCoverArtCrawl(restart: true)
         }
     }
@@ -90,7 +92,9 @@ extension AppCoordinator {
             guard outcome == .finished else { break }
         }
 
-        guard isCurrentSession(generation, serverKey: serverKey) else { return }
+        // A crawl that was canceled or replaced while its last batch returned
+        // must not restore the marker its successor just cleared.
+        guard coverArtCrawl?.id == id, isCurrentSession(generation, serverKey: serverKey) else { return }
         switch outcome {
         case .finished where isIncomplete, .incomplete:
             // Left unmarked so the next library refresh retries what is missing.
