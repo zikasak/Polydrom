@@ -75,22 +75,43 @@ struct LibrarySyncCoordinatorTests {
     }
 
     @Test func largeCatalogPagesAreRequestedConcurrentlyAndKeptInOrder() async throws {
-        let songCount = 35
-        let requestedOffsets = Mutex<[Int]>([])
+        struct RequestState: Sendable {
+            var songOffsets: [Int] = []
+            var inFlight = 0
+            var maxInFlight = 0
+        }
+        let itemCount = 35
+        let state = Mutex(RequestState())
         let handler: StubURLProtocol.Handler = { request in
             switch apiMethod(in: request) {
             case "getScanStatus":
                 return envelope(#"{"status":"ok","scanStatus":{"scanning":false,"lastScan":"scan"}}"#)
             case "search3":
-                guard queryValue("songCount", in: request) == "10" else {
-                    return envelope(#"{"status":"ok","searchResult3":{}}"#)
+                state.withLock {
+                    $0.inFlight += 1
+                    $0.maxInFlight = max($0.maxInFlight, $0.inFlight)
                 }
-                let offset = Int(queryValue("songOffset", in: request) ?? "") ?? 0
-                requestedOffsets.withLock { $0.append(offset) }
-                let songs = (min(offset, songCount)..<min(offset + 10, songCount)).map {
-                    #"{"id":"song-\#($0)","title":"Song \#($0)","albumId":"album"}"#
+                defer { state.withLock { $0.inFlight -= 1 } }
+                Thread.sleep(forTimeInterval: 0.02)
+
+                let kind: String
+                let item: @Sendable (Int) -> String
+                if queryValue("artistCount", in: request) != "0" {
+                    kind = "artist"
+                    item = { #"{"id":"artist-\#($0)","name":"Artist \#($0)","albumCount":1}"# }
+                } else if queryValue("albumCount", in: request) != "0" {
+                    kind = "album"
+                    item = { #"{"id":"album-\#($0)","name":"Album \#($0)"}"# }
+                } else {
+                    kind = "song"
+                    item = { #"{"id":"song-\#($0)","title":"Song \#($0)","albumId":"album-0"}"# }
                 }
-                return envelope(#"{"status":"ok","searchResult3":{"song":[\#(songs.joined(separator: ","))]}}"#)
+                let offset = Int(queryValue("\(kind)Offset", in: request) ?? "") ?? 0
+                if kind == "song" {
+                    state.withLock { $0.songOffsets.append(offset) }
+                }
+                let items = (min(offset, itemCount)..<min(offset + 10, itemCount)).map(item)
+                return envelope(#"{"status":"ok","searchResult3":{"\#(kind)":[\#(items.joined(separator: ","))]}}"#)
             case "getPlaylists":
                 return envelope(#"{"status":"ok","playlists":{"playlist":[]}}"#)
             case "getStarred2":
@@ -110,10 +131,14 @@ struct LibrarySyncCoordinatorTests {
 
         #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .full)
         // One probe page, then a single wave of four that reaches the end of the catalog.
-        #expect(requestedOffsets.withLock { $0.sorted() } == [0, 10, 20, 30, 40])
-        let songIDs = try await store.songs(serverKey: "server", albumID: "album").map(\.id)
-        #expect(Set(songIDs) == Set((0..<songCount).map { "song-\($0)" }))
-        #expect(songIDs.count == songCount)
+        #expect(state.withLock { $0.songOffsets.sorted() } == [0, 10, 20, 30, 40])
+        // Artists, albums and songs page side by side but share one request cap.
+        #expect(state.withLock { $0.maxInFlight } <= 4)
+        let songIDs = try await store.songs(serverKey: "server", albumID: "album-0").map(\.id)
+        #expect(Set(songIDs) == Set((0..<itemCount).map { "song-\($0)" }))
+        #expect(songIDs.count == itemCount)
+        #expect(try await store.artists(serverKey: "server").count == itemCount)
+        #expect(try await store.albums(serverKey: "server").count == itemCount)
     }
 
     @Test func scanInProgressDefersWithoutMutatingTheExistingSnapshot() async throws {

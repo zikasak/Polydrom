@@ -20,6 +20,50 @@ enum LibrarySyncError: LocalizedError {
     }
 }
 
+/// Caps the requests one synchronization has in flight. The catalog loaders run
+/// side by side, so the cap has to be shared rather than applied per loader.
+private actor RequestLimiter {
+    private var available: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(limit: Int) {
+        available = limit
+    }
+
+    nonisolated func run<Value: Sendable>(
+        _ operation: @Sendable () async throws -> Value
+    ) async throws -> Value {
+        await acquire()
+        do {
+            // Waiting is not interrupted by cancellation; slots free up quickly
+            // because canceled requests fail fast, and the check happens here.
+            try Task.checkCancellation()
+            let value = try await operation()
+            await release()
+            return value
+        } catch {
+            await release()
+            throw error
+        }
+    }
+
+    private func acquire() async {
+        if available > 0 {
+            available -= 1
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    private func release() {
+        if waiters.isEmpty {
+            available += 1
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
 @MainActor
 final class LibrarySyncCoordinator {
     private let store: LibraryStore
@@ -86,8 +130,9 @@ final class LibrarySyncCoordinator {
             return .deferredForScan
         }
 
-        async let playlistsRequest = client.playlists()
-        async let starredRequest = client.starredItems()
+        let limiter = RequestLimiter(limit: maxConcurrentRequests)
+        async let playlistsRequest = limiter.run { try await client.playlists() }
+        async let starredRequest = limiter.run { try await client.starredItems() }
         let syncState = try await store.metadataSyncState(serverKey: serverKey)
         let requiresFullCatalog = !syncState.isComplete
             || syncState.requiresCatalogUpgrade
@@ -96,9 +141,9 @@ final class LibrarySyncCoordinator {
 
         if requiresFullCatalog {
             AppLog.sync.info("Performing full catalog sync")
-            async let artistsRequest = loadAllArtists(client: client)
-            async let albumsRequest = loadAllAlbums(client: client)
-            async let songsRequest = loadAllSongs(client: client)
+            async let artistsRequest = loadAllArtists(client: client, limiter: limiter)
+            async let albumsRequest = loadAllAlbums(client: client, limiter: limiter)
+            async let songsRequest = loadAllSongs(client: client, limiter: limiter)
 
             let (loadedArtists, loadedAlbums, loadedSongs, playlists, starred) = try await (
                 artistsRequest,
@@ -107,7 +152,7 @@ final class LibrarySyncCoordinator {
                 playlistsRequest,
                 starredRequest
             )
-            let playlistSnapshots = try await loadPlaylistSnapshots(playlists, client: client)
+            let playlistSnapshots = try await loadPlaylistSnapshots(playlists, client: client, limiter: limiter)
             let finalChangeState = try await client.catalogChangeState()
 
             guard !finalChangeState.isScanning, finalChangeState.token == changeState.token else {
@@ -164,7 +209,7 @@ final class LibrarySyncCoordinator {
         AppLog.sync.info(
             "Metadata-only sync: \(playlists.count, privacy: .public) playlists, \(changedPlaylists.count, privacy: .public) changed"
         )
-        let refreshed = try await loadPlaylistSnapshots(changedPlaylists, client: client)
+        let refreshed = try await loadPlaylistSnapshots(changedPlaylists, client: client, limiter: limiter)
         try Task.checkCancellation()
         let didChange = try await store.applyUserMetadata(
             playlists: playlists,
@@ -187,20 +232,20 @@ final class LibrarySyncCoordinator {
         return values
     }
 
-    private func loadAllArtists(client: NavidromeClient) async throws -> [NavidromeArtist] {
-        try await loadAllPages("artist") { [pageSize] offset in
+    private func loadAllArtists(client: NavidromeClient, limiter: RequestLimiter) async throws -> [NavidromeArtist] {
+        try await loadAllPages("artist", limiter: limiter) { [pageSize] offset in
             try await client.artistPage(size: pageSize, offset: offset)
         }
     }
 
-    private func loadAllAlbums(client: NavidromeClient) async throws -> [NavidromeAlbum] {
-        try await loadAllPages("album") { [pageSize] offset in
+    private func loadAllAlbums(client: NavidromeClient, limiter: RequestLimiter) async throws -> [NavidromeAlbum] {
+        try await loadAllPages("album", limiter: limiter) { [pageSize] offset in
             try await client.albumMetadataPage(size: pageSize, offset: offset)
         }
     }
 
-    private func loadAllSongs(client: NavidromeClient) async throws -> [NavidromeSong] {
-        try await loadAllPages("song") { [pageSize] offset in
+    private func loadAllSongs(client: NavidromeClient, limiter: RequestLimiter) async throws -> [NavidromeSong] {
+        try await loadAllPages("song", limiter: limiter) { [pageSize] offset in
             try await client.songMetadataPage(size: pageSize, offset: offset)
         }
     }
@@ -208,8 +253,10 @@ final class LibrarySyncCoordinator {
     /// Downloads every page of a catalog listing. The first page is requested on
     /// its own so a small library costs one request; a full first page switches to
     /// waves of concurrent requests, which is what keeps large libraries fast.
+    /// The limiter keeps the total across all loaders within the configured cap.
     private func loadAllPages<Value: Identifiable & Sendable>(
         _ kind: String,
+        limiter: RequestLimiter,
         fetchPage: @escaping @Sendable (_ offset: Int) async throws -> [Value]
     ) async throws -> [Value] where Value.ID == String {
         var values: [Value] = []
@@ -224,7 +271,9 @@ final class LibrarySyncCoordinator {
                 returning: [(offset: Int, page: [Value])].self
             ) { group in
                 for offset in offsets {
-                    group.addTask { (offset, try await fetchPage(offset)) }
+                    group.addTask {
+                        (offset, try await limiter.run { try await fetchPage(offset) })
+                    }
                 }
                 var pages: [(offset: Int, page: [Value])] = []
                 for try await page in group {
@@ -247,7 +296,8 @@ final class LibrarySyncCoordinator {
 
     private func loadPlaylistSnapshots(
         _ playlists: [NavidromePlaylist],
-        client: NavidromeClient
+        client: NavidromeClient,
+        limiter: RequestLimiter
     ) async throws -> [PlaylistMetadataSnapshot] {
         guard !playlists.isEmpty else { return [] }
         try Task.checkCancellation()
@@ -262,7 +312,8 @@ final class LibrarySyncCoordinator {
                     snapshots[loaded.index] = loaded.snapshot
                 }
                 group.addTask {
-                    (index, PlaylistMetadataSnapshot(playlist: playlist, songs: try await client.songs(for: playlist)))
+                    let songs = try await limiter.run { try await client.songs(for: playlist) }
+                    return (index, PlaylistMetadataSnapshot(playlist: playlist, songs: songs))
                 }
             }
             for try await loaded in group {
