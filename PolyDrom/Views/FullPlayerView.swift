@@ -534,7 +534,7 @@ enum PlayerDetailPanel: Equatable {
 
 struct PlayerQueueView: View {
     @ObservedObject var viewModel: AppCoordinator
-    @State private var isScrolling = false
+    @State private var scrollActivity = LibraryScrollActivity()
     // Mirrors only the player state the queue shows. Observing the player itself
     // would rebuild every visible queue row on each playback-time tick.
     @State private var hasCurrentSong: Bool
@@ -610,9 +610,9 @@ struct PlayerQueueView: View {
                         scrollToCurrentEntry(with: proxy, animated: true)
                     }
                     .onScrollPhaseChange { _, newPhase in
-                        isScrolling = newPhase.isScrolling
+                        scrollActivity.isScrolling = newPhase.isScrolling
                     }
-                    .environment(\.libraryGridIsScrolling, isScrolling)
+                    .environment(scrollActivity)
                 }
             }
         }
