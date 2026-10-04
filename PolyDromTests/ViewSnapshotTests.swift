@@ -149,13 +149,45 @@ struct ViewSnapshotIntegrationTests {
         let (viewModel, _, _) = makeViewModel()
         var coordinatorEvents = 0
         var playerEvents = 0
-        let coordinatorSubscription = viewModel.objectWillChange.sink { coordinatorEvents += 1 }
-        let playerSubscription = viewModel.audioPlayer.objectWillChange.sink { playerEvents += 1 }
+        let previousStatus = viewModel.statusMessage
+        let previousTime = viewModel.audioPlayer.currentTime
+        var statusAtNotification: String?
+        var timeAtNotification: Double?
+        var publishedTimes: [Double] = []
+        let coordinatorSubscription = viewModel.objectWillChange.sink {
+            coordinatorEvents += 1
+            statusAtNotification = viewModel.statusMessage
+        }
+        let playerSubscription = viewModel.audioPlayer.objectWillChange.sink {
+            playerEvents += 1
+            timeAtNotification = viewModel.audioPlayer.currentTime
+        }
+        let timeSubscription = viewModel.audioPlayer.$currentTime.dropFirst().sink {
+            publishedTimes.append($0)
+        }
         viewModel.statusMessage = "Changed"
         viewModel.audioPlayer.currentTime = 5
         #expect(coordinatorEvents == 1)
         #expect(playerEvents == 1)
-        withExtendedLifetime((coordinatorSubscription, playerSubscription)) {}
+        #expect(statusAtNotification == previousStatus)
+        #expect(timeAtNotification == previousTime)
+        #expect(publishedTimes == [5])
+        withExtendedLifetime((coordinatorSubscription, playerSubscription, timeSubscription)) {}
+    }
+
+    @Test func explicitPublisherReceivesCollectionAndDerivedStateMutations() {
+        let (viewModel, _, _) = makeViewModel()
+        var events = 0
+        let subscription = viewModel.objectWillChange.sink { events += 1 }
+        viewModel.albumSongs.append(makeSong())
+        #expect(events == 1)
+        #expect(viewModel.albumSongsSnapshot.songs.count == 1)
+        viewModel.favoriteAlbumIDs.insert("album")
+        #expect(events == 2)
+        viewModel.isOnline = true
+        #expect(events == 3)
+        #expect(viewModel.playlistMenuState.canCreatePlaylist)
+        withExtendedLifetime(subscription) {}
     }
 
     @Test func stalePlaylistSelectionCannotRemoveAnotherSong() async {

@@ -25,14 +25,30 @@ enum SonosPlaybackCommand {
 
 @MainActor
 final class AudioPlayer: ObservableObject {
+    // A stored publisher bypasses Combine's synthesized wiring; each published
+    // property explicitly notifies it before mutation.
     let objectWillChange = ObservableObjectPublisher()
-    @Published var currentSong: NavidromeSong?
-    @Published var isPlaying = false
-    @Published var statusMessage = "Nothing playing"
-    @Published var currentTime: Double = 0
-    @Published var duration: Double = 0
-    @Published var volume: Double = 1
-    @Published private(set) var route: PlaybackRoute = .local
+    @Published var currentSong: NavidromeSong? {
+        willSet { objectWillChange.send() }
+    }
+    @Published var isPlaying = false {
+        willSet { objectWillChange.send() }
+    }
+    @Published var statusMessage = "Nothing playing" {
+        willSet { objectWillChange.send() }
+    }
+    @Published var currentTime: Double = 0 {
+        willSet { objectWillChange.send() }
+    }
+    @Published var duration: Double = 0 {
+        willSet { objectWillChange.send() }
+    }
+    @Published var volume: Double = 1 {
+        willSet { objectWillChange.send() }
+    }
+    @Published private(set) var route: PlaybackRoute = .local {
+        willSet { objectWillChange.send() }
+    }
 
     let player: AVPlayer
     let airPlayRoutePickerController: AirPlayRoutePickerController
