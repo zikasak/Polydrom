@@ -115,6 +115,28 @@ struct CoverArtCacheTests {
         #expect(requests == 1)
     }
 
+    @Test func serverErrorBodyIsNotCached() async throws {
+        let errorBody = Data(
+            #"<subsonic-response status="failed"><error code="40" message="Wrong username or password"/></subsonic-response>"#.utf8
+        )
+        let lock = NSLock()
+        nonisolated(unsafe) var body = errorBody
+        let handler: StubURLProtocol.Handler = { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "application/xml"], data: lock.withLock { body })
+        }
+        let session = StubURLProtocol.session(handler: handler)
+        let directory = try temporaryDirectory()
+        let cache = CoverArtCache(session: session, diskDirectory: directory)
+        let resource = CoverArtResource(cacheKey: "rejected", url: URL(string: "https://art.example/rejected")!)
+
+        await #expect(throws: NavidromeError.self) { try await cache.data(for: resource) }
+        #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty)
+
+        // Once the server accepts the request, the same cover loads normally.
+        lock.withLock { body = onePixelPNG }
+        #expect(try await cache.image(for: resource).width == 1)
+    }
+
     @Test func invalidImageAndHTTPFailuresSurfaceUsefulErrors() async throws {
         let invalid = CoverArtResource(cacheKey: "invalid", url: URL(string: "https://art.example/invalid")!)
 

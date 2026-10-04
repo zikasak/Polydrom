@@ -254,6 +254,10 @@ actor CoverArtCache {
                     throw NavidromeError.server(message: "HTTP \(httpResponse.statusCode)")
                 }
 
+                // Subsonic reports failures such as rejected credentials as an
+                // HTTP 200 error document, which must never be cached as art.
+                guard Self.isImageData(data) else { throw Self.invalidImageError }
+
                 return data
             }
             inFlightRequests[resource.cacheKey] = InFlightRequest(
@@ -511,6 +515,15 @@ actor CoverArtCache {
         return nil
     }
 
+    private static let invalidImageError = NavidromeError.server(message: "The cover art is not a valid image.")
+
+    /// Checks the container header only, so it is cheap enough to run on every
+    /// download.
+    private static func isImageData(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
+        return CGImageSourceGetType(source) != nil
+    }
+
     private func decode(_ data: Data) async throws -> CGImage {
         try await decodePermits.acquire()
 
@@ -522,7 +535,7 @@ actor CoverArtCache {
                           0,
                           [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
                       ) else {
-                    throw NavidromeError.server(message: "The cover art is not a valid image.")
+                    throw Self.invalidImageError
                 }
                 return image
             }.value
