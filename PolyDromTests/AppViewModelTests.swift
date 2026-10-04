@@ -58,6 +58,60 @@ struct AppCoordinatorTests {
         ])
     }
 
+    @Test(arguments: [true, false])
+    func libraryRefreshCrawlsGridCoversOnlyWhileTheSettingIsEnabled(crawlEnabled: Bool) async throws {
+        let coverRequests = Mutex<Set<String>>([])
+        let handler: StubURLProtocol.Handler = { request in
+            switch apiMethod(in: request) {
+            case "getCoverArt":
+                let id = queryValue("id", in: request) ?? ""
+                let size = queryValue("size", in: request) ?? ""
+                coverRequests.withLock { _ = $0.insert("\(id)@\(size)") }
+                return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+            case "getScanStatus":
+                return envelope(#"{"status":"ok","scanStatus":{"scanning":false,"lastScan":"scan"}}"#)
+            default:
+                return envelope(#"{"status":"ok"}"#)
+            }
+        }
+        let userDefaults = temporaryUserDefaults()
+        let session = StubURLProtocol.session(handler: handler)
+        let (settings, _, _) = makeViewModel(userDefaults: userDefaults)
+        #expect(settings.coverArtCrawlEnabled)
+        #expect(settings.coverArtCacheLimit == .megabytes500)
+        settings.coverArtCrawlEnabled = crawlEnabled
+        settings.coverArtCacheLimit = .gigabytes1
+
+        let (viewModel, store, _) = makeViewModel(session: session, userDefaults: userDefaults)
+        #expect(viewModel.coverArtCrawlEnabled == crawlEnabled)
+        #expect(viewModel.coverArtCacheLimit == .gigabytes1)
+        let profile = makeProfile()
+        // Artists that are not favorites are never prefetched on connect, so a
+        // request for this cover can only come from the crawl.
+        let artist = NavidromeArtist(id: "artist", name: "Artist", albumCount: 1)
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [artist],
+                albums: [NavidromeAlbum(id: "album", name: "Album", artist: artist.name, artistId: artist.id)],
+                songs: [],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "scan",
+                checkedAt: Date()
+            ),
+            serverKey: profile.serverKey
+        )
+
+        await viewModel.connect(profile)
+        await viewModel.refreshMetadata()
+
+        let crawledArtist = await eventually(timeout: crawlEnabled ? .seconds(5) : .milliseconds(500)) {
+            coverRequests.withLock { $0.contains("artist@220") }
+        }
+        #expect(crawledArtist == crawlEnabled)
+        #expect(coverRequests.withLock { $0.allSatisfy { !$0.hasSuffix("@500") && !$0.hasSuffix("@900") } })
+    }
+
     @Test func selectedVolumePersistsAcrossCoordinatorRecreation() {
         let suiteName = "SelectedVolumeTests.\(UUID().uuidString)"
         let userDefaults = UserDefaults(suiteName: suiteName)!

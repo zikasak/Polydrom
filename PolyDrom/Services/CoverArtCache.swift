@@ -8,6 +8,7 @@
 import CryptoKit
 import Foundation
 import ImageIO
+import OSLog
 
 private actor AsyncPermitPool {
     private let limit: Int
@@ -164,6 +165,36 @@ struct CoverArtResource: Hashable {
     }
 }
 
+enum CoverArtCrawlOutcome: Equatable, Sendable {
+    case finished
+    /// The disk cache reached its limit; crawling further would only evict art.
+    case cacheFull
+    /// Too many downloads failed in a row, e.g. because the server went offline.
+    case failing
+    case cancelled
+}
+
+enum CoverArtCacheLimit: Int, CaseIterable, Identifiable, Sendable {
+    case megabytes100 = 100
+    case megabytes250 = 250
+    case megabytes500 = 500
+    case gigabytes1 = 1_024
+    case gigabytes2 = 2_048
+    case gigabytes5 = 5_120
+
+    static let `default` = CoverArtCacheLimit.megabytes500
+
+    var id: Self { self }
+
+    var bytes: Int {
+        rawValue * 1024 * 1024
+    }
+
+    var title: String {
+        rawValue < 1_024 ? "\(rawValue) MB" : "\(rawValue / 1_024) GB"
+    }
+}
+
 actor CoverArtCache {
     static let shared = CoverArtCache()
 
@@ -177,6 +208,13 @@ actor CoverArtCache {
         var consumers: Set<UUID>
     }
 
+    private struct DiskEntry {
+        var size: Int
+        var lastAccess: Date
+    }
+
+    private struct DiskCacheFullError: Error {}
+
     private let memoryCache = NSCache<NSString, NSData>()
     nonisolated private let decodedImageCache = DecodedCoverArtCache()
     private let diskDirectory: URL
@@ -186,8 +224,19 @@ actor CoverArtCache {
     private var inFlightRequests: [String: InFlightRequest] = [:]
     private var inFlightImageRequests: [String: InFlightImageRequest] = [:]
     private var cacheGeneration: UInt = 0
+    /// Files in the disk directory by name, loaded on first use. The last access
+    /// is mirrored to each file's modification date so it survives relaunches.
+    private var diskEntries: [String: DiskEntry]?
+    private var diskUsage = 0
+    private var diskLimit: Int
+    /// On-screen and prefetch downloads that have not finished yet. The crawl
+    /// starts nothing new while this is above zero.
+    private var foregroundRequestCount = 0
+    private var crawlFailedKeys = Set<String>()
+    private let crawlFailureLimit = 8
 
-    init(session: URLSession? = nil, diskDirectory: URL? = nil) {
+    init(session: URLSession? = nil, diskDirectory: URL? = nil, diskLimit: Int = CoverArtCacheLimit.default.bytes) {
+        self.diskLimit = max(0, diskLimit)
         memoryCache.countLimit = 4_000
         memoryCache.totalCostLimit = 100 * 1024 * 1024
         if let session {
@@ -211,6 +260,10 @@ actor CoverArtCache {
     }
 
     func data(for resource: CoverArtResource) async throws -> Data {
+        try await data(for: resource, isCrawl: false)
+    }
+
+    private func data(for resource: CoverArtResource, isCrawl: Bool) async throws -> Data {
         try Task.checkCancellation()
 
         let key = resource.cacheKey as NSString
@@ -219,6 +272,15 @@ actor CoverArtCache {
         if let cachedData = cachedData(for: resource) {
             memoryCache.setObject(cachedData as NSData, forKey: key, cost: cachedData.count)
             return cachedData
+        }
+
+        if !isCrawl {
+            foregroundRequestCount += 1
+        }
+        defer {
+            if !isCrawl {
+                foregroundRequestCount -= 1
+            }
         }
 
         let consumerID = UUID()
@@ -233,7 +295,11 @@ actor CoverArtCache {
             let session = session
             let requestPermits = requestPermits
             task = Task<Data, Error> {
-                try await requestPermits.acquire()
+                // The crawl is already limited by its own concurrency and must
+                // not hold permits that on-screen loads are waiting for.
+                if !isCrawl {
+                    try await requestPermits.acquire()
+                }
 
                 let result: (Data, URLResponse)
                 do {
@@ -241,11 +307,18 @@ actor CoverArtCache {
                     var request = URLRequest(url: resource.url)
                     request.cachePolicy = .reloadIgnoringLocalCacheData
                     request.timeoutInterval = 30
+                    if isCrawl {
+                        request.networkServiceType = .background
+                    }
 
                     result = try await session.data(for: request)
-                    await requestPermits.release()
+                    if !isCrawl {
+                        await requestPermits.release()
+                    }
                 } catch {
-                    await requestPermits.release()
+                    if !isCrawl {
+                        await requestPermits.release()
+                    }
                     throw error
                 }
 
@@ -272,8 +345,16 @@ actor CoverArtCache {
                 try Task.checkCancellation()
                 releaseConsumer(consumerID, forKey: resource.cacheKey, cancelIfUnused: false)
                 if requestGeneration == cacheGeneration {
-                    try? data.write(to: destinationURL, options: .atomic)
-                    memoryCache.setObject(data as NSData, forKey: key, cost: data.count)
+                    if isCrawl {
+                        // Crawled art stays on disk only, and never pushes out
+                        // covers the user has actually looked at.
+                        guard storeOnDisk(data, at: destinationURL, evicting: false) else {
+                            throw DiskCacheFullError()
+                        }
+                    } else {
+                        storeOnDisk(data, at: destinationURL, evicting: true)
+                        memoryCache.setObject(data as NSData, forKey: key, cost: data.count)
+                    }
                 }
                 return data
             } catch {
@@ -371,6 +452,9 @@ actor CoverArtCache {
         inFlightImageRequests.removeAll()
         memoryCache.removeAllObjects()
         decodedImageCache.removeAll()
+        crawlFailedKeys.removeAll()
+        diskEntries = [:]
+        diskUsage = 0
 
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: diskDirectory.path) {
@@ -456,6 +540,165 @@ actor CoverArtCache {
         }
     }
 
+    /// Downloads the given covers to disk without decoding them, skipping any
+    /// that are already stored. New downloads wait while on-screen requests are
+    /// pending, so the crawl only uses the connection when nothing else needs it.
+    func crawl(_ resources: [CoverArtResource], maxConcurrentRequests: Int = 2) async -> CoverArtCrawlOutcome {
+        var seenKeys = Set<String>()
+        let missingResources = resources.filter {
+            seenKeys.insert($0.cacheKey).inserted
+                && !crawlFailedKeys.contains($0.cacheKey)
+                && !hasDiskData(forKey: $0.cacheKey)
+        }
+        let limit = max(1, maxConcurrentRequests)
+
+        return await withTaskGroup(of: CoverArtCrawlOutcome?.self) { group in
+            var iterator = missingResources.makeIterator()
+            var consecutiveFailures = 0
+
+            for _ in 0..<limit {
+                guard let resource = iterator.next() else { break }
+                group.addTask { await self.crawlDownload(resource) }
+            }
+
+            while let result = await group.next() {
+                if Task.isCancelled {
+                    group.cancelAll()
+                    return .cancelled
+                }
+
+                switch result {
+                case .finished:
+                    consecutiveFailures = 0
+                case .failing:
+                    consecutiveFailures += 1
+                    if consecutiveFailures >= crawlFailureLimit {
+                        group.cancelAll()
+                        return .failing
+                    }
+                case .cacheFull:
+                    group.cancelAll()
+                    return .cacheFull
+                case .cancelled, nil:
+                    break
+                }
+
+                guard let resource = iterator.next() else { continue }
+                group.addTask { await self.crawlDownload(resource) }
+            }
+
+            return Task.isCancelled ? .cancelled : .finished
+        }
+    }
+
+    /// The size of the cover art stored on disk, in bytes.
+    func diskUsageBytes() -> Int {
+        loadDiskEntriesIfNeeded()
+        return diskUsage
+    }
+
+    func setDiskLimit(_ bytes: Int) {
+        diskLimit = max(0, bytes)
+        loadDiskEntriesIfNeeded()
+        evictDiskEntriesIfNeeded()
+    }
+
+    /// Returns `nil` when the download was dropped by a cache clear, which says
+    /// nothing about whether the server is reachable.
+    private func crawlDownload(_ resource: CoverArtResource) async -> CoverArtCrawlOutcome? {
+        while foregroundRequestCount > 0, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        guard !Task.isCancelled else { return .cancelled }
+
+        loadDiskEntriesIfNeeded()
+        guard diskUsage < diskLimit else { return .cacheFull }
+
+        do {
+            _ = try await data(for: resource, isCrawl: true)
+            return .finished
+        } catch is DiskCacheFullError {
+            return .cacheFull
+        } catch is CancellationError {
+            return Task.isCancelled ? .cancelled : nil
+        } catch {
+            if Task.isCancelled { return .cancelled }
+            // Rejected or broken art is not retried until the app restarts;
+            // transport errors are, since the server may simply be offline.
+            if !(error is URLError) {
+                crawlFailedKeys.insert(resource.cacheKey)
+            }
+            return .failing
+        }
+    }
+
+    private func loadDiskEntriesIfNeeded() {
+        guard diskEntries == nil else { return }
+
+        var entries: [String: DiskEntry] = [:]
+        var usage = 0
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey]
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: diskDirectory,
+            includingPropertiesForKeys: keys
+        )) ?? []
+        for file in files {
+            guard let values = try? file.resourceValues(forKeys: Set(keys)), let size = values.fileSize else { continue }
+            entries[file.lastPathComponent] = DiskEntry(
+                size: size,
+                lastAccess: values.contentModificationDate ?? .distantPast
+            )
+            usage += size
+        }
+        diskEntries = entries
+        diskUsage = usage
+    }
+
+    @discardableResult
+    private func storeOnDisk(_ data: Data, at fileURL: URL, evicting: Bool) -> Bool {
+        loadDiskEntriesIfNeeded()
+        let name = fileURL.lastPathComponent
+        let previousSize = diskEntries?[name]?.size ?? 0
+        if !evicting, diskUsage - previousSize + data.count > diskLimit {
+            return false
+        }
+
+        guard (try? data.write(to: fileURL, options: .atomic)) != nil else { return true }
+        diskUsage += data.count - previousSize
+        diskEntries?[name] = DiskEntry(size: data.count, lastAccess: Date())
+        if evicting {
+            evictDiskEntriesIfNeeded()
+        }
+        return true
+    }
+
+    private func noteDiskAccess(at fileURL: URL, size: Int) {
+        loadDiskEntriesIfNeeded()
+        let name = fileURL.lastPathComponent
+        let now = Date()
+        diskUsage += size - (diskEntries?[name]?.size ?? 0)
+        diskEntries?[name] = DiskEntry(size: size, lastAccess: now)
+        try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: fileURL.path)
+    }
+
+    /// Removes the least recently used files once the limit is exceeded. Like the
+    /// decoded cache, it evicts down to 90% so a full cache is not rescanned on
+    /// every download.
+    private func evictDiskEntriesIfNeeded() {
+        guard diskUsage > diskLimit, let entries = diskEntries else { return }
+
+        let targetUsage = diskLimit / 10 * 9
+        var evictedCount = 0
+        for (name, entry) in entries.sorted(by: { $0.value.lastAccess < $1.value.lastAccess }) {
+            guard diskUsage > targetUsage else { break }
+            try? FileManager.default.removeItem(at: diskDirectory.appendingPathComponent(name))
+            diskEntries?[name] = nil
+            diskUsage -= entry.size
+            evictedCount += 1
+        }
+        AppLog.cache.info("Evicted \(evictedCount, privacy: .public) covers to stay within the disk cache limit")
+    }
+
     private func releaseConsumer(_ consumerID: UUID, forKey key: String, cancelIfUnused: Bool) {
         guard var request = inFlightRequests[key] else { return }
 
@@ -491,10 +734,13 @@ actor CoverArtCache {
         return diskDirectory.appendingPathComponent("\(digest).image")
     }
 
+    private func hasDiskData(forKey key: String) -> Bool {
+        FileManager.default.fileExists(atPath: fileURL(for: key).path)
+    }
+
     private func hasCachedData(for resource: CoverArtResource) -> Bool {
         resource.allCacheKeys.contains {
-            memoryCache.object(forKey: $0 as NSString) != nil
-                || FileManager.default.fileExists(atPath: fileURL(for: $0).path)
+            memoryCache.object(forKey: $0 as NSString) != nil || hasDiskData(forKey: $0)
         }
     }
 
@@ -507,6 +753,7 @@ actor CoverArtCache {
 
             let fileURL = fileURL(for: cacheKey)
             if let diskData = try? Data(contentsOf: fileURL) {
+                noteDiskAccess(at: fileURL, size: diskData.count)
                 memoryCache.setObject(diskData as NSData, forKey: key, cost: diskData.count)
                 return diskData
             }
