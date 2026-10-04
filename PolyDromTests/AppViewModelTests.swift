@@ -105,9 +105,19 @@ struct AppCoordinatorTests {
         await viewModel.connect(profile)
         await viewModel.refreshMetadata()
 
-        let crawledArtist = await eventually(timeout: crawlEnabled ? .seconds(5) : .milliseconds(500)) {
-            coverRequests.withLock { $0.contains("artist@220") }
+        if crawlEnabled {
+            // Join the actual work instead of timing background scheduling on a
+            // busy CI runner. Applying the initial cache limit may replace the
+            // crawl, so drain any replacement before checking its result.
+            while let crawl = viewModel.coverArtCrawl {
+                await crawl.task.value
+            }
+            #expect(viewModel.coverArtCrawledServerKey == profile.serverKey)
+        } else {
+            #expect(viewModel.coverArtCrawl == nil)
+            #expect(viewModel.coverArtCrawledServerKey == nil)
         }
+        let crawledArtist = coverRequests.withLock { $0.contains("artist@220") }
         #expect(crawledArtist == crawlEnabled)
         #expect(coverRequests.withLock { $0.allSatisfy { !$0.hasSuffix("@500") && !$0.hasSuffix("@900") } })
     }
