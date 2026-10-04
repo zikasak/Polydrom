@@ -491,26 +491,30 @@ struct SongLyricsSegment: Hashable, Sendable {
             let needle = backgroundValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !needle.isEmpty else { continue }
 
-            var plainMatch: Range<String.Index>?
+            // The lead can sing the same words, so prefer an occurrence set off in parentheses, then
+            // one standing as its own word. A match inside a longer word is only trusted when unique.
             var parenthesizedMatch: Range<String.Index>?
+            var wordMatch: Range<String.Index>?
+            var partialMatches: [Range<String.Index>] = []
             var searchStart = value.startIndex
             while parenthesizedMatch == nil,
                   let match = value.range(of: needle, range: searchStart..<value.endIndex) {
                 searchStart = match.upperBound
                 guard !backgroundRanges.contains(where: { $0.overlaps(match) }) else { continue }
 
-                // The lead can sing the same words, so prefer the occurrence set off in parentheses.
-                if match.lowerBound > value.startIndex, match.upperBound < value.endIndex {
-                    let opening = value.index(before: match.lowerBound)
-                    if "(（".contains(value[opening]), ")）".contains(value[match.upperBound]),
-                       !backgroundRanges.contains(where: { $0.contains(opening) || $0.contains(match.upperBound) }) {
-                        parenthesizedMatch = opening..<value.index(after: match.upperBound)
-                    }
+                let preceding = match.lowerBound > value.startIndex ? value[value.index(before: match.lowerBound)] : nil
+                let following = match.upperBound < value.endIndex ? value[match.upperBound] : nil
+                if let preceding, let following, "(（".contains(preceding), ")）".contains(following),
+                   !backgroundRanges.contains(where: { $0.upperBound == match.lowerBound || $0.lowerBound == match.upperBound }) {
+                    parenthesizedMatch = value.index(before: match.lowerBound)..<value.index(after: match.upperBound)
+                } else if [preceding, following].contains(where: { $0?.isLetter == true || $0?.isNumber == true }) {
+                    partialMatches.append(match)
+                } else {
+                    wordMatch = wordMatch ?? match
                 }
-                plainMatch = plainMatch ?? match
             }
 
-            if let range = parenthesizedMatch ?? plainMatch {
+            if let range = parenthesizedMatch ?? wordMatch ?? (partialMatches.count == 1 ? partialMatches.first : nil) {
                 backgroundRanges.append(range)
             }
         }

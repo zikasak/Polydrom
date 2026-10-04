@@ -180,7 +180,10 @@ struct DomainModelTests {
                 {"start": 2000, "value": "I know (know)"},
                 {"start": 3000, "value": "Lead only (aside)"},
                 {"start": 4000, "value": "Not in (the) line"},
-                {"start": 5000, "value": "No cues"}
+                {"start": 5000, "value": "No cues"},
+                {"start": 6000, "value": "tonight night"},
+                {"start": 7000, "value": "tonight tonight"},
+                {"start": 8000, "value": "今夜は眠れない"}
               ],
               "cueLine": [
                 {"index": 0, "agentId": "lead", "value": "I know", "cue": []},
@@ -190,7 +193,10 @@ struct DomainModelTests {
                 {"index": 2, "agentId": "lead", "value": "I know", "cue": []},
                 {"index": 2, "agentId": "backing", "value": "know", "cue": []},
                 {"index": 3, "agentId": "lead", "value": "Lead only (aside)", "cue": []},
-                {"index": 4, "agentId": "backing", "value": "missing", "cue": []}
+                {"index": 4, "agentId": "backing", "value": "missing", "cue": []},
+                {"index": 6, "agentId": "backing", "value": "night", "cue": []},
+                {"index": 7, "agentId": "backing", "value": "night", "cue": []},
+                {"index": 8, "agentId": "backing", "value": "眠れない", "cue": []}
               ]
             }
             """#.utf8)
@@ -215,7 +221,10 @@ struct DomainModelTests {
                 SongLyricsSegment(text: "(the)", isBackground: true),
                 SongLyricsSegment(text: " line", isBackground: false)
             ],
-            [SongLyricsSegment(text: "No cues", isBackground: false)]
+            [SongLyricsSegment(text: "No cues", isBackground: false)],
+            [SongLyricsSegment(text: "tonight ", isBackground: false), SongLyricsSegment(text: "night", isBackground: true)],
+            [SongLyricsSegment(text: "tonight tonight", isBackground: false)],
+            [SongLyricsSegment(text: "今夜は", isBackground: false), SongLyricsSegment(text: "眠れない", isBackground: true)]
         ])
         #expect(lyrics.isMainLayer)
         #expect(!translation.isMainLayer)
