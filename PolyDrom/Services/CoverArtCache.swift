@@ -76,6 +76,15 @@ private actor AsyncPermitPool {
     }
 }
 
+/// When the disk cache should next learn about covers served from memory.
+private enum AccessFlush {
+    case notNeeded
+    /// The first access since the last drain; a small set of covers viewed over
+    /// and over never reaches the backlog size, so it is flushed on a delay.
+    case soon
+    case now
+}
+
 private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
     private struct Entry {
         let image: CGImage
@@ -96,9 +105,8 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
 
     /// A hit records `backingKeys`, the keys whose stored bytes can stand in for
     /// this image, since the image may have been decoded from any of them.
-    /// `accessBacklogIsFull` is set once when enough keys have piled up that
-    /// the owner should drain them.
-    func image(forKey key: String, backingKeys: [String], accessBacklogIsFull: inout Bool) -> CGImage? {
+    /// `accessFlush` tells the owner when to drain the recorded keys.
+    func image(forKey key: String, backingKeys: [String], accessFlush: inout AccessFlush) -> CGImage? {
         lock.lock()
         defer { lock.unlock() }
 
@@ -109,7 +117,9 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
         let previousCount = accessedKeys.count
         accessedKeys.formUnion(backingKeys)
         if previousCount < accessedKeyFlushThreshold, accessedKeys.count >= accessedKeyFlushThreshold {
-            accessBacklogIsFull = true
+            accessFlush = .now
+        } else if previousCount == 0 {
+            accessFlush = .soon
         }
         return entry.image
     }
@@ -440,9 +450,14 @@ actor CoverArtCache {
     }
 
     nonisolated func cachedImage(for resource: CoverArtResource) -> CGImage? {
-        var accessBacklogIsFull = false
+        var accessFlush = AccessFlush.notNeeded
         defer {
-            if accessBacklogIsFull {
+            switch accessFlush {
+            case .notNeeded:
+                break
+            case .soon:
+                Task(priority: .utility) { await self.applyRecordedAccessesAfterDelay() }
+            case .now:
                 Task(priority: .utility) { await self.applyRecordedAccesses() }
             }
         }
@@ -452,7 +467,7 @@ actor CoverArtCache {
             if let image = decodedImageCache.image(
                 forKey: cacheKey,
                 backingKeys: cacheKeys,
-                accessBacklogIsFull: &accessBacklogIsFull
+                accessFlush: &accessFlush
             ) {
                 return image
             }
@@ -799,6 +814,11 @@ actor CoverArtCache {
         }
     }
 
+    private func applyRecordedAccessesAfterDelay() async {
+        try? await Task.sleep(for: .seconds(30))
+        applyRecordedAccesses()
+    }
+
     /// Removes the least recently used files once the limit is exceeded. Like the
     /// decoded cache, it evicts down to 90% so a full cache is not rescanned on
     /// every download.
@@ -875,6 +895,9 @@ actor CoverArtCache {
             if let cachedData = memoryCache.object(forKey: key) {
                 // Bytes read through a fallback are also held under the requested
                 // key, so the file that supplied them may be any of these.
+                if memoryAccessedKeys.isEmpty {
+                    Task(priority: .utility) { await self.applyRecordedAccessesAfterDelay() }
+                }
                 memoryAccessedKeys.formUnion(resource.allCacheKeys)
                 return Data(referencing: cachedData)
             }
