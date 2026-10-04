@@ -399,7 +399,10 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
     let language: String?
     let offset: Int?
     let synced: Bool
+    let kind: String?
     let lines: [SongLyricsLine]
+    /// Main and background vocal runs for each entry in `lines`, in display order.
+    let lineSegments: [[SongLyricsSegment]]
 
     var id: String {
         [language, displayArtist, displayTitle, synced ? "synced" : "plain"]
@@ -415,6 +418,12 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
             return nil
         }
         return language.uppercased()
+    }
+
+    /// Enhanced responses also carry translation and pronunciation layers.
+    var isMainLayer: Bool {
+        guard let kind, !kind.isEmpty else { return true }
+        return kind.caseInsensitiveCompare("main") == .orderedSame
     }
 
     func playbackTime(for line: SongLyricsLine) -> Double? {
@@ -436,7 +445,10 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
         case language = "lang"
         case offset
         case synced
+        case kind
         case lines = "line"
+        case agents
+        case cueLines = "cueLine"
     }
 
     init(from decoder: Decoder) throws {
@@ -446,8 +458,71 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
         language = try? container.decode(String.self, forKey: .language)
         offset = container.decodeFlexibleInt(forKey: .offset)
         synced = (try? container.decode(Bool.self, forKey: .synced)) ?? false
-        lines = ((try? container.decode(FlexibleArray<SongLyricsLine>.self, forKey: .lines)) ?? FlexibleArray(values: [])).values
+        kind = try? container.decode(String.self, forKey: .kind)
+        let lines = ((try? container.decode(FlexibleArray<SongLyricsLine>.self, forKey: .lines)) ?? FlexibleArray(values: [])).values
+        self.lines = lines
+
+        let agents = ((try? container.decode(FlexibleArray<SongLyricsAgent>.self, forKey: .agents)) ?? FlexibleArray(values: [])).values
+        let cueLines = ((try? container.decode(FlexibleArray<SongLyricsCueLine>.self, forKey: .cueLines)) ?? FlexibleArray(values: [])).values
+        let backgroundAgentIDs = Set(agents.filter { $0.role.caseInsensitiveCompare("bg") == .orderedSame }.map(\.id))
+        let cueLinesByIndex = Dictionary(grouping: cueLines.filter { !$0.value.isEmpty }, by: \.index)
+
+        lineSegments = lines.enumerated().map { index, line in
+            let layers = (cueLinesByIndex[index] ?? []).enumerated().map { layerIndex, cueLine in
+                SongLyricsSegment(
+                    text: (layerIndex == 0 ? "" : " ") + cueLine.value,
+                    isBackground: cueLine.agentId.map(backgroundAgentIDs.contains) ?? false
+                )
+            }
+            // Servers without vocal attribution only mark background vocals with parentheses.
+            return layers.contains(where: \.isBackground) ? layers : SongLyricsSegment.splittingParentheses(in: line.value)
+        }
     }
+}
+
+struct SongLyricsSegment: Hashable, Sendable {
+    let text: String
+    let isBackground: Bool
+
+    /// Treats parenthesized runs as background vocals; the segments concatenate back to `value`.
+    static func splittingParentheses(in value: String) -> [SongLyricsSegment] {
+        var segments: [SongLyricsSegment] = []
+        var current = ""
+        var depth = 0
+
+        func flush(isBackground: Bool) {
+            guard !current.isEmpty else { return }
+            segments.append(SongLyricsSegment(text: current, isBackground: isBackground))
+            current = ""
+        }
+
+        for character in value {
+            if character == "(" || character == "（" {
+                if depth == 0 { flush(isBackground: false) }
+                depth += 1
+                current.append(character)
+            } else if (character == ")" || character == "）"), depth > 0 {
+                current.append(character)
+                depth -= 1
+                if depth == 0 { flush(isBackground: true) }
+            } else {
+                current.append(character)
+            }
+        }
+        flush(isBackground: false)
+        return segments
+    }
+}
+
+private struct SongLyricsAgent: Decodable {
+    let id: String
+    let role: String
+}
+
+private struct SongLyricsCueLine: Decodable {
+    let index: Int
+    let value: String
+    let agentId: String?
 }
 
 struct SongLyricsLine: Decodable, Identifiable, Hashable, Sendable {

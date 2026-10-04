@@ -143,6 +143,61 @@ struct DomainModelTests {
         #expect(plainLyrics.lineIndex(at: 1) == nil)
     }
 
+    @Test(arguments: [
+        ("Plain line", [SongLyricsSegment(text: "Plain line", isBackground: false)]),
+        ("(Ooh, ooh)", [SongLyricsSegment(text: "(Ooh, ooh)", isBackground: true)]),
+        ("I'm falling (falling) down", [
+            SongLyricsSegment(text: "I'm falling ", isBackground: false),
+            SongLyricsSegment(text: "(falling)", isBackground: true),
+            SongLyricsSegment(text: " down", isBackground: false)
+        ]),
+        ("Hold (on (and on))", [
+            SongLyricsSegment(text: "Hold ", isBackground: false),
+            SongLyricsSegment(text: "(on (and on))", isBackground: true)
+        ]),
+        ("Smile :) (never closed", [
+            SongLyricsSegment(text: "Smile :) ", isBackground: false),
+            SongLyricsSegment(text: "(never closed", isBackground: false)
+        ]),
+        ("", [])
+    ])
+    func parenthesizedLyricsAreBackgroundVocals(_ value: String, _ expected: [SongLyricsSegment]) throws {
+        let data = try JSONSerialization.data(withJSONObject: ["line": [["value": value]]])
+        #expect(try JSONDecoder().decode(SongLyrics.self, from: data).lineSegments == [expected])
+    }
+
+    @Test func attributedCueLinesSeparateBackgroundVocalsFromTheLead() throws {
+        let lyrics = try JSONDecoder().decode(
+            SongLyrics.self,
+            from: Data(#"""
+            {
+              "kind": "main",
+              "synced": true,
+              "agents": [{"id": "lead", "role": "main"}, {"id": "backing", "role": "bg"}],
+              "line": [
+                {"start": 0, "value": "Hello echo"},
+                {"start": 1000, "value": "Lead only (aside)"},
+                {"start": 2000, "value": "No cues"}
+              ],
+              "cueLine": [
+                {"index": 0, "agentId": "lead", "value": "Hello", "cue": []},
+                {"index": 0, "agentId": "backing", "value": "echo", "cue": []},
+                {"index": 1, "agentId": "lead", "value": "Lead only (aside)", "cue": []}
+              ]
+            }
+            """#.utf8)
+        )
+        let translation = try JSONDecoder().decode(SongLyrics.self, from: Data(#"{"kind":"translation"}"#.utf8))
+
+        #expect(lyrics.lineSegments == [
+            [SongLyricsSegment(text: "Hello", isBackground: false), SongLyricsSegment(text: " echo", isBackground: true)],
+            [SongLyricsSegment(text: "Lead only ", isBackground: false), SongLyricsSegment(text: "(aside)", isBackground: true)],
+            [SongLyricsSegment(text: "No cues", isBackground: false)]
+        ])
+        #expect(lyrics.isMainLayer)
+        #expect(!translation.isMainLayer)
+    }
+
     @Test func missingRequiredFlexibleStringThrows() {
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"name":"Artist"}"#.utf8))

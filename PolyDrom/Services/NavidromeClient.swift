@@ -155,7 +155,10 @@ struct NavidromeClient: Sendable {
     func lyrics(for song: NavidromeSong) async throws -> [SongLyrics] {
         let response: LyricsEnvelope = try await request(
             "getLyricsBySongId",
-            queryItems: [URLQueryItem(name: "id", value: song.id)]
+            queryItems: [
+                URLQueryItem(name: "id", value: song.id),
+                URLQueryItem(name: "enhanced", value: "true")
+            ]
         )
         try response.subsonicResponse.throwIfNeeded()
         return response.subsonicResponse.lyricsList?.structuredLyrics.values ?? []
