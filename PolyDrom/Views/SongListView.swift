@@ -10,7 +10,8 @@ import SwiftUI
 
 struct SongListView: View {
     let title: String
-    let songs: [NavidromeSong]
+    let snapshot: SongListSnapshot
+    private var songs: [NavidromeSong] { snapshot.songs }
     @ObservedObject var viewModel: AppCoordinator
     let emptyMessage: String
     let openRoute: (LibraryRoute) -> Void
@@ -18,7 +19,8 @@ struct SongListView: View {
     var editablePlaylist: NavidromePlaylist?
 
     @State private var isSelecting = false
-    @State private var selectedIndices = IndexSet()
+    @State private var selectedEntryIDs: Set<UUID> = []
+    @State private var selectionRevision: UUID?
     @State private var currentSongID: String?
 
     var body: some View {
@@ -38,22 +40,22 @@ struct SongListView: View {
                 ContentUnavailableView(emptyMessage, systemImage: "music.note")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                LazyLibraryList(indexedSongs) { item in
+                LazyLibraryList(snapshot.entries) { item in
                     SongRowView(
-                        song: item.song,
-                        queue: songs,
+                        snapshot: snapshot,
                         queueIndex: item.index,
                         viewModel: viewModel,
                         isCurrentSong: item.song.id == currentSongID,
                         openRoute: openRoute,
                         currentAlbumID: currentAlbumID,
-                        selection: isSelecting ? selectionBinding(for: item.index) : nil,
+                        selection: isSelecting ? selectionBinding(for: item.id) : nil,
                         removeFromPlaylist: editablePlaylist.map { playlist in
                             {
                                 Task {
                                     _ = await viewModel.removeSongs(
                                         at: IndexSet(integer: item.index),
-                                        from: playlist
+                                        from: playlist,
+                                        expectedSnapshotRevision: snapshot.revision
                                     )
                                 }
                             }
@@ -68,14 +70,19 @@ struct SongListView: View {
         .onReceive(viewModel.audioPlayer.$currentSong.map { $0?.id }.removeDuplicates()) { id in
             currentSongID = id
         }
-        .onChange(of: songs.count) { _, count in
-            selectedIndices = IndexSet(selectedIndices.filter { $0 < count })
-            if count == 0 { exitSelection() }
+        .onChange(of: snapshot.revision) { _, _ in
+            exitSelection()
         }
     }
 
-    private var indexedSongs: [IndexedSong] {
-        songs.indices.map { IndexedSong(index: $0, song: songs[$0]) }
+    // Gate stale selection immediately, before onChange clears stored state.
+    private var hasSelection: Bool {
+        selectionRevision == snapshot.revision && !selectedEntryIDs.isEmpty
+    }
+
+    private var selectedIndices: IndexSet {
+        guard selectionRevision == snapshot.revision else { return [] }
+        return IndexSet(selectedEntryIDs.compactMap { snapshot.indicesByID[$0] })
     }
 
     @ViewBuilder
@@ -84,12 +91,16 @@ struct SongListView: View {
             AddToPlaylistMenu(viewModel: viewModel, songs: selectedSongs) {
                 exitSelection()
             }
-            .disabled(selectedIndices.isEmpty)
+            .disabled(!hasSelection)
 
             if let editablePlaylist {
                 Button(role: .destructive) {
                     Task {
-                        if await viewModel.removeSongs(at: selectedIndices, from: editablePlaylist) {
+                        if await viewModel.removeSongs(
+                            at: selectedIndices,
+                            from: editablePlaylist,
+                            expectedSnapshotRevision: snapshot.revision
+                        ) {
                             exitSelection()
                         }
                     }
@@ -97,7 +108,7 @@ struct SongListView: View {
                     Label("Remove Selected", systemImage: "trash")
                         .labelStyle(.iconOnly)
                 }
-                .disabled(selectedIndices.isEmpty || viewModel.isPlaylistMutating)
+                .disabled(!hasSelection || viewModel.isPlaylistMutating)
                 .help("Remove selected songs from playlist")
             }
 
@@ -106,30 +117,33 @@ struct SongListView: View {
             }
         } else {
             Button("Select") {
+                selectionRevision = snapshot.revision
                 isSelecting = true
             }
         }
     }
 
     private var selectedSongs: [NavidromeSong] {
-        selectedIndices.compactMap { songs.indices.contains($0) ? songs[$0] : nil }
+        guard selectionRevision == snapshot.revision else { return [] }
+        return selectedIndices.map { songs[$0] }
     }
 
-    private func selectionBinding(for index: Int) -> Binding<Bool> {
+    private func selectionBinding(for id: UUID) -> Binding<Bool> {
         Binding(
-            get: { selectedIndices.contains(index) },
+            get: { selectionRevision == snapshot.revision && selectedEntryIDs.contains(id) },
             set: { isSelected in
                 if isSelected {
-                    selectedIndices.insert(index)
+                    selectedEntryIDs.insert(id)
                 } else {
-                    selectedIndices.remove(index)
+                    selectedEntryIDs.remove(id)
                 }
             }
         )
     }
 
     private func exitSelection() {
-        selectedIndices = []
+        selectedEntryIDs = []
+        selectionRevision = nil
         isSelecting = false
     }
 }
@@ -138,8 +152,9 @@ struct SongListView: View {
 /// not re-evaluate every visible row. `viewModel` is intentionally not observed;
 /// it is only used to perform actions, and display state is passed in.
 struct SongRowView: View, Equatable {
-    let song: NavidromeSong
-    let queue: [NavidromeSong]
+    let snapshot: SongListSnapshot
+    private var song: NavidromeSong { snapshot.songs[queueIndex] }
+    private var queue: [NavidromeSong] { snapshot.songs }
     let queueIndex: Int
     let viewModel: AppCoordinator
     let isCurrentSong: Bool
@@ -149,12 +164,12 @@ struct SongRowView: View, Equatable {
     let coverArtResource: CoverArtResource?
     let openRoute: (LibraryRoute) -> Void
     let currentAlbumID: String?
+    let isSelected: Bool?
     var selection: Binding<Bool>?
     var removeFromPlaylist: (() -> Void)?
 
     init(
-        song: NavidromeSong,
-        queue: [NavidromeSong],
+        snapshot: SongListSnapshot,
         queueIndex: Int,
         viewModel: AppCoordinator,
         isCurrentSong: Bool,
@@ -163,8 +178,8 @@ struct SongRowView: View, Equatable {
         selection: Binding<Bool>? = nil,
         removeFromPlaylist: (() -> Void)? = nil
     ) {
-        self.song = song
-        self.queue = queue
+        self.snapshot = snapshot
+        let song = snapshot.songs[queueIndex]
         self.queueIndex = queueIndex
         self.viewModel = viewModel
         self.isCurrentSong = isCurrentSong
@@ -175,13 +190,13 @@ struct SongRowView: View, Equatable {
         self.openRoute = openRoute
         self.currentAlbumID = currentAlbumID
         self.selection = selection
+        self.isSelected = selection?.wrappedValue
         self.removeFromPlaylist = removeFromPlaylist
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        // Array equality short-circuits when both sides share storage, which is
-        // the common case when the parent re-renders with an unchanged list.
-        lhs.song == rhs.song
+        // A revision covers every song value and the queue used by actions.
+        lhs.snapshot.revision == rhs.snapshot.revision
             && lhs.queueIndex == rhs.queueIndex
             && lhs.isCurrentSong == rhs.isCurrentSong
             && lhs.isFavorite == rhs.isFavorite
@@ -189,10 +204,9 @@ struct SongRowView: View, Equatable {
             && lhs.isPlaylistMutating == rhs.isPlaylistMutating
             && lhs.coverArtResource == rhs.coverArtResource
             && lhs.currentAlbumID == rhs.currentAlbumID
-            && lhs.selection?.wrappedValue == rhs.selection?.wrappedValue
+            && lhs.isSelected == rhs.isSelected
             && (lhs.removeFromPlaylist == nil) == (rhs.removeFromPlaylist == nil)
             && lhs.viewModel === rhs.viewModel
-            && lhs.queue == rhs.queue
     }
 
     var body: some View {
@@ -329,11 +343,4 @@ struct SongRowView: View, Equatable {
     private var hasNavigationArtist: Bool {
         NavidromeArtist(song: song) != nil
     }
-}
-
-private struct IndexedSong: Identifiable {
-    let index: Int
-    let song: NavidromeSong
-
-    var id: Int { index }
 }

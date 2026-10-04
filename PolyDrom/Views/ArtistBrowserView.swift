@@ -9,13 +9,14 @@ import SwiftUI
 
 struct ArtistBrowserView: View {
     @ObservedObject var viewModel: AppCoordinator
-    let artists: [NavidromeArtist]
+    let snapshot: ViewCollectionSnapshot<NavidromeArtist>
 
     var body: some View {
         ArtistBrowserGrid(
-            artists: artists,
+            snapshot: snapshot,
             selectedArtistID: viewModel.selectedArtist?.id,
             favoriteArtistIDs: viewModel.favoriteArtistIDs,
+            favoritesRevision: viewModel.favoriteArtistIDsRevision,
             serverKey: viewModel.serverKey,
             isOnline: viewModel.isOnline,
             coverArtResource: { viewModel.coverArtResource(for: $0, size: viewModel.gridCoverSize) },
@@ -28,9 +29,10 @@ struct ArtistBrowserView: View {
 /// Compared by the values it shows, so coordinator updates that do not affect
 /// the grid leave it alone while it scrolls.
 private struct ArtistBrowserGrid: View, Equatable {
-    let artists: [NavidromeArtist]
+    let snapshot: ViewCollectionSnapshot<NavidromeArtist>
     let selectedArtistID: String?
     let favoriteArtistIDs: Set<String>
+    let favoritesRevision: UUID
     let serverKey: String?
     let isOnline: Bool
     let coverArtResource: (NavidromeArtist) -> CoverArtResource?
@@ -38,15 +40,15 @@ private struct ArtistBrowserGrid: View, Equatable {
     @Environment(\.openLibraryRoute) private var openLibraryRoute
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.artists == rhs.artists
+        lhs.snapshot.revision == rhs.snapshot.revision
             && lhs.selectedArtistID == rhs.selectedArtistID
-            && lhs.favoriteArtistIDs == rhs.favoriteArtistIDs
+            && lhs.favoritesRevision == rhs.favoritesRevision
             && lhs.serverKey == rhs.serverKey
             && lhs.isOnline == rhs.isOnline
     }
 
     var body: some View {
-        LazyLibraryCardGrid(artists, minimumCardWidth: 140) { artist in
+        LazyLibraryCardGrid(snapshot.items, minimumCardWidth: 140) { artist in
             let isFavorite = favoriteArtistIDs.contains(artist.id)
 
             LibraryCardView(
@@ -105,7 +107,7 @@ struct ArtistDetailView: View {
             if viewModel.selectedArtist?.id == artist.id && !viewModel.artistAlbums.isEmpty {
                 AlbumBrowserView(
                     viewModel: viewModel,
-                    albums: viewModel.artistAlbums,
+                    snapshot: viewModel.artistAlbumsSnapshot,
                     openAlbum: openAlbum
                 )
             } else {

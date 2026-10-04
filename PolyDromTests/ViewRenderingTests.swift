@@ -33,16 +33,16 @@ struct ViewRenderingTests {
         viewModel.favoriteAlbumIDs = [album.id]
         viewModel.favoriteArtistIDs = [artist.id]
 
-        await render(SongListView(title: "Empty", songs: [], viewModel: viewModel, emptyMessage: "Empty", openRoute: { _ in }))
-        await render(SongListView(title: "Songs", songs: [song], viewModel: viewModel, emptyMessage: "Empty", openRoute: { _ in }))
-        await render(SongRowView(song: song, queue: [song], queueIndex: 0, viewModel: viewModel, isCurrentSong: false, openRoute: { _ in }, currentAlbumID: nil))
-        await render(SongRowView(song: song, queue: [song], queueIndex: 0, viewModel: viewModel, isCurrentSong: true, openRoute: { _ in }, currentAlbumID: nil))
+        await render(SongListView(title: "Empty", snapshot: SongListSnapshot(), viewModel: viewModel, emptyMessage: "Empty", openRoute: { _ in }))
+        await render(SongListView(title: "Songs", snapshot: SongListSnapshot([song]), viewModel: viewModel, emptyMessage: "Empty", openRoute: { _ in }))
+        await render(SongRowView(snapshot: SongListSnapshot([song]), queueIndex: 0, viewModel: viewModel, isCurrentSong: false, openRoute: { _ in }, currentAlbumID: nil))
+        await render(SongRowView(snapshot: SongListSnapshot([song]), queueIndex: 0, viewModel: viewModel, isCurrentSong: true, openRoute: { _ in }, currentAlbumID: nil))
         await render(SearchView(viewModel: viewModel, openRoute: { _ in }))
         await render(HomeView(viewModel: viewModel, openAlbum: { _ in }))
-        await render(AlbumBrowserView(viewModel: viewModel, albums: [album]))
-        await render(ArtistBrowserView(viewModel: viewModel, artists: viewModel.artists))
+        await render(AlbumBrowserView(viewModel: viewModel, snapshot: ViewCollectionSnapshot([album])))
+        await render(ArtistBrowserView(viewModel: viewModel, snapshot: viewModel.artistsSnapshot))
         await render(GenreBrowserView(viewModel: viewModel))
-        await render(ArtistBrowserView(viewModel: viewModel, artists: viewModel.favoriteArtists))
+        await render(ArtistBrowserView(viewModel: viewModel, snapshot: viewModel.favoriteArtistsSnapshot))
         await render(PlaylistBrowserView(viewModel: viewModel))
         await render(
             PlaylistCreationSheet(

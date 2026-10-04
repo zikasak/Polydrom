@@ -286,3 +286,22 @@ struct PlayerDetailPanelView: View {
         }
     }
 }
+
+/// Keep the full player's time updates inside its progress controls.
+struct FullPlayerProgressControls: View {
+    @ObservedObject var audioPlayer: AudioPlayer
+
+    var body: some View {
+        VStack(spacing: 4) {
+            PlayerSeekSlider(audioPlayer: audioPlayer)
+
+            HStack {
+                Text(PlaybackTime.text(audioPlayer.currentTime))
+                Spacer()
+                Text("-\(PlaybackTime.text(max(audioPlayer.duration - audioPlayer.currentTime, 0)))")
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+    }
+}

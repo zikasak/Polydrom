@@ -207,7 +207,7 @@ extension AppCoordinator {
 
     private var currentPlaybackQueueIndex: Int? {
         guard audioPlayer.currentSong != nil, let currentPlaybackQueueEntryID else { return nil }
-        return playbackQueue.firstIndex { $0.id == currentPlaybackQueueEntryID }
+        return playbackQueueIndices[currentPlaybackQueueEntryID]
     }
 
     private func adjacentQueueEntry(offset: Int) -> PlaybackQueueEntry? {

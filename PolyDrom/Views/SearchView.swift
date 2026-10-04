@@ -30,7 +30,7 @@ struct SearchView: View {
 
             SongListView(
                 title: viewModel.searchResults.isEmpty ? "Try a title, artist, or album" : "Search results",
-                songs: viewModel.searchResults,
+                snapshot: viewModel.searchResultsSnapshot,
                 viewModel: viewModel,
                 emptyMessage: "No search results.",
                 openRoute: openRoute

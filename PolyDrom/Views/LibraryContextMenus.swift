@@ -208,13 +208,13 @@ struct PlayerSongContextMenu: View {
 }
 
 struct AddToPlaylistMenu: View {
-    @ObservedObject var viewModel: AppCoordinator
+    let viewModel: AppCoordinator
     let songs: [NavidromeSong]
     var onSuccess: @MainActor () -> Void = {}
 
     var body: some View {
         Menu {
-            ForEach(viewModel.editablePlaylists) { playlist in
+            ForEach(viewModel.playlistMenuState.playlists) { playlist in
                 Button(playlist.name) {
                     Task {
                         if await viewModel.addSongs(songs, to: playlist) {
@@ -224,7 +224,7 @@ struct AddToPlaylistMenu: View {
                 }
             }
 
-            if !viewModel.editablePlaylists.isEmpty {
+            if !viewModel.playlistMenuState.playlists.isEmpty {
                 Divider()
             }
 
@@ -236,6 +236,6 @@ struct AddToPlaylistMenu: View {
         } label: {
             Label("Add to Playlist", systemImage: "text.badge.plus")
         }
-        .disabled(songs.isEmpty || !viewModel.canCreatePlaylist)
+        .disabled(songs.isEmpty || !viewModel.playlistMenuState.canCreatePlaylist)
     }
 }

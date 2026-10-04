@@ -109,7 +109,15 @@ extension AppCoordinator {
         }
     }
 
-    func removeSongs(at indices: IndexSet, from playlist: NavidromePlaylist) async -> Bool {
+    func removeSongs(
+        at indices: IndexSet,
+        from playlist: NavidromePlaylist,
+        expectedSnapshotRevision: UUID? = nil
+    ) async -> Bool {
+        if let expectedSnapshotRevision, expectedSnapshotRevision != playlistSongsSnapshot.revision {
+            statusMessage = "Playlist changed. Select the songs again."
+            return false
+        }
         let validIndices = IndexSet(indices.filter { playlistSongs.indices.contains($0) })
         guard !validIndices.isEmpty else { return false }
         guard canEdit(playlist), selectedPlaylist?.id == playlist.id, let client, let session = currentSession else {

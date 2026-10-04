@@ -151,7 +151,7 @@ struct PlaylistDetailView: View {
 
             SongListView(
                 title: "Songs",
-                songs: viewModel.selectedPlaylist?.id == playlist.id ? viewModel.playlistSongs : [],
+                snapshot: viewModel.selectedPlaylist?.id == playlist.id ? viewModel.playlistSongsSnapshot : .empty,
                 viewModel: viewModel,
                 emptyMessage: viewModel.isBusy ? "Loading songs..." : "No songs for this playlist.",
                 openRoute: openRoute,

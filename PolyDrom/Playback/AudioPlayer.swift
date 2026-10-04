@@ -25,6 +25,7 @@ enum SonosPlaybackCommand {
 
 @MainActor
 final class AudioPlayer: ObservableObject {
+    let objectWillChange = ObservableObjectPublisher()
     @Published var currentSong: NavidromeSong?
     @Published var isPlaying = false
     @Published var statusMessage = "Nothing playing"
