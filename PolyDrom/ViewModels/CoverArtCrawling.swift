@@ -41,9 +41,10 @@ extension AppCoordinator {
         Task {
             await coverArtCache.setDiskLimit(limit.bytes)
             await refreshCoverArtCacheSize()
-            // A crawl that stopped at the old limit may have room to continue.
+            // A crawl that stopped at the old limit may have room to continue. One
+            // still running may be about to stop for that limit, so it starts over.
             coverArtCrawledServerKey = nil
-            startCoverArtCrawl(restart: false)
+            startCoverArtCrawl(restart: true)
         }
     }
 

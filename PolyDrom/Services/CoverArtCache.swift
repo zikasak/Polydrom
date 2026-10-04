@@ -89,8 +89,14 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
     private var entries: [String: Entry] = [:]
     private var totalCost = 0
     private var accessCounter: UInt64 = 0
+    /// Keys served since the last drain. Views read decoded images without
+    /// reaching the disk cache, which still has to learn that they are in use.
+    private var accessedKeys = Set<String>()
+    private let accessedKeyFlushThreshold = 64
 
-    func image(forKey key: String) -> CGImage? {
+    /// `accessBacklogIsFull` is set once when enough keys have piled up that
+    /// the owner should drain them.
+    func image(forKey key: String, accessBacklogIsFull: inout Bool) -> CGImage? {
         lock.lock()
         defer { lock.unlock() }
 
@@ -98,7 +104,19 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
         accessCounter &+= 1
         entry.lastAccess = accessCounter
         entries[key] = entry
+        if accessedKeys.insert(key).inserted, accessedKeys.count == accessedKeyFlushThreshold {
+            accessBacklogIsFull = true
+        }
         return entry.image
+    }
+
+    func drainAccessedKeys() -> Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let keys = accessedKeys
+        accessedKeys.removeAll(keepingCapacity: true)
+        return keys
     }
 
     func insert(_ image: CGImage, forKey key: String) {
@@ -133,6 +151,7 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
         defer { lock.unlock() }
 
         entries.removeAll(keepingCapacity: true)
+        accessedKeys.removeAll(keepingCapacity: true)
         totalCost = 0
         accessCounter = 0
     }
@@ -270,6 +289,9 @@ actor CoverArtCache {
     /// starts nothing new while this is above zero.
     private var foregroundRequestCount = 0
     private var crawlFailedKeys = Set<String>()
+    /// Keys served from the data memory cache since their disk entries were
+    /// last marked as used.
+    private var memoryAccessedKeys = Set<String>()
     private let crawlFailureLimit = 8
 
     init(session: URLSession? = nil, diskDirectory: URL? = nil, diskLimit: Int = CoverArtCacheLimit.default.bytes) {
@@ -414,7 +436,19 @@ actor CoverArtCache {
     }
 
     nonisolated func cachedImage(for resource: CoverArtResource) -> CGImage? {
-        resource.allCacheKeys.lazy.compactMap { self.decodedImageCache.image(forKey: $0) }.first
+        var accessBacklogIsFull = false
+        defer {
+            if accessBacklogIsFull {
+                Task(priority: .utility) { await self.applyRecordedAccesses() }
+            }
+        }
+
+        for cacheKey in resource.allCacheKeys {
+            if let image = decodedImageCache.image(forKey: cacheKey, accessBacklogIsFull: &accessBacklogIsFull) {
+                return image
+            }
+        }
+        return nil
     }
 
     /// Returns an image only when its bytes are already cached locally. This is
@@ -490,6 +524,7 @@ actor CoverArtCache {
         memoryCache.removeAllObjects()
         decodedImageCache.removeAll()
         crawlFailedKeys.removeAll()
+        memoryAccessedKeys.removeAll()
         // Reloaded from the directory on next use, so a clear that fails part
         // way still accounts for whatever is left on disk.
         diskEntries = nil
@@ -648,6 +683,7 @@ actor CoverArtCache {
     func setDiskLimit(_ bytes: Int) {
         diskLimit = max(0, bytes)
         loadDiskEntriesIfNeeded()
+        applyRecordedAccesses()
         evictDiskEntriesIfNeeded()
     }
 
@@ -713,6 +749,7 @@ actor CoverArtCache {
         try data.write(to: fileURL, options: .atomic)
         diskUsage += data.count - previousSize
         diskEntries?[name] = DiskEntry(size: data.count, lastAccess: Date())
+        applyRecordedAccesses()
         if evicting {
             evictDiskEntriesIfNeeded()
         }
@@ -726,6 +763,25 @@ actor CoverArtCache {
         diskUsage += size - (diskEntries?[name]?.size ?? 0)
         diskEntries?[name] = DiskEntry(size: size, lastAccess: now)
         try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: fileURL.path)
+    }
+
+    /// Marks the stored files behind covers served from memory as recently
+    /// used. Memory hits never read the disk, so without this a cover that is on
+    /// screen every day would look untouched and be evicted first.
+    private func applyRecordedAccesses() {
+        let keys = decodedImageCache.drainAccessedKeys().union(memoryAccessedKeys)
+        memoryAccessedKeys.removeAll(keepingCapacity: true)
+        guard !keys.isEmpty else { return }
+
+        loadDiskEntriesIfNeeded()
+        let now = Date()
+        for key in keys {
+            let fileURL = fileURL(for: key)
+            let name = fileURL.lastPathComponent
+            guard diskEntries?[name] != nil else { continue }
+            diskEntries?[name]?.lastAccess = now
+            try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: fileURL.path)
+        }
     }
 
     /// Removes the least recently used files once the limit is exceeded. Like the
@@ -802,6 +858,7 @@ actor CoverArtCache {
         for cacheKey in resource.allCacheKeys {
             let key = cacheKey as NSString
             if let cachedData = memoryCache.object(forKey: key) {
+                memoryAccessedKeys.insert(cacheKey)
                 return Data(referencing: cachedData)
             }
 

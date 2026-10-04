@@ -240,6 +240,35 @@ struct CoverArtCacheTests {
         #expect(await reader.diskUsageBytes() <= onePixelPNG.count)
     }
 
+    @Test func coversServedFromMemoryCountAsRecentlyUsedOnDisk() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let resources = (0..<5).map {
+            CoverArtResource(cacheKey: "cover-\($0)", url: URL(string: "https://art.example/\($0)")!)
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: directory, diskLimit: onePixelPNG.count * 4)
+        _ = try await cache.image(for: resources[0])
+        for resource in resources[1...3] {
+            try await Task.sleep(for: .milliseconds(20))
+            _ = try await cache.data(for: resource)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Neither read touches the disk: one hits the decoded image, the other
+        // the downloaded bytes held in memory.
+        #expect(cache.cachedImage(for: resources[0]) != nil)
+        _ = try await cache.data(for: resources[1])
+        _ = try await cache.data(for: resources[4])
+
+        let reader = CoverArtCache(session: session, diskDirectory: directory)
+        #expect(await reader.storedImage(for: resources[0]) != nil)
+        #expect(await reader.storedImage(for: resources[1]) != nil)
+        #expect(await reader.storedImage(for: resources[2]) == nil)
+        #expect(await reader.storedImage(for: resources[3]) == nil)
+    }
+
     @Test func crawlStopsAtTheDiskLimitWithoutEvictingStoredCovers() async throws {
         let session = StubURLProtocol.session { _ in
             StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
