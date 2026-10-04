@@ -394,7 +394,7 @@ struct CoverArtView: View {
     let size: CGFloat
     let cornerRadius: CGFloat
 
-    @Environment(\.libraryGridIsScrolling) private var libraryGridIsScrolling
+    @Environment(LibraryScrollActivity.self) private var scrollActivity: LibraryScrollActivity?
     @State private var image: CGImage?
     @State private var loadedCacheKey: String?
 
@@ -451,7 +451,7 @@ struct CoverArtView: View {
     }
 
     private var shouldPauseLoading: Bool {
-        displayedImage == nil && libraryGridIsScrolling
+        displayedImage == nil && scrollActivity?.isScrolling == true
     }
 
     private var fallback: some View {

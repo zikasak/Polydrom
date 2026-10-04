@@ -51,6 +51,49 @@ struct PersistenceTests {
         #expect(persistence.load() == largeState)
     }
 
+    @Test func playbackProgressIsSavedLaterWithoutOverwritingNewerState() async throws {
+        let suiteName = "PlaybackProgressPersistenceTests.\(UUID().uuidString)"
+        let userDefaults = UserDefaults(suiteName: suiteName)!
+        let fileURL = temporaryPlaybackFileURL()
+        defer { userDefaults.removePersistentDomain(forName: suiteName) }
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let entry = PlaybackQueueEntry(song: makeSong(id: "playing-song"))
+        func state(position: Double, isPlaying: Bool = true, queue: [PlaybackQueueEntry]? = nil) -> PersistedPlaybackState {
+            PersistedPlaybackState(
+                serverKey: "server",
+                queue: queue ?? [entry],
+                currentQueueEntryID: entry.id,
+                currentSong: entry.song,
+                position: position,
+                isPlaying: isPlaying
+            )
+        }
+        let persistence = PlaybackPersistence(userDefaults: userDefaults, fileURL: fileURL)
+
+        // A change beyond the position is on disk as soon as the call returns.
+        persistence.saveProgress(state(position: 1))
+        #expect(persistence.load() == state(position: 1))
+        let longerQueue = [entry, PlaybackQueueEntry(song: makeSong(id: "queued-song"))]
+        persistence.saveProgress(state(position: 2, queue: longerQueue))
+        #expect(persistence.load() == state(position: 2, queue: longerQueue))
+
+        // A waiting progress update must not replace the pause saved after it.
+        persistence.saveProgress(state(position: 3, queue: longerQueue))
+        let paused = state(position: 4, isPlaying: false, queue: longerQueue)
+        persistence.save(paused)
+        try await Task.sleep(for: .seconds(6))
+        #expect(persistence.load() == paused)
+
+        persistence.saveProgress(state(position: 5, isPlaying: false, queue: longerQueue))
+        persistence.saveProgress(state(position: 6, isPlaying: false, queue: longerQueue))
+        #expect(persistence.load() == paused)
+        let savedLatestProgress = await eventually(timeout: .seconds(10)) {
+            persistence.load()?.position == 6
+        }
+        #expect(savedLatestProgress)
+    }
+
     @Test func serverLifecycleTrimsUpdatesSortsTouchesAndDeletes() async throws {
         let credentials = MemoryCredentialStore()
         let registry = ServerRegistry(fileURL: nil, keychain: credentials)

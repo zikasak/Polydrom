@@ -7,15 +7,12 @@
 
 import SwiftUI
 
-private struct LibraryGridIsScrollingKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-extension EnvironmentValues {
-    var libraryGridIsScrolling: Bool {
-        get { self[LibraryGridIsScrollingKey.self] }
-        set { self[LibraryGridIsScrollingKey.self] = newValue }
-    }
+/// Scroll activity shared with the covers inside a lazy container. It is an
+/// observable reference so a phase change re-renders only the covers that are
+/// still waiting for an image instead of every visible row.
+@Observable
+final class LibraryScrollActivity {
+    var isScrolling = false
 }
 
 struct LazyLibraryList<Data, Row>: View where Data: RandomAccessCollection, Data.Element: Identifiable, Row: View {
@@ -23,7 +20,7 @@ struct LazyLibraryList<Data, Row>: View where Data: RandomAccessCollection, Data
     let rowInsets: EdgeInsets
     let row: (Data.Element) -> Row
 
-    @State private var isScrolling = false
+    @State private var scrollActivity = LibraryScrollActivity()
 
     init(
         _ items: Data,
@@ -47,9 +44,9 @@ struct LazyLibraryList<Data, Row>: View where Data: RandomAccessCollection, Data
             .padding(.vertical, 4)
         }
         .onScrollPhaseChange { _, newPhase in
-            isScrolling = newPhase.isScrolling
+            scrollActivity.isScrolling = newPhase.isScrolling
         }
-        .environment(\.libraryGridIsScrolling, isScrolling)
+        .environment(scrollActivity)
     }
 }
 
@@ -59,7 +56,7 @@ struct LazyLibraryCardGrid<Data, Card>: View where Data: RandomAccessCollection,
     let spacing: CGFloat
     let card: (Data.Element) -> Card
 
-    @State private var isScrolling = false
+    @State private var scrollActivity = LibraryScrollActivity()
 
     init(
         _ items: Data,
@@ -88,8 +85,8 @@ struct LazyLibraryCardGrid<Data, Card>: View where Data: RandomAccessCollection,
             .padding(.horizontal, 8)
         }
         .onScrollPhaseChange { _, newPhase in
-            isScrolling = newPhase.isScrolling
+            scrollActivity.isScrolling = newPhase.isScrolling
         }
-        .environment(\.libraryGridIsScrolling, isScrolling)
+        .environment(scrollActivity)
     }
 }

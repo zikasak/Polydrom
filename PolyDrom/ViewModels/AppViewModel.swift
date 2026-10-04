@@ -135,6 +135,9 @@ final class AppCoordinator: ObservableObject {
     var loadedGenreSongsID: String?
     var loadedPlaylistSongsID: String?
     private let coverArtPrefetchLimit = 200
+    /// Covers decoded before a list is shown. Decoding more than the decoded
+    /// image cache holds would delay the list only to evict its first rows.
+    private let coverArtWarmLimit = 1_000
     private let thumbnailCoverSize = 96
     let gridCoverSize = 220
     private let interchangeableThumbnailSizes = [72, 80, 96]
@@ -1506,17 +1509,17 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func warmCachedAlbumCovers(_ albums: [NavidromeAlbum]) async {
-        let resources = albums.compactMap { coverArtResource(for: $0, size: gridCoverSize) }
+        let resources = albums.prefix(coverArtWarmLimit).compactMap { coverArtResource(for: $0, size: gridCoverSize) }
         await coverArtCache.warmCachedImages(resources)
     }
 
     func warmCachedArtistCovers(_ artists: [NavidromeArtist]) async {
-        let resources = artists.compactMap { coverArtResource(for: $0, size: gridCoverSize) }
+        let resources = artists.prefix(coverArtWarmLimit).compactMap { coverArtResource(for: $0, size: gridCoverSize) }
         await coverArtCache.warmCachedImages(resources)
     }
 
     func warmCachedSongCovers(_ songs: [NavidromeSong]) async {
-        let resources = songs.compactMap { coverArtResource(for: $0, size: thumbnailCoverSize) }
+        let resources = songs.prefix(coverArtWarmLimit).compactMap { coverArtResource(for: $0, size: thumbnailCoverSize) }
         await coverArtCache.warmCachedImages(resources)
     }
 

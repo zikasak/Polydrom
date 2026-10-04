@@ -181,14 +181,10 @@ struct ViewRenderingTests {
         #expect(PlayerDetailPanel.lyrics.systemImage == "quote.bubble")
     }
 
-    @Test func lazyContainersAndEnvironmentValuesBuild() async {
+    @Test func lazyContainersBuild() async {
         let songs = [makeSong(albumId: nil, artistId: nil)]
         await render(LazyLibraryList(songs) { song in Text(song.title) })
         await render(LazyLibraryCardGrid(songs, minimumCardWidth: 100, spacing: 4) { song in Text(song.title) })
-        var values = EnvironmentValues()
-        #expect(values.libraryGridIsScrolling == false)
-        values.libraryGridIsScrolling = true
-        #expect(values.libraryGridIsScrolling == true)
     }
 
     @Test func mainWindowConfigurationSupportsSmoothLiveResize() {

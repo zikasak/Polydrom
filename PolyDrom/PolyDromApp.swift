@@ -22,6 +22,8 @@ struct PolyDromApp: App {
                 .onAppear {
                     let model = viewModel
                     applicationDelegate.prepareForTermination = { [weak model] in
+                        // The position saved during playback may be a few seconds old.
+                        model?.persistPlaybackState()
                         await model?.stopSonosForTermination()
                         await model?.playbackReporter.finishForApplicationTermination()
                     }
