@@ -94,9 +94,11 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
     private var accessedKeys = Set<String>()
     private let accessedKeyFlushThreshold = 64
 
+    /// A hit records `backingKeys`, the keys whose stored bytes can stand in for
+    /// this image, since the image may have been decoded from any of them.
     /// `accessBacklogIsFull` is set once when enough keys have piled up that
     /// the owner should drain them.
-    func image(forKey key: String, accessBacklogIsFull: inout Bool) -> CGImage? {
+    func image(forKey key: String, backingKeys: [String], accessBacklogIsFull: inout Bool) -> CGImage? {
         lock.lock()
         defer { lock.unlock() }
 
@@ -104,7 +106,9 @@ private nonisolated final class DecodedCoverArtCache: @unchecked Sendable {
         accessCounter &+= 1
         entry.lastAccess = accessCounter
         entries[key] = entry
-        if accessedKeys.insert(key).inserted, accessedKeys.count == accessedKeyFlushThreshold {
+        let previousCount = accessedKeys.count
+        accessedKeys.formUnion(backingKeys)
+        if previousCount < accessedKeyFlushThreshold, accessedKeys.count >= accessedKeyFlushThreshold {
             accessBacklogIsFull = true
         }
         return entry.image
@@ -443,8 +447,13 @@ actor CoverArtCache {
             }
         }
 
-        for cacheKey in resource.allCacheKeys {
-            if let image = decodedImageCache.image(forKey: cacheKey, accessBacklogIsFull: &accessBacklogIsFull) {
+        let cacheKeys = resource.allCacheKeys
+        for cacheKey in cacheKeys {
+            if let image = decodedImageCache.image(
+                forKey: cacheKey,
+                backingKeys: cacheKeys,
+                accessBacklogIsFull: &accessBacklogIsFull
+            ) {
                 return image
             }
         }
@@ -674,6 +683,12 @@ actor CoverArtCache {
         }
     }
 
+    /// Lets the next crawl ask again for covers the server rejected earlier, in
+    /// case the artwork was repaired without its ID changing.
+    func forgetCrawlFailures() {
+        crawlFailedKeys.removeAll()
+    }
+
     /// The size of the cover art stored on disk, in bytes.
     func diskUsageBytes() -> Int {
         loadDiskEntriesIfNeeded()
@@ -858,7 +873,9 @@ actor CoverArtCache {
         for cacheKey in resource.allCacheKeys {
             let key = cacheKey as NSString
             if let cachedData = memoryCache.object(forKey: key) {
-                memoryAccessedKeys.insert(cacheKey)
+                // Bytes read through a fallback are also held under the requested
+                // key, so the file that supplied them may be any of these.
+                memoryAccessedKeys.formUnion(resource.allCacheKeys)
                 return Data(referencing: cachedData)
             }
 

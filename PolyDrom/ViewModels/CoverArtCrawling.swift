@@ -18,7 +18,7 @@ extension AppCoordinator {
         let generation = sessionGeneration
         let task = Task(priority: .background) { [weak self] in
             guard let self else { return }
-            await self.crawlCoverArt(id: id, serverKey: serverKey, generation: generation)
+            await self.crawlCoverArt(id: id, serverKey: serverKey, generation: generation, retryingRejectedCovers: restart)
         }
         coverArtCrawl = (id, task)
     }
@@ -55,11 +55,14 @@ extension AppCoordinator {
         }
     }
 
-    private func crawlCoverArt(id: UUID, serverKey: String, generation: UInt) async {
+    private func crawlCoverArt(id: UUID, serverKey: String, generation: UInt, retryingRejectedCovers: Bool) async {
         defer {
             if coverArtCrawl?.id == id {
                 coverArtCrawl = nil
             }
+        }
+        if retryingRejectedCovers {
+            await coverArtCache.forgetCrawlFailures()
         }
         guard let albums = try? await store.albums(serverKey: serverKey),
               let allArtists = try? await store.artists(serverKey: serverKey) else { return }
