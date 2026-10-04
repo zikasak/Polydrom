@@ -395,13 +395,7 @@ final class LibraryStore {
                 serverKey: serverKey,
                 in: context
             )
-            try Self.reconcile(
-                entityName: "VDArtist",
-                idKey: "artistID",
-                serverKey: serverKey,
-                incomingIDs: Set(snapshot.artists.map(\.id)),
-                in: context
-            )
+            Self.deleteMissing(existingArtists, incomingIDs: Set(snapshot.artists.map(\.id)), in: context)
             for artist in snapshot.artists {
                 try Self.upsertArtist(
                     artist,
@@ -419,13 +413,7 @@ final class LibraryStore {
                 serverKey: serverKey,
                 in: context
             )
-            try Self.reconcile(
-                entityName: "VDAlbum",
-                idKey: "albumID",
-                serverKey: serverKey,
-                incomingIDs: Set(snapshot.albums.map(\.id)),
-                in: context
-            )
+            Self.deleteMissing(existingAlbums, incomingIDs: Set(snapshot.albums.map(\.id)), in: context)
             for album in snapshot.albums {
                 try Self.upsertAlbum(
                     album,
@@ -448,13 +436,7 @@ final class LibraryStore {
                 serverKey: serverKey,
                 in: context
             )
-            try Self.reconcile(
-                entityName: "VDSong",
-                idKey: "songID",
-                serverKey: serverKey,
-                incomingIDs: Set(allSongs.map(\.id)),
-                in: context
-            )
+            Self.deleteMissing(existingSongs, incomingIDs: knownSongIDs, in: context)
             for song in allSongs {
                 _ = try Self.upsertSong(
                     song,
@@ -468,9 +450,11 @@ final class LibraryStore {
             }
             try Self.replaceGenres(with: allSongs, serverKey: serverKey, in: context)
 
+            // Every playlist song was already written with the catalog above.
             try Self.replacePlaylists(
                 summaries: snapshot.playlists.map(\.playlist),
                 refreshed: snapshot.playlists,
+                upsertsSongs: false,
                 serverKey: serverKey,
                 in: context
             )
@@ -484,13 +468,14 @@ final class LibraryStore {
         }
     }
 
+    /// Returns whether any playlist or favorite actually changed.
     func applyUserMetadata(
         playlists: [NavidromePlaylist],
         refreshedPlaylists: [PlaylistMetadataSnapshot],
         favorites: FavoriteMetadata,
         serverKey: String,
         checkedAt: Date
-    ) async throws {
+    ) async throws -> Bool {
         try await performBackground { context in
             try Self.replacePlaylists(
                 summaries: playlists,
@@ -519,9 +504,12 @@ final class LibraryStore {
                 serverKey: serverKey,
                 in: context
             )
+            // Checked before the timestamp is stamped, which always dirties the context.
+            let didChange = context.hasChanges
             let state = try Self.syncStateObject(serverKey: serverKey, createIfMissing: true, in: context)
             state?.setValue(checkedAt, forKey: "lastCheckedAt")
             try context.save()
+            return didChange
         }
     }
 
@@ -598,12 +586,6 @@ final class LibraryStore {
         serverKey: String,
         in context: NSManagedObjectContext
     ) throws {
-        for entityName in ["VDGenreSong", "VDGenre"] {
-            let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-            try context.fetch(request).forEach(context.delete)
-        }
-
         var displayNames: [String: String] = [:]
         var songIDsByGenre: [String: Set<String>] = [:]
         for song in songs {
@@ -617,26 +599,50 @@ final class LibraryStore {
             }
         }
 
-        for genreID in songIDsByGenre.keys.sorted() {
-            guard let name = displayNames[genreID], let songIDs = songIDsByGenre[genreID] else { continue }
-            let genre = NSEntityDescription.insertNewObject(forEntityName: "VDGenre", into: context)
-            genre.setValue(serverKey, forKey: "serverKey")
-            genre.setValue(genreID, forKey: "genreID")
-            genre.setValue(name, forKey: "name")
-            genre.setValue(Int64(songIDs.count), forKey: "songCount")
+        // Memberships are diffed rather than rebuilt: there is one row per song
+        // and genre, and almost none of them change between scans.
+        var staleGenres = try objectsByID(entityName: "VDGenre", idKey: "genreID", serverKey: serverKey, in: context)
+        var staleMemberships: [String: [String: NSManagedObject]] = [:]
+        let membershipRequest = NSFetchRequest<NSManagedObject>(entityName: "VDGenreSong")
+        membershipRequest.predicate = NSPredicate(format: "serverKey == %@", serverKey)
+        for membership in try context.fetch(membershipRequest) {
+            guard let genreID = membership.value(forKey: "genreID") as? String,
+                  let songID = membership.value(forKey: "songID") as? String else {
+                context.delete(membership)
+                continue
+            }
+            staleMemberships[genreID, default: [:]][songID] = membership
+        }
 
-            for songID in songIDs.sorted() {
+        for (genreID, songIDs) in songIDsByGenre {
+            guard let name = displayNames[genreID] else { continue }
+            let genre = staleGenres.removeValue(forKey: genreID)
+                ?? NSEntityDescription.insertNewObject(forEntityName: "VDGenre", into: context)
+            assign(serverKey, forKey: "serverKey", to: genre)
+            assign(genreID, forKey: "genreID", to: genre)
+            assign(name, forKey: "name", to: genre)
+            assign(Int64(songIDs.count), forKey: "songCount", to: genre)
+
+            var staleSongs = staleMemberships.removeValue(forKey: genreID) ?? [:]
+            for songID in songIDs where staleSongs.removeValue(forKey: songID) == nil {
                 let membership = NSEntityDescription.insertNewObject(forEntityName: "VDGenreSong", into: context)
                 membership.setValue(serverKey, forKey: "serverKey")
                 membership.setValue(genreID, forKey: "genreID")
                 membership.setValue(songID, forKey: "songID")
             }
+            staleSongs.values.forEach(context.delete)
+        }
+
+        staleGenres.values.forEach(context.delete)
+        for memberships in staleMemberships.values {
+            memberships.values.forEach(context.delete)
         }
     }
 
     private nonisolated static func replacePlaylists(
         summaries: [NavidromePlaylist],
         refreshed: [PlaylistMetadataSnapshot],
+        upsertsSongs: Bool = true,
         serverKey: String,
         in context: NSManagedObjectContext
     ) throws {
@@ -647,13 +653,7 @@ final class LibraryStore {
             serverKey: serverKey,
             in: context
         )
-        try reconcile(
-            entityName: "VDPlaylist",
-            idKey: "playlistID",
-            serverKey: serverKey,
-            incomingIDs: incomingIDs,
-            in: context
-        )
+        deleteMissing(existingPlaylists, incomingIDs: incomingIDs, in: context)
 
         let staleEntryRequest = NSFetchRequest<NSManagedObject>(entityName: "VDPlaylistEntry")
         if incomingIDs.isEmpty {
@@ -677,38 +677,52 @@ final class LibraryStore {
             )
         }
 
-        var existingSongs = try objectsByID(
-            entityName: "VDSong",
-            idKey: "songID",
-            serverKey: serverKey,
-            in: context
-        )
-        for snapshot in refreshed {
-            for song in snapshot.songs {
-                let object = try upsertSong(
-                    song,
+        // Only the songs these playlists reference are loaded, not the library.
+        var existingSongs: [String: NSManagedObject] = [:]
+        if upsertsSongs {
+            let playlistSongIDs = Set(refreshed.flatMap { $0.songs.map(\.id) })
+            if !playlistSongIDs.isEmpty {
+                existingSongs = try objectsByID(
+                    entityName: "VDSong",
+                    idKey: "songID",
                     serverKey: serverKey,
-                    isFavorite: nil,
-                    existing: existingSongs[song.id],
-                    existingObjectsArePreloaded: true,
+                    ids: playlistSongIDs,
                     in: context
                 )
-                existingSongs[song.id] = object
             }
-            let oldEntries = NSFetchRequest<NSManagedObject>(entityName: "VDPlaylistEntry")
-            oldEntries.predicate = NSPredicate(
+        }
+        for snapshot in refreshed {
+            if upsertsSongs {
+                for song in snapshot.songs {
+                    let object = try upsertSong(
+                        song,
+                        serverKey: serverKey,
+                        isFavorite: nil,
+                        existing: existingSongs[song.id],
+                        existingObjectsArePreloaded: true,
+                        in: context
+                    )
+                    existingSongs[song.id] = object
+                }
+            }
+            let entryRequest = NSFetchRequest<NSManagedObject>(entityName: "VDPlaylistEntry")
+            entryRequest.predicate = NSPredicate(
                 format: "serverKey == %@ AND playlistID == %@",
                 serverKey,
                 snapshot.playlist.id
             )
-            try context.fetch(oldEntries).forEach(context.delete)
+            entryRequest.sortDescriptors = [NSSortDescriptor(key: "position", ascending: true)]
+            let oldEntries = try context.fetch(entryRequest)
             for (position, song) in snapshot.songs.enumerated() {
-                let entry = NSEntityDescription.insertNewObject(forEntityName: "VDPlaylistEntry", into: context)
-                entry.setValue(serverKey, forKey: "serverKey")
-                entry.setValue(snapshot.playlist.id, forKey: "playlistID")
-                entry.setValue(song.id, forKey: "songID")
-                entry.setValue(Int64(position), forKey: "position")
+                let entry = position < oldEntries.count
+                    ? oldEntries[position]
+                    : NSEntityDescription.insertNewObject(forEntityName: "VDPlaylistEntry", into: context)
+                assign(serverKey, forKey: "serverKey", to: entry)
+                assign(snapshot.playlist.id, forKey: "playlistID", to: entry)
+                assign(song.id, forKey: "songID", to: entry)
+                assign(Int64(position), forKey: "position", to: entry)
             }
+            oldEntries.dropFirst(snapshot.songs.count).forEach(context.delete)
         }
     }
 
@@ -719,28 +733,27 @@ final class LibraryStore {
         serverKey: String,
         in context: NSManagedObjectContext
     ) throws {
+        // Only rows whose flag can change are loaded: current favorites and new ones.
         let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-        request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
+        request.predicate = NSPredicate(
+            format: "serverKey == %@ AND (isFavorite == YES OR %K IN %@)",
+            serverKey,
+            idKey,
+            Array(favoriteIDs)
+        )
         for object in try context.fetch(request) {
             let id = object.value(forKey: idKey) as? String ?? ""
-            object.setValue(favoriteIDs.contains(id), forKey: "isFavorite")
+            assign(favoriteIDs.contains(id), forKey: "isFavorite", to: object)
         }
     }
 
-    private nonisolated static func reconcile(
-        entityName: String,
-        idKey: String,
-        serverKey: String,
+    private nonisolated static func deleteMissing(
+        _ existing: [String: NSManagedObject],
         incomingIDs: Set<String>,
         in context: NSManagedObjectContext
-    ) throws {
-        let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-        request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
-        for object in try context.fetch(request) {
-            let id = object.value(forKey: idKey) as? String ?? ""
-            if !incomingIDs.contains(id) {
-                context.delete(object)
-            }
+    ) {
+        for (id, object) in existing where !incomingIDs.contains(id) {
+            context.delete(object)
         }
     }
 
@@ -748,16 +761,30 @@ final class LibraryStore {
         entityName: String,
         idKey: String,
         serverKey: String,
+        ids: Set<String>? = nil,
         in context: NSManagedObjectContext
     ) throws -> [String: NSManagedObject] {
         let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
-        request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
+        if let ids {
+            request.predicate = NSPredicate(format: "serverKey == %@ AND %K IN %@", serverKey, idKey, Array(ids))
+        } else {
+            request.predicate = NSPredicate(format: "serverKey == %@", serverKey)
+        }
         return Dictionary(
             uniqueKeysWithValues: try context.fetch(request).compactMap { object in
                 guard let id = object.value(forKey: idKey) as? String else { return nil }
                 return (id, object)
             }
         )
+    }
+
+    /// Assigning an attribute marks the object as changed even when the value is
+    /// identical, which makes a save rewrite every row of an unchanged library.
+    private nonisolated static func assign(_ value: Any?, forKey key: String, to object: NSManagedObject) {
+        let current = object.value(forKey: key)
+        if current == nil, value == nil { return }
+        if let current = current as? NSObject, let value, current.isEqual(value) { return }
+        object.setValue(value, forKey: key)
     }
 
     @discardableResult
@@ -778,13 +805,13 @@ final class LibraryStore {
             serverKey: serverKey,
             in: context
         )
-        object.setValue(serverKey, forKey: "serverKey")
-        object.setValue(artist.id, forKey: "artistID")
-        object.setValue(artist.name, forKey: "name")
-        object.setValue(artist.albumCount.map { Int64($0) }, forKey: "albumCount")
-        object.setValue(artist.coverArt, forKey: "coverArt")
-        object.setValue(artist.artistImageURL, forKey: "artistImageURL")
-        object.setValue(isFavorite, forKey: "isFavorite")
+        assign(serverKey, forKey: "serverKey", to: object)
+        assign(artist.id, forKey: "artistID", to: object)
+        assign(artist.name, forKey: "name", to: object)
+        assign(artist.albumCount.map { Int64($0) }, forKey: "albumCount", to: object)
+        assign(artist.coverArt, forKey: "coverArt", to: object)
+        assign(artist.artistImageURL, forKey: "artistImageURL", to: object)
+        assign(isFavorite, forKey: "isFavorite", to: object)
         return object
     }
 
@@ -806,17 +833,17 @@ final class LibraryStore {
             serverKey: serverKey,
             in: context
         )
-        object.setValue(serverKey, forKey: "serverKey")
-        object.setValue(album.id, forKey: "albumID")
-        object.setValue(album.name, forKey: "name")
-        object.setValue(album.artist, forKey: "artist")
-        object.setValue(album.artistId, forKey: "artistID")
-        object.setValue(album.songCount.map { Int64($0) }, forKey: "songCount")
-        object.setValue(album.year.map { Int64($0) }, forKey: "year")
-        object.setValue(album.coverArt, forKey: "coverArt")
-        object.setValue(album.created, forKey: "created")
-        object.setValue(album.played, forKey: "serverPlayedAt")
-        object.setValue(isFavorite, forKey: "isFavorite")
+        assign(serverKey, forKey: "serverKey", to: object)
+        assign(album.id, forKey: "albumID", to: object)
+        assign(album.name, forKey: "name", to: object)
+        assign(album.artist, forKey: "artist", to: object)
+        assign(album.artistId, forKey: "artistID", to: object)
+        assign(album.songCount.map { Int64($0) }, forKey: "songCount", to: object)
+        assign(album.year.map { Int64($0) }, forKey: "year", to: object)
+        assign(album.coverArt, forKey: "coverArt", to: object)
+        assign(album.created, forKey: "created", to: object)
+        assign(album.played, forKey: "serverPlayedAt", to: object)
+        assign(isFavorite, forKey: "isFavorite", to: object)
         return object
     }
 
@@ -840,24 +867,24 @@ final class LibraryStore {
             in: context
         )
 
-        object.setValue(serverKey, forKey: "serverKey")
-        object.setValue(song.id, forKey: "songID")
-        object.setValue(song.title, forKey: "title")
-        object.setValue(song.artist, forKey: "artist")
-        object.setValue(song.album, forKey: "album")
-        object.setValue(song.duration.map { Int64($0) }, forKey: "duration")
-        object.setValue(song.coverArt, forKey: "coverArt")
-        object.setValue(song.albumId, forKey: "albumId")
-        object.setValue(song.artistId, forKey: "artistId")
-        object.setValue(song.track.map { Int64($0) }, forKey: "track")
-        object.setValue(song.discNumber.map { Int64($0) }, forKey: "discNumber")
-        object.setValue(song.created, forKey: "created")
-        object.setValue(song.played, forKey: "serverPlayedAt")
+        assign(serverKey, forKey: "serverKey", to: object)
+        assign(song.id, forKey: "songID", to: object)
+        assign(song.title, forKey: "title", to: object)
+        assign(song.artist, forKey: "artist", to: object)
+        assign(song.album, forKey: "album", to: object)
+        assign(song.duration.map { Int64($0) }, forKey: "duration", to: object)
+        assign(song.coverArt, forKey: "coverArt", to: object)
+        assign(song.albumId, forKey: "albumId", to: object)
+        assign(song.artistId, forKey: "artistId", to: object)
+        assign(song.track.map { Int64($0) }, forKey: "track", to: object)
+        assign(song.discNumber.map { Int64($0) }, forKey: "discNumber", to: object)
+        assign(song.created, forKey: "created", to: object)
+        assign(song.played, forKey: "serverPlayedAt", to: object)
         if replaceGenres || object.value(forKey: "genresData") == nil,
-           let genresData = try? JSONEncoder().encode(song.genres) {
-            object.setValue(genresData, forKey: "genresData")
+           let genresData = try? genresEncoder.encode(song.genres) {
+            assign(genresData, forKey: "genresData", to: object)
         }
-        if let isFavorite { object.setValue(isFavorite, forKey: "isFavorite") }
+        if let isFavorite { assign(isFavorite, forKey: "isFavorite", to: object) }
         return object
     }
 
@@ -878,13 +905,13 @@ final class LibraryStore {
             serverKey: serverKey,
             in: context
         )
-        object.setValue(serverKey, forKey: "serverKey")
-        object.setValue(playlist.id, forKey: "playlistID")
-        object.setValue(playlist.name, forKey: "name")
-        object.setValue(playlist.songCount.map { Int64($0) }, forKey: "songCount")
-        object.setValue(playlist.owner, forKey: "owner")
-        object.setValue(playlist.changed, forKey: "changedAt")
-        object.setValue(playlist.isReadOnly, forKey: "isReadOnly")
+        assign(serverKey, forKey: "serverKey", to: object)
+        assign(playlist.id, forKey: "playlistID", to: object)
+        assign(playlist.name, forKey: "name", to: object)
+        assign(playlist.songCount.map { Int64($0) }, forKey: "songCount", to: object)
+        assign(playlist.owner, forKey: "owner", to: object)
+        assign(playlist.changed, forKey: "changedAt", to: object)
+        assign(playlist.isReadOnly, forKey: "isReadOnly", to: object)
         return object
     }
 
@@ -961,6 +988,8 @@ final class LibraryStore {
             lastConnectedAt: object.value(forKey: "lastConnectedAt") as? Date
         )
     }
+
+    private nonisolated static let genresEncoder = JSONEncoder()
 
     private nonisolated static func song(from object: NSManagedObject) -> NavidromeSong {
         NavidromeSong(

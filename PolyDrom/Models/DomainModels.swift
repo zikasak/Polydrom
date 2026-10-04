@@ -125,11 +125,14 @@ struct NavidromeSong: Codable, Identifiable, Hashable, Sendable {
         created = container.decodeDateIfPresent(forKey: .created)
         played = container.decodeDateIfPresent(forKey: .played)
         suffix = container.decodeStringIfPresent(forKey: .suffix)
-        let modernGenres = (try? container.decode([SongGenreValue].self, forKey: .genres)) ?? []
-        let singleModernGenre = try? container.decode(SongGenreValue.self, forKey: .genres)
+        let modernGenres = try? container.decode([SongGenreValue].self, forKey: .genres)
+        var singleModernGenre: SongGenreValue?
+        if modernGenres == nil, container.contains(.genres) {
+            singleModernGenre = try? container.decode(SongGenreValue.self, forKey: .genres)
+        }
         let legacyGenre = container.decodeStringIfPresent(forKey: .genre)
         genres = Self.normalizedGenres(
-            modernGenres.map(\.name) + [singleModernGenre?.name, legacyGenre].compactMap { $0 }
+            (modernGenres ?? []).map(\.name) + [singleModernGenre?.name, legacyGenre].compactMap { $0 }
         )
     }
 
@@ -478,6 +481,8 @@ private extension KeyedDecodingContainer {
     }
 
     func decodeStringIfPresent(forKey key: Key) -> String? {
+        guard contains(key) else { return nil }
+
         if let value = try? decode(String.self, forKey: key) {
             return value
         }
@@ -490,6 +495,8 @@ private extension KeyedDecodingContainer {
     }
 
     func decodeIntIfPresent(forKey key: Key) -> Int? {
+        guard contains(key) else { return nil }
+
         if let value = try? decode(Int.self, forKey: key) {
             return value
         }
@@ -506,12 +513,16 @@ private extension KeyedDecodingContainer {
     }
 
     func decodeDateIfPresent(forKey key: Key) -> Date? {
-        if let date = try? decode(Date.self, forKey: key) {
-            return date
-        }
+        guard contains(key) else { return nil }
 
+        // Navidrome sends ISO 8601 strings, so try that first: a failed decode
+        // builds an error, which adds up over a whole catalog.
         if let value = try? decode(String.self, forKey: key) {
             return FlexibleISO8601.date(from: value)
+        }
+
+        if let date = try? decode(Date.self, forKey: key) {
+            return date
         }
 
         if let milliseconds = try? decode(Double.self, forKey: key) {
@@ -523,10 +534,17 @@ private extension KeyedDecodingContainer {
 }
 
 private enum FlexibleISO8601 {
+    // ISO8601DateFormatter is thread-safe, and building one per date dominated
+    // the cost of decoding large catalog pages.
+    nonisolated(unsafe) private static let fractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+    nonisolated(unsafe) private static let wholeSeconds = ISO8601DateFormatter()
+
     static func date(from value: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        fractional.date(from: value) ?? wholeSeconds.date(from: value)
     }
 }
 
