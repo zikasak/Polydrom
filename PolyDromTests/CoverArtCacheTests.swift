@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Synchronization
 import Testing
 @testable import PolyDrom
 
@@ -129,7 +130,7 @@ struct CoverArtCacheTests {
         let cache = CoverArtCache(session: session, diskDirectory: directory)
         let resource = CoverArtResource(cacheKey: "rejected", url: URL(string: "https://art.example/rejected")!)
 
-        await #expect(throws: NavidromeError.self) { try await cache.data(for: resource) }
+        await #expect(throws: CoverArtError.subsonic(code: 40)) { try await cache.data(for: resource) }
         #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty)
 
         // Once the server accepts the request, the same cover loads normally.
@@ -183,6 +184,322 @@ struct CoverArtCacheTests {
         await diskCache.warmCachedImages([one, one, two], maxConcurrentDecodes: 1)
         #expect(diskCache.cachedImage(for: one) != nil)
         #expect(diskCache.cachedImage(for: two) != nil)
+    }
+
+    @Test func crawlStoresMissingCoversOnDiskWithoutDecodingAndSkipsStoredOnes() async throws {
+        let requestedPaths = Mutex<[String]>([])
+        let session = StubURLProtocol.session { request in
+            requestedPaths.withLock { $0.append(request.url?.lastPathComponent ?? "") }
+            return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let cache = CoverArtCache(session: session, diskDirectory: directory)
+        let stored = CoverArtResource(cacheKey: "stored", url: URL(string: "https://art.example/stored")!)
+        let missing = CoverArtResource(cacheKey: "missing", url: URL(string: "https://art.example/missing")!)
+        _ = try await cache.data(for: stored)
+
+        #expect(await cache.crawl([stored, missing, missing]) == .finished)
+
+        #expect(requestedPaths.withLock { $0 } == ["stored", "missing"])
+        #expect(cache.cachedImage(for: missing) == nil)
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count * 2)
+        // A relaunched cache serves the crawled cover without the network.
+        let relaunched = CoverArtCache(session: session, diskDirectory: directory)
+        #expect(await relaunched.storedImage(for: missing)?.width == 1)
+        #expect(requestedPaths.withLock { $0.count } == 2)
+    }
+
+    @Test func diskLimitEvictsLeastRecentlyUsedCovers() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let resources = (0..<4).map {
+            CoverArtResource(cacheKey: "cover-\($0)", url: URL(string: "https://art.example/\($0)")!)
+        }
+        let writer = CoverArtCache(session: session, diskDirectory: directory)
+        for resource in resources.prefix(3) {
+            _ = try await writer.data(for: resource)
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        // A fresh instance has nothing in memory, so reads below hit the disk.
+        let cache = CoverArtCache(session: session, diskDirectory: directory, diskLimit: onePixelPNG.count * 3)
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count * 3)
+        _ = try await cache.data(for: resources[0])
+        _ = try await cache.data(for: resources[3])
+
+        // The oldest untouched cover goes; the one just read stays.
+        #expect(await cache.diskUsageBytes() <= onePixelPNG.count * 3)
+        let reader = CoverArtCache(session: session, diskDirectory: directory)
+        #expect(await reader.storedImage(for: resources[1]) == nil)
+        #expect(await reader.storedImage(for: resources[0]) != nil)
+        #expect(await reader.storedImage(for: resources[3]) != nil)
+
+        await reader.setDiskLimit(onePixelPNG.count)
+        #expect(await reader.diskUsageBytes() <= onePixelPNG.count)
+    }
+
+    @Test func coversServedFromMemoryCountAsRecentlyUsedOnDisk() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let resources = (0..<5).map {
+            CoverArtResource(cacheKey: "cover-\($0)", url: URL(string: "https://art.example/\($0)")!)
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: directory, diskLimit: onePixelPNG.count * 4)
+        _ = try await cache.image(for: resources[0])
+        for resource in resources[1...3] {
+            try await Task.sleep(for: .milliseconds(20))
+            _ = try await cache.data(for: resource)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Neither read touches the disk: one hits the decoded image, the other
+        // the downloaded bytes held in memory.
+        #expect(cache.cachedImage(for: resources[0]) != nil)
+        _ = try await cache.data(for: resources[1])
+        _ = try await cache.data(for: resources[4])
+
+        let reader = CoverArtCache(session: session, diskDirectory: directory)
+        #expect(await reader.storedImage(for: resources[0]) != nil)
+        #expect(await reader.storedImage(for: resources[1]) != nil)
+        #expect(await reader.storedImage(for: resources[2]) == nil)
+        #expect(await reader.storedImage(for: resources[3]) == nil)
+    }
+
+    @Test func memoryHitsThroughAFallbackKeepTheFileThatSuppliedThem() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let large = CoverArtResource(cacheKey: "cover|96", url: URL(string: "https://art.example/96")!)
+        let small = CoverArtResource(
+            cacheKey: "cover|80",
+            url: URL(string: "https://art.example/80")!,
+            fallbackCacheKeys: [large.cacheKey]
+        )
+        let fillers = (0..<3).map {
+            CoverArtResource(cacheKey: "filler-\($0)", url: URL(string: "https://art.example/filler-\($0)")!)
+        }
+        _ = try await CoverArtCache(session: session, diskDirectory: directory).data(for: large)
+
+        let cache = CoverArtCache(session: session, diskDirectory: directory, diskLimit: onePixelPNG.count * 3)
+        _ = try await cache.data(for: small)
+        for filler in fillers.prefix(2) {
+            try await Task.sleep(for: .milliseconds(20))
+            _ = try await cache.data(for: filler)
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        // Served from memory under the small key; the bytes live in the large file.
+        _ = try await cache.data(for: small)
+        _ = try await cache.data(for: fillers[2])
+
+        let reader = CoverArtCache(session: session, diskDirectory: directory)
+        #expect(await reader.storedImage(for: large) != nil)
+        #expect(await reader.storedImage(for: fillers[0]) == nil)
+    }
+
+    @Test func crawlStopsAtTheDiskLimitWithoutEvictingStoredCovers() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let cache = CoverArtCache(
+            session: session,
+            diskDirectory: try temporaryDirectory(),
+            diskLimit: onePixelPNG.count * 2
+        )
+        let viewed = CoverArtResource(cacheKey: "viewed", url: URL(string: "https://art.example/viewed")!)
+        _ = try await cache.data(for: viewed)
+        let crawled = (0..<5).map {
+            CoverArtResource(cacheKey: "crawl-\($0)", url: URL(string: "https://art.example/crawl-\($0)")!)
+        }
+
+        #expect(await cache.crawl(crawled, maxConcurrentRequests: 1) == .cacheFull)
+
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count * 2)
+        try await cache.clear()
+        #expect(await cache.diskUsageBytes() == 0)
+    }
+
+    @Test func crawlRetriesTransientFailuresButNotRejectedArt() async throws {
+        let isHealthy = Mutex(false)
+        let isRepaired = Mutex(false)
+        let requestedPaths = Mutex<[String]>([])
+        let session = StubURLProtocol.session { request in
+            let path = request.url?.lastPathComponent ?? ""
+            requestedPaths.withLock { $0.append(path) }
+            if path == "broken", !isRepaired.withLock({ $0 }) {
+                return StubURLProtocol.Response(data: Data("not an image".utf8))
+            }
+            guard isHealthy.withLock({ $0 }) else {
+                return StubURLProtocol.Response(statusCode: 503, data: Data())
+            }
+            return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
+        let flaky = CoverArtResource(cacheKey: "flaky", url: URL(string: "https://art.example/flaky")!)
+        let broken = CoverArtResource(cacheKey: "broken", url: URL(string: "https://art.example/broken")!)
+
+        #expect(await cache.crawl([flaky, broken], maxConcurrentRequests: 1) == .incomplete)
+
+        isHealthy.withLock { $0 = true }
+        #expect(await cache.crawl([flaky, broken], maxConcurrentRequests: 1) == .finished)
+        #expect(requestedPaths.withLock { $0 } == ["flaky", "broken", "flaky"])
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+
+        // Repaired art is only asked for again once a restarted crawl forgets
+        // the earlier rejection.
+        isRepaired.withLock { $0 = true }
+        #expect(await cache.crawl([flaky, broken]) == .finished)
+        #expect(requestedPaths.withLock { $0.count } == 3)
+        await cache.forgetCrawlFailures()
+        #expect(await cache.crawl([flaky, broken]) == .finished)
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count * 2)
+    }
+
+    @Test func crawlReportsCoversItCouldNotWriteToDisk() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let cache = CoverArtCache(session: session, diskDirectory: directory)
+        let resource = CoverArtResource(cacheKey: "unwritable", url: URL(string: "https://art.example/unwritable")!)
+        try FileManager.default.removeItem(at: directory)
+
+        #expect(await cache.crawl([resource]) == .incomplete)
+        #expect(await cache.diskUsageBytes() == 0)
+
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        #expect(await cache.crawl([resource]) == .finished)
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+    }
+
+    @Test func crawlContinuesPastARunOfMissingCovers() async throws {
+        let session = StubURLProtocol.session { request in
+            guard request.url?.lastPathComponent == "present" else {
+                return StubURLProtocol.Response(statusCode: 404, data: Data())
+            }
+            return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
+        let missing = (0..<20).map {
+            CoverArtResource(cacheKey: "gone-\($0)", url: URL(string: "https://art.example/gone-\($0)")!)
+        }
+        let present = CoverArtResource(cacheKey: "present", url: URL(string: "https://art.example/present")!)
+
+        #expect(await cache.crawl(missing + [present], maxConcurrentRequests: 1) == .finished)
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+    }
+
+    @Test func coversThatCannotBeEvictedStillCountTowardDiskUsage() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let cache = CoverArtCache(session: session, diskDirectory: directory)
+        _ = try await cache.data(for: CoverArtResource(cacheKey: "stuck", url: URL(string: "https://art.example/stuck")!))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path) }
+
+        await cache.setDiskLimit(0)
+
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+    }
+
+    @Test func failedClearStillCountsCoversLeftOnDisk() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let cache = CoverArtCache(session: session, diskDirectory: directory)
+        _ = try await cache.data(for: CoverArtResource(cacheKey: "kept", url: URL(string: "https://art.example/kept")!))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path) }
+
+        await #expect(throws: (any Error).self) { try await cache.clear() }
+
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+    }
+
+    /// Navidrome rejects credentials in an HTTP 200 error document; a proxy in
+    /// front of it answers with 401 or 403.
+    @Test(arguments: [200, 401, 403])
+    func crawlStopsOnRejectedCredentialsAndRetriesOnceAccepted(rejectionStatusCode: Int) async throws {
+        let isAuthorized = Mutex(false)
+        let requests = Mutex(0)
+        let session = StubURLProtocol.session { _ in
+            requests.withLock { $0 += 1 }
+            guard isAuthorized.withLock({ $0 }) else {
+                return StubURLProtocol.Response(
+                    statusCode: rejectionStatusCode,
+                    json: #"{"subsonic-response":{"status":"failed","error":{"code":40,"message":"Wrong username or password"}}}"#
+                )
+            }
+            return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
+        let resources = (0..<20).map {
+            CoverArtResource(cacheKey: "auth-\($0)", url: URL(string: "https://art.example/auth-\($0)")!)
+        }
+
+        #expect(await cache.crawl(resources, maxConcurrentRequests: 1) == .failing)
+        #expect(requests.withLock { $0 } < resources.count)
+
+        isAuthorized.withLock { $0 = true }
+        #expect(await cache.crawl(resources) == .finished)
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count * resources.count)
+    }
+
+    @Test func crawlStoresCoversThatAreOnlyHeldInMemory() async throws {
+        let requests = Mutex(0)
+        let session = StubURLProtocol.session { _ in
+            requests.withLock { $0 += 1 }
+            return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let cache = CoverArtCache(session: session, diskDirectory: directory)
+        let resource = CoverArtResource(cacheKey: "volatile", url: URL(string: "https://art.example/volatile")!)
+        // With the directory gone the download is kept in memory only.
+        try FileManager.default.removeItem(at: directory)
+        _ = try await cache.data(for: resource)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        #expect(await cache.crawl([resource]) == .finished)
+
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+        #expect(requests.withLock { $0 } == 1)
+    }
+
+    @Test func missingCoverBetweenTransientFailuresEndsTheFailureStreak() async throws {
+        let session = StubURLProtocol.session { request in
+            let isMissing = request.url?.lastPathComponent == "missing"
+            return StubURLProtocol.Response(statusCode: isMissing ? 404 : 503, data: Data())
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
+        let resources = (0..<15).map { index in
+            let name = index == 7 ? "missing" : "flaky-\(index)"
+            return CoverArtResource(cacheKey: name, url: URL(string: "https://art.example/\(name)")!)
+        }
+
+        #expect(await cache.crawl(resources, maxConcurrentRequests: 1) == .incomplete)
+    }
+
+    @Test func crawlGivesUpAfterRepeatedFailures() async throws {
+        let requests = Mutex(0)
+        let session = StubURLProtocol.session { _ in
+            requests.withLock { $0 += 1 }
+            throw URLError(.notConnectedToInternet)
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
+        let resources = (0..<50).map {
+            CoverArtResource(cacheKey: "offline-\($0)", url: URL(string: "https://art.example/offline-\($0)")!)
+        }
+
+        #expect(await cache.crawl(resources, maxConcurrentRequests: 1) == .failing)
+        #expect(requests.withLock { $0 } < resources.count)
     }
 
     @Test func cancelledRequestFailsWithoutStartingWork() async throws {

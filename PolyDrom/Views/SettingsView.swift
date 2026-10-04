@@ -16,6 +16,13 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 540)
         .accessibilityIdentifier("serverSettings")
+        .task {
+            // The crawl and normal browsing change the size while Settings is open.
+            while !Task.isCancelled {
+                await viewModel.refreshCoverArtCacheSize()
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
         .alert(
             "Delete Server?",
             isPresented: deletionAlertIsPresented,
@@ -158,16 +165,36 @@ struct SettingsView: View {
             cacheActionRow(
                 title: "Cover art",
                 description: "Remove downloaded artwork. Images will be fetched again when needed.",
+                detail: viewModel.coverArtCacheSize.map { Int64($0).formatted(.byteCount(style: .file)) },
                 accessibilityIdentifier: "clearCoverArtCacheButton"
             ) {
                 pendingCacheClear = .coverArt
             }
+
+            Picker("Cover art cache limit", selection: $viewModel.coverArtCacheLimit) {
+                ForEach(CoverArtCacheLimit.allCases) { limit in
+                    Text(limit.title)
+                        .tag(limit)
+                }
+            }
+            .accessibilityIdentifier("coverArtCacheLimitPicker")
+
+            Toggle("Download covers in the background", isOn: $viewModel.coverArtCrawlEnabled)
+                .accessibilityIdentifier("coverArtCrawlToggle")
+
+            Text(
+                "Fetches album and artist covers after a library refresh so they are ready before you browse. "
+                    + "Turn this off on a metered connection or for a very large library."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
     private func cacheActionRow(
         title: String,
         description: String,
+        detail: String? = nil,
         accessibilityIdentifier: String,
         action: @escaping () -> Void
     ) -> some View {
@@ -180,6 +207,12 @@ struct SettingsView: View {
             }
 
             Spacer()
+
+            if let detail {
+                Text(detail)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
 
             Button("Clear", role: .destructive, action: action)
                 .disabled(!viewModel.canClearCache)

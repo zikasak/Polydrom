@@ -31,6 +31,21 @@ final class AppCoordinator: ObservableObject {
             restartMetadataMonitor(refreshImmediately: false)
         }
     }
+    @Published var coverArtCrawlEnabled: Bool {
+        didSet {
+            guard coverArtCrawlEnabled != oldValue else { return }
+            userDefaults.set(coverArtCrawlEnabled, forKey: Self.coverArtCrawlEnabledKey)
+            coverArtCrawlSettingDidChange()
+        }
+    }
+    @Published var coverArtCacheLimit: CoverArtCacheLimit {
+        didSet {
+            guard coverArtCacheLimit != oldValue else { return }
+            userDefaults.set(coverArtCacheLimit.rawValue, forKey: Self.coverArtCacheLimitKey)
+            applyCoverArtCacheLimit()
+        }
+    }
+    @Published var coverArtCacheSize: Int?
     @Published var searchText = ""
     @Published var searchResults: [NavidromeSong] = []
     @Published var randomSongs: [NavidromeSong] = []
@@ -73,7 +88,7 @@ final class AppCoordinator: ObservableObject {
     let store: LibraryStore
     let serverRegistry: ServerRegistry
     let clientFactory: @MainActor (ServerProfile) -> NavidromeClient?
-    private let coverArtCache: CoverArtCache
+    let coverArtCache: CoverArtCache
     private let syncCoordinator: LibrarySyncCoordinator
     let playbackReporter: PlaybackReporter
     private let userDefaults: UserDefaults
@@ -89,8 +104,15 @@ final class AppCoordinator: ObservableObject {
     var pendingSonosVolume: Int?
     var sonosVolumeErrorMessage: String?
     var client: NavidromeClient? {
-        didSet { coverArtResources.removeAll() }
+        didSet {
+            coverArtResources.removeAll()
+            cancelCoverArtCrawl()
+        }
     }
+    var coverArtCrawl: (id: UUID, task: Task<Void, Never>)?
+    /// The server whose covers were crawled since launch, so later refreshes that
+    /// find nothing new do not walk the whole library again.
+    var coverArtCrawledServerKey: String?
     /// Cover art URLs carry a freshly salted auth token, so building one per row
     /// render is costly. Resources are reused until the client changes.
     private var coverArtResources: [String: CoverArtResource] = [:]
@@ -114,7 +136,7 @@ final class AppCoordinator: ObservableObject {
     var loadedPlaylistSongsID: String?
     private let coverArtPrefetchLimit = 200
     private let thumbnailCoverSize = 96
-    private let gridCoverSize = 220
+    let gridCoverSize = 220
     private let interchangeableThumbnailSizes = [72, 80, 96]
     private var didAttemptInitialConnection = false
     private var didRequestFirstRunSettings = false
@@ -126,6 +148,8 @@ final class AppCoordinator: ObservableObject {
     private var albumFavoriteUpdatesInFlight = Set<String>()
     private var songFavoriteUpdatesInFlight = Set<String>()
     private static let metadataRefreshIntervalKey = "metadataRefreshInterval"
+    private static let coverArtCrawlEnabledKey = "coverArtCrawlEnabled"
+    private static let coverArtCacheLimitKey = "coverArtCacheLimit"
 
     var isConnected: Bool {
         activeServer != nil && isOnline
@@ -184,6 +208,10 @@ final class AppCoordinator: ObservableObject {
                 rawValue: userDefaults.integer(forKey: Self.metadataRefreshIntervalKey)
             ) ?? .fifteenMinutes
         }
+        self.coverArtCrawlEnabled = userDefaults.object(forKey: Self.coverArtCrawlEnabledKey) as? Bool ?? true
+        self.coverArtCacheLimit = CoverArtCacheLimit(
+            rawValue: userDefaults.integer(forKey: Self.coverArtCacheLimitKey)
+        ) ?? .default
         if suppliedRegistry == nil,
            let legacyStoreURL = PersistenceController.legacyStoreURL,
            FileManager.default.fileExists(atPath: legacyStoreURL.path) {
@@ -199,6 +227,7 @@ final class AppCoordinator: ObservableObject {
             try? self.serverRegistry.importLegacyServersIfNeeded(from: store)
         }
         configureAudioPlayer()
+        applyCoverArtCacheLimit()
         restorePersistedPlaybackState()
         loadServers()
         if let initializationError = store.initializationError {
@@ -325,10 +354,13 @@ final class AppCoordinator: ObservableObject {
         isClearingCache = true
         defer { isClearingCache = false }
         cancelCoverArtPrefetchTasks()
+        cancelCoverArtCrawl()
+        coverArtCrawledServerKey = nil
         nowPlayingArtworkTask?.cancel()
 
         do {
             try await coverArtCache.clear()
+            await refreshCoverArtCacheSize()
             AppLog.cache.info("Cleared the cover art cache")
             statusMessage = "Cover art cache cleared."
         } catch {
@@ -1149,11 +1181,13 @@ final class AppCoordinator: ObservableObject {
                 await reloadCachedLibrary(for: generation)
                 hasUnloadedMetadataChanges = false
                 statusMessage = metadataCompletionMessage(prefix: "Library metadata updated")
+                startCoverArtCrawl(restart: true)
             case .metadataOnly:
                 AppLog.sync.info("Metadata refresh completed with a metadata-only sync")
                 await reloadCachedLibrary(for: generation)
                 hasUnloadedMetadataChanges = false
                 statusMessage = metadataCompletionMessage(prefix: "Library metadata is up to date")
+                startCoverArtCrawl(restart: false)
             case .unchanged:
                 AppLog.sync.info("Metadata refresh found no changes")
                 if hadUnloadedChanges {
@@ -1166,6 +1200,7 @@ final class AppCoordinator: ObservableObject {
                 }
                 hasUnloadedMetadataChanges = false
                 statusMessage = metadataCompletionMessage(prefix: "Library metadata is up to date")
+                startCoverArtCrawl(restart: false)
             case .deferredForScan:
                 hasUnloadedMetadataChanges = hadUnloadedChanges
                 AppLog.sync.info("Metadata refresh deferred because Navidrome is scanning")
