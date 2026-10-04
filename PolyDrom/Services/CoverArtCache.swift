@@ -165,8 +165,35 @@ struct CoverArtResource: Hashable {
     }
 }
 
+enum CoverArtError: LocalizedError, Equatable {
+    case http(statusCode: Int)
+    case invalidImage
+
+    var errorDescription: String? {
+        switch self {
+        case .http(let statusCode):
+            "HTTP \(statusCode)"
+        case .invalidImage:
+            "The cover art is not a valid image."
+        }
+    }
+
+    /// Whether asking again would get the same answer. Server-side and
+    /// rate-limit responses are expected to clear up on their own.
+    var isPermanent: Bool {
+        switch self {
+        case .http(let statusCode):
+            (400...499).contains(statusCode) && statusCode != 408 && statusCode != 429
+        case .invalidImage:
+            true
+        }
+    }
+}
+
 enum CoverArtCrawlOutcome: Equatable, Sendable {
     case finished
+    /// Some covers could not be downloaded or stored and are worth retrying.
+    case incomplete
     /// The disk cache reached its limit; crawling further would only evict art.
     case cacheFull
     /// Too many downloads failed in a row, e.g. because the server went offline.
@@ -214,6 +241,16 @@ actor CoverArtCache {
     }
 
     private struct DiskCacheFullError: Error {}
+
+    private enum CrawlItemResult {
+        case stored
+        case retryableFailure
+        case permanentFailure
+        case cacheFull
+        case cancelled
+        /// Dropped by a cache clear, which says nothing about the server.
+        case dropped
+    }
 
     private let memoryCache = NSCache<NSString, NSData>()
     nonisolated private let decodedImageCache = DecodedCoverArtCache()
@@ -324,12 +361,12 @@ actor CoverArtCache {
 
                 let (data, response) = result
                 if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
-                    throw NavidromeError.server(message: "HTTP \(httpResponse.statusCode)")
+                    throw CoverArtError.http(statusCode: httpResponse.statusCode)
                 }
 
                 // Subsonic reports failures such as rejected credentials as an
                 // HTTP 200 error document, which must never be cached as art.
-                guard Self.isImageData(data) else { throw Self.invalidImageError }
+                guard Self.isImageData(data) else { throw CoverArtError.invalidImage }
 
                 return data
             }
@@ -348,11 +385,11 @@ actor CoverArtCache {
                     if isCrawl {
                         // Crawled art stays on disk only, and never pushes out
                         // covers the user has actually looked at.
-                        guard storeOnDisk(data, at: destinationURL, evicting: false) else {
+                        guard try storeOnDisk(data, at: destinationURL, evicting: false) else {
                             throw DiskCacheFullError()
                         }
                     } else {
-                        storeOnDisk(data, at: destinationURL, evicting: true)
+                        _ = try? storeOnDisk(data, at: destinationURL, evicting: true)
                         memoryCache.setObject(data as NSData, forKey: key, cost: data.count)
                     }
                 }
@@ -552,9 +589,10 @@ actor CoverArtCache {
         }
         let limit = max(1, maxConcurrentRequests)
 
-        return await withTaskGroup(of: CoverArtCrawlOutcome?.self) { group in
+        return await withTaskGroup(of: CrawlItemResult.self) { group in
             var iterator = missingResources.makeIterator()
             var consecutiveFailures = 0
+            var hasRetryableFailures = false
 
             for _ in 0..<limit {
                 guard let resource = iterator.next() else { break }
@@ -568,9 +606,10 @@ actor CoverArtCache {
                 }
 
                 switch result {
-                case .finished:
+                case .stored:
                     consecutiveFailures = 0
-                case .failing:
+                case .retryableFailure, .permanentFailure:
+                    hasRetryableFailures = hasRetryableFailures || result == .retryableFailure
                     consecutiveFailures += 1
                     if consecutiveFailures >= crawlFailureLimit {
                         group.cancelAll()
@@ -579,7 +618,9 @@ actor CoverArtCache {
                 case .cacheFull:
                     group.cancelAll()
                     return .cacheFull
-                case .cancelled, nil:
+                case .dropped:
+                    hasRetryableFailures = true
+                case .cancelled:
                     break
                 }
 
@@ -587,7 +628,8 @@ actor CoverArtCache {
                 group.addTask { await self.crawlDownload(resource) }
             }
 
-            return Task.isCancelled ? .cancelled : .finished
+            if Task.isCancelled { return .cancelled }
+            return hasRetryableFailures ? .incomplete : .finished
         }
     }
 
@@ -603,9 +645,7 @@ actor CoverArtCache {
         evictDiskEntriesIfNeeded()
     }
 
-    /// Returns `nil` when the download was dropped by a cache clear, which says
-    /// nothing about whether the server is reachable.
-    private func crawlDownload(_ resource: CoverArtResource) async -> CoverArtCrawlOutcome? {
+    private func crawlDownload(_ resource: CoverArtResource) async -> CrawlItemResult {
         while foregroundRequestCount > 0, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(150))
         }
@@ -616,19 +656,20 @@ actor CoverArtCache {
 
         do {
             _ = try await data(for: resource, isCrawl: true)
-            return .finished
+            return .stored
         } catch is DiskCacheFullError {
             return .cacheFull
         } catch is CancellationError {
-            return Task.isCancelled ? .cancelled : nil
+            return Task.isCancelled ? .cancelled : .dropped
         } catch {
             if Task.isCancelled { return .cancelled }
-            // Rejected or broken art is not retried until the app restarts;
-            // transport errors are, since the server may simply be offline.
-            if !(error is URLError) {
-                crawlFailedKeys.insert(resource.cacheKey)
+            // Rejected or broken art is not retried until the app restarts.
+            // Transport, server, and disk errors are, since they can clear up.
+            guard let coverArtError = error as? CoverArtError, coverArtError.isPermanent else {
+                return .retryableFailure
             }
-            return .failing
+            crawlFailedKeys.insert(resource.cacheKey)
+            return .permanentFailure
         }
     }
 
@@ -654,8 +695,8 @@ actor CoverArtCache {
         diskUsage = usage
     }
 
-    @discardableResult
-    private func storeOnDisk(_ data: Data, at fileURL: URL, evicting: Bool) -> Bool {
+    /// Returns `false` when storing without evicting would exceed the limit.
+    private func storeOnDisk(_ data: Data, at fileURL: URL, evicting: Bool) throws -> Bool {
         loadDiskEntriesIfNeeded()
         let name = fileURL.lastPathComponent
         let previousSize = diskEntries?[name]?.size ?? 0
@@ -663,7 +704,7 @@ actor CoverArtCache {
             return false
         }
 
-        guard (try? data.write(to: fileURL, options: .atomic)) != nil else { return true }
+        try data.write(to: fileURL, options: .atomic)
         diskUsage += data.count - previousSize
         diskEntries?[name] = DiskEntry(size: data.count, lastAccess: Date())
         if evicting {
@@ -762,8 +803,6 @@ actor CoverArtCache {
         return nil
     }
 
-    private static let invalidImageError = NavidromeError.server(message: "The cover art is not a valid image.")
-
     /// Checks the container header only, so it is cheap enough to run on every
     /// download.
     private static func isImageData(_ data: Data) -> Bool {
@@ -782,7 +821,7 @@ actor CoverArtCache {
                           0,
                           [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
                       ) else {
-                    throw Self.invalidImageError
+                    throw CoverArtError.invalidImage
                 }
                 return image
             }.value

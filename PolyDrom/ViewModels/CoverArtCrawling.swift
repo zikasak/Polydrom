@@ -8,6 +8,8 @@ extension AppCoordinator {
         guard coverArtCrawlEnabled, isOnline, let serverKey else { return }
         if restart {
             cancelCoverArtCrawl()
+            // Only the restarted crawl's own result may mark the server done.
+            coverArtCrawledServerKey = nil
         } else if coverArtCrawl != nil || coverArtCrawledServerKey == serverKey {
             return
         }
@@ -68,6 +70,7 @@ extension AppCoordinator {
         // that for a whole library at once would stall the main thread.
         let batchSize = 100
         var outcome = CoverArtCrawlOutcome.finished
+        var isIncomplete = false
         for start in stride(from: 0, to: total, by: batchSize) {
             guard !Task.isCancelled, isCurrentSession(generation, serverKey: serverKey) else { return }
             let resources = (start..<min(start + batchSize, total)).compactMap { index in
@@ -76,11 +79,18 @@ extension AppCoordinator {
                     : coverArtResource(for: artists[index - albums.count], size: gridCoverSize)
             }
             outcome = await coverArtCache.crawl(resources)
+            if outcome == .incomplete {
+                isIncomplete = true
+                outcome = .finished
+            }
             guard outcome == .finished else { break }
         }
 
         guard isCurrentSession(generation, serverKey: serverKey) else { return }
         switch outcome {
+        case .finished where isIncomplete, .incomplete:
+            // Left unmarked so the next library refresh retries what is missing.
+            AppLog.cache.notice("Cover art crawl finished with covers left to retry")
         case .finished:
             AppLog.cache.info("Cover art crawl finished")
             coverArtCrawledServerKey = serverKey

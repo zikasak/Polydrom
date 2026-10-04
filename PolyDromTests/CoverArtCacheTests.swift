@@ -130,7 +130,7 @@ struct CoverArtCacheTests {
         let cache = CoverArtCache(session: session, diskDirectory: directory)
         let resource = CoverArtResource(cacheKey: "rejected", url: URL(string: "https://art.example/rejected")!)
 
-        await #expect(throws: NavidromeError.self) { try await cache.data(for: resource) }
+        await #expect(throws: CoverArtError.invalidImage) { try await cache.data(for: resource) }
         #expect(try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).isEmpty)
 
         // Once the server accepts the request, the same cover loads normally.
@@ -260,6 +260,49 @@ struct CoverArtCacheTests {
         #expect(await cache.diskUsageBytes() == onePixelPNG.count * 2)
         try await cache.clear()
         #expect(await cache.diskUsageBytes() == 0)
+    }
+
+    @Test func crawlRetriesTransientFailuresButNotRejectedArt() async throws {
+        let isHealthy = Mutex(false)
+        let requestedPaths = Mutex<[String]>([])
+        let session = StubURLProtocol.session { request in
+            let path = request.url?.lastPathComponent ?? ""
+            requestedPaths.withLock { $0.append(path) }
+            if path == "broken" {
+                return StubURLProtocol.Response(data: Data("not an image".utf8))
+            }
+            guard isHealthy.withLock({ $0 }) else {
+                return StubURLProtocol.Response(statusCode: 503, data: Data())
+            }
+            return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
+        let flaky = CoverArtResource(cacheKey: "flaky", url: URL(string: "https://art.example/flaky")!)
+        let broken = CoverArtResource(cacheKey: "broken", url: URL(string: "https://art.example/broken")!)
+
+        #expect(await cache.crawl([flaky, broken], maxConcurrentRequests: 1) == .incomplete)
+
+        isHealthy.withLock { $0 = true }
+        #expect(await cache.crawl([flaky, broken], maxConcurrentRequests: 1) == .finished)
+        #expect(requestedPaths.withLock { $0 } == ["flaky", "broken", "flaky"])
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+    }
+
+    @Test func crawlReportsCoversItCouldNotWriteToDisk() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let cache = CoverArtCache(session: session, diskDirectory: directory)
+        let resource = CoverArtResource(cacheKey: "unwritable", url: URL(string: "https://art.example/unwritable")!)
+        try FileManager.default.removeItem(at: directory)
+
+        #expect(await cache.crawl([resource]) == .incomplete)
+        #expect(await cache.diskUsageBytes() == 0)
+
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        #expect(await cache.crawl([resource]) == .finished)
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
     }
 
     @Test func crawlGivesUpAfterRepeatedFailures() async throws {
