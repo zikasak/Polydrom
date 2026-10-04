@@ -305,6 +305,38 @@ struct CoverArtCacheTests {
         #expect(await cache.diskUsageBytes() == onePixelPNG.count)
     }
 
+    @Test func crawlContinuesPastARunOfMissingCovers() async throws {
+        let session = StubURLProtocol.session { request in
+            guard request.url?.lastPathComponent == "present" else {
+                return StubURLProtocol.Response(statusCode: 404, data: Data())
+            }
+            return StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
+        let missing = (0..<20).map {
+            CoverArtResource(cacheKey: "gone-\($0)", url: URL(string: "https://art.example/gone-\($0)")!)
+        }
+        let present = CoverArtResource(cacheKey: "present", url: URL(string: "https://art.example/present")!)
+
+        #expect(await cache.crawl(missing + [present], maxConcurrentRequests: 1) == .finished)
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+    }
+
+    @Test func coversThatCannotBeEvictedStillCountTowardDiskUsage() async throws {
+        let session = StubURLProtocol.session { _ in
+            StubURLProtocol.Response(headers: ["Content-Type": "image/png"], data: onePixelPNG)
+        }
+        let directory = try temporaryDirectory()
+        let cache = CoverArtCache(session: session, diskDirectory: directory)
+        _ = try await cache.data(for: CoverArtResource(cacheKey: "stuck", url: URL(string: "https://art.example/stuck")!))
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path) }
+
+        await cache.setDiskLimit(0)
+
+        #expect(await cache.diskUsageBytes() == onePixelPNG.count)
+    }
+
     @Test func crawlGivesUpAfterRepeatedFailures() async throws {
         let requests = Mutex(0)
         let session = StubURLProtocol.session { _ in

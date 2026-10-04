@@ -608,8 +608,12 @@ actor CoverArtCache {
                 switch result {
                 case .stored:
                     consecutiveFailures = 0
-                case .retryableFailure, .permanentFailure:
-                    hasRetryableFailures = hasRetryableFailures || result == .retryableFailure
+                case .permanentFailure:
+                    // A cover the server refuses says nothing about an outage,
+                    // so a run of missing art must not end the crawl.
+                    break
+                case .retryableFailure:
+                    hasRetryableFailures = true
                     consecutiveFailures += 1
                     if consecutiveFailures >= crawlFailureLimit {
                         group.cancelAll()
@@ -732,7 +736,14 @@ actor CoverArtCache {
         var evictedCount = 0
         for (name, entry) in entries.sorted(by: { $0.value.lastAccess < $1.value.lastAccess }) {
             guard diskUsage > targetUsage else { break }
-            try? FileManager.default.removeItem(at: diskDirectory.appendingPathComponent(name))
+            do {
+                try FileManager.default.removeItem(at: diskDirectory.appendingPathComponent(name))
+            } catch CocoaError.fileNoSuchFile {
+                // Already gone, so its space is free either way.
+            } catch {
+                // The file is still there and still counts toward the limit.
+                continue
+            }
             diskEntries?[name] = nil
             diskUsage -= entry.size
             evictedCount += 1
