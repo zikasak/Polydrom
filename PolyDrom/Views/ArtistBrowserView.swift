@@ -70,31 +70,29 @@ private struct ArtistBrowserGrid: View, Equatable {
 
     var body: some View {
         LazyLibraryCardGrid(artists, minimumCardWidth: 140) { artist in
-            ZStack(alignment: .topTrailing) {
-                NavigationLink(value: LibraryRoute.artist(artist)) {
-                    ArtistCardView(
-                        artist: artist,
-                        coverArtResource: coverArtResource(artist),
-                        isSelected: selectedArtistID == artist.id
-                    )
-                }
-                .buttonStyle(.plain)
+            let isFavorite = favoriteArtistIDs.contains(artist.id)
 
-                Button {
+            // Plain views with tap gestures, as in the album grid: a button or
+            // navigation link costs several times as much to build per card.
+            ArtistCardView(
+                artist: artist,
+                coverArtResource: coverArtResource(artist),
+                isSelected: selectedArtistID == artist.id
+            )
+            .onTapGesture {
+                openLibraryRoute(.artist(artist))
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .overlay(alignment: .topTrailing) {
+                LibraryFavoriteBadge(
+                    isFavorite: isFavorite,
+                    isEnabled: isOnline,
+                    help: isFavorite ? "Remove artist from favorites" : "Add artist to favorites"
+                ) {
                     toggleFavorite(artist)
-                } label: {
-                    Label(
-                        favoriteArtistIDs.contains(artist.id) ? "Unfavorite" : "Favorite",
-                        systemImage: favoriteArtistIDs.contains(artist.id) ? "heart.fill" : "heart"
-                    )
-                    .labelStyle(.iconOnly)
-                    .padding(7)
-                    .background(.regularMaterial, in: Circle())
                 }
-                .buttonStyle(.borderless)
-                .disabled(!isOnline)
                 .padding(15)
-                .help(favoriteArtistIDs.contains(artist.id) ? "Remove artist from favorites" : "Add artist to favorites")
             }
             .contextMenu {
                 Button {
@@ -120,8 +118,8 @@ private struct ArtistBrowserGrid: View, Equatable {
                     toggleFavorite(artist)
                 } label: {
                     Label(
-                        favoriteArtistIDs.contains(artist.id) ? "Remove from Favorites" : "Add to Favorites",
-                        systemImage: favoriteArtistIDs.contains(artist.id) ? "heart.slash" : "heart"
+                        isFavorite ? "Remove from Favorites" : "Add to Favorites",
+                        systemImage: isFavorite ? "heart.slash" : "heart"
                     )
                 }
                 .disabled(!isOnline)

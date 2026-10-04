@@ -90,3 +90,31 @@ struct LazyLibraryCardGrid<Data, Card>: View where Data: RandomAccessCollection,
         .environment(scrollActivity)
     }
 }
+
+/// The favorite toggle shown over a library card.
+struct LibraryFavoriteBadge: View {
+    let isFavorite: Bool
+    let isEnabled: Bool
+    let help: String
+    let toggle: () -> Void
+
+    var body: some View {
+        Image(systemName: isFavorite ? "heart.fill" : "heart")
+            .foregroundStyle(.secondary)
+            .opacity(isEnabled ? 1 : 0.5)
+            .padding(7)
+            // An opaque fill instead of a material: a material is a live blur of
+            // the cover behind it, recomposited for every badge on each frame.
+            .background(Color(nsColor: .windowBackgroundColor).opacity(0.85), in: Circle())
+            .contentShape(Circle())
+            .onTapGesture {
+                // The tap is always taken so it never opens the card underneath.
+                if isEnabled {
+                    toggle()
+                }
+            }
+            .accessibilityLabel(isFavorite ? "Unfavorite" : "Favorite")
+            .accessibilityAddTraits(.isButton)
+            .help(help)
+    }
+}
