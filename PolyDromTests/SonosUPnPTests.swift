@@ -506,6 +506,44 @@ struct SonosUPnPTests {
         #expect(model.audioPlayer.currentSong == second.song)
     }
 
+    @Test func pausedRewindNearTrackEndIsShownAsPausedAtStart() async throws {
+        let speaker = Mutex((sourceURI: "", state: "PLAYING", seconds: 0))
+        let session = StubURLProtocol.session { request in
+            let state = speaker.withLock { speaker in
+                if Self.actionName(request) == "SetAVTransportURI" {
+                    speaker.sourceURI = Self.requestField("CurrentURI", in: request) ?? ""
+                }
+                return speaker
+            }
+            return Self.response(
+                for: request, sourceURI: state.sourceURI,
+                transportState: state.state, seconds: state.seconds
+            )
+        }
+        let (model, _, _) = makeViewModel(sonosUPnP: SonosUPnP(session: session))
+        let profile = makeProfile()
+        model.activeServer = profile
+        model.client = NavidromeClient(profile: profile, session: session)
+        model.isOnline = true
+        let entry = PlaybackQueueEntry(song: makeSong())
+        model.playbackQueue = [entry]
+        model.currentPlaybackQueueEntryID = entry.id
+        model.audioPlayer.restore(song: entry.song, at: 12)
+        model.selectSonosGroup(Self.group())
+        #expect(await eventually(timeout: .seconds(3)) {
+            model.sonosSession?.sourceURI != nil && model.audioPlayer.isPlaying
+        })
+
+        speaker.withLock { $0.seconds = 184 }
+        await model.pollSonosOnce(generation: model.sonosGeneration, tick: 1)
+        // Another controller seeks back to the start and leaves the track paused.
+        speaker.withLock { $0.state = "PAUSED_PLAYBACK"; $0.seconds = 0 }
+        await model.pollSonosOnce(generation: model.sonosGeneration, tick: 2)
+
+        #expect(model.audioPlayer.currentTime == 0)
+        #expect(!model.audioPlayer.isPlaying)
+    }
+
     @Test func pausedTimeIsNotProjectedIntoTrackProgress() async throws {
         let speaker = Mutex((sourceURI: "", state: "PLAYING", seconds: 0))
         let session = StubURLProtocol.session { request in

@@ -503,7 +503,7 @@ extension AppCoordinator {
                 // so the following STOPPED poll recognises the track as finished.
                 let duration = max(audioPlayer.duration, position.duration)
                 let sinceProgress = current.lastProgressAt.map { Date().timeIntervalSince($0) } ?? 0
-                if position.seconds < 1, duration > 0,
+                if playing, position.seconds < 1, duration > 0,
                    audioPlayer.currentTime + sinceProgress >= duration - 2 {
                     return
                 }
