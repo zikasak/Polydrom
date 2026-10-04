@@ -654,9 +654,9 @@ actor CoverArtCache {
                 case .stored:
                     consecutiveFailures = 0
                 case .permanentFailure:
-                    // A cover the server refuses says nothing about an outage,
-                    // so a run of missing art must not end the crawl.
-                    break
+                    // The server answered, so this is no outage: a run of missing
+                    // art must not end the crawl, and it ends any failure streak.
+                    consecutiveFailures = 0
                 case .retryableFailure:
                     hasRetryableFailures = true
                     consecutiveFailures += 1

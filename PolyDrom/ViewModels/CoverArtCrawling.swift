@@ -40,9 +40,14 @@ extension AppCoordinator {
     }
 
     func applyCoverArtCacheLimit() {
-        let limit = coverArtCacheLimit
         Task {
-            await coverArtCache.setDiskLimit(limit.bytes)
+            // Quick successive changes each start a task, and their calls may
+            // land in any order; whichever lands last re-applies the current value.
+            var applied: CoverArtCacheLimit
+            repeat {
+                applied = coverArtCacheLimit
+                await coverArtCache.setDiskLimit(applied.bytes)
+            } while applied != coverArtCacheLimit
             await refreshCoverArtCacheSize()
             // A crawl that stopped at the old limit may have room to continue. One
             // still running may be about to stop for that limit, so it starts over.

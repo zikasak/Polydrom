@@ -473,6 +473,20 @@ struct CoverArtCacheTests {
         #expect(requests.withLock { $0 } == 1)
     }
 
+    @Test func missingCoverBetweenTransientFailuresEndsTheFailureStreak() async throws {
+        let session = StubURLProtocol.session { request in
+            let isMissing = request.url?.lastPathComponent == "missing"
+            return StubURLProtocol.Response(statusCode: isMissing ? 404 : 503, data: Data())
+        }
+        let cache = CoverArtCache(session: session, diskDirectory: try temporaryDirectory())
+        let resources = (0..<15).map { index in
+            let name = index == 7 ? "missing" : "flaky-\(index)"
+            return CoverArtResource(cacheKey: name, url: URL(string: "https://art.example/\(name)")!)
+        }
+
+        #expect(await cache.crawl(resources, maxConcurrentRequests: 1) == .incomplete)
+    }
+
     @Test func crawlGivesUpAfterRepeatedFailures() async throws {
         let requests = Mutex(0)
         let session = StubURLProtocol.session { _ in
