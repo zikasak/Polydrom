@@ -11,18 +11,30 @@ struct SonosActiveSession {
 
 @MainActor
 extension AppCoordinator {
-    func refreshSonosGroups() async {
+    /// The first search after launch often comes back empty while macOS is still granting Local
+    /// Network access, so the launch-time refresh passes `retryDelays` to search again on its own.
+    func refreshSonosGroups(retryDelays: [Duration] = []) async {
         guard !sonosIsDiscovering else { return }
         sonosIsDiscovering = true
         sonosMessage = nil
         defer { sonosIsDiscovering = false }
-        do {
-            sonosGroups = try await sonosUPnP.discoverGroups()
-            if sonosGroups.isEmpty { sonosMessage = SonosError.discoveryUnavailable.localizedDescription }
-        } catch {
-            sonosGroups = []
-            sonosMessage = error.localizedDescription
+        var failure: Error = SonosError.discoveryUnavailable
+        var pendingDelays = retryDelays[...]
+        while true {
+            do {
+                let groups = try await sonosUPnP.discoverGroups()
+                if !groups.isEmpty {
+                    sonosGroups = groups
+                    return
+                }
+                failure = SonosError.discoveryUnavailable
+            } catch {
+                failure = error
+            }
+            guard let delay = pendingDelays.popFirst(), (try? await Task.sleep(for: delay)) != nil else { break }
         }
+        sonosGroups = []
+        sonosMessage = failure.localizedDescription
     }
 
     func selectSonosGroup(_ group: SonosGroup) {
