@@ -64,7 +64,11 @@ struct SonosOutputPicker: View {
         .accessibilityValue(activeGroupName.map { "Playing on \($0)" } ?? "This Mac")
         .onAppear {
             if viewModel.sonosGroups.isEmpty {
-                Task { await viewModel.refreshSonosGroups() }
+                Task {
+                    await viewModel.refreshSonosGroups(
+                        retryDelays: [.seconds(1), .seconds(2), .seconds(4), .seconds(8)]
+                    )
+                }
             }
         }
     }

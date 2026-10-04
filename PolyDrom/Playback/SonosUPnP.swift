@@ -344,18 +344,24 @@ enum SonosSSDP {
         target.sin_port = UInt16(1900).bigEndian
         _ = "239.255.255.250".withCString { inet_pton(AF_INET, $0, &target.sin_addr) }
         let query = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: urn:schemas-upnp-org:device:ZonePlayer:1\r\n\r\n"
-        let sent = query.utf8CString.withUnsafeBytes { bytes in
-            withUnsafePointer(to: &target) {
-                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    sendto(fd, bytes.baseAddress, bytes.count - 1, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+        let destination = target
+        func sendQuery() -> Bool {
+            query.utf8CString.withUnsafeBytes { bytes in
+                withUnsafePointer(to: destination) {
+                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                        sendto(fd, bytes.baseAddress, bytes.count - 1, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    }
                 }
-            }
+            } >= 0
         }
-        guard sent >= 0 else { throw SonosError.discoveryUnavailable }
 
         var results: [URL: SonosSSDPAddress] = [:]
+        var delivered = false
         let deadline = Date().addingTimeInterval(3)
         while Date() < deadline {
+            // Right after launch macOS may still be resolving Local Network access and rejects or
+            // drops the datagram, so repeat the query each receive timeout until a speaker answers.
+            if results.isEmpty { delivered = sendQuery() || delivered }
             var buffer = [UInt8](repeating: 0, count: 8192)
             var source = sockaddr_storage()
             var sourceLength = socklen_t(MemoryLayout<sockaddr_storage>.size)
@@ -380,6 +386,7 @@ enum SonosSSDP {
                 results[result.location] = result
             }
         }
+        guard delivered else { throw SonosError.discoveryUnavailable }
         return Array(results.values)
     }
 }
