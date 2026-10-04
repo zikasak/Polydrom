@@ -78,12 +78,12 @@ private struct AlbumBrowserGrid: View, Equatable {
                 album: album,
                 coverArtResource: coverArtResource(album)
             )
-            .onTapGesture {
+            .modifier(LibraryCardPressModifier {
                 openAlbum(album)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .overlay(alignment: .topTrailing) {
+            })
+            // Pinned to the cover's corner, which is centered in a card whose
+            // width follows the window.
+            .overlay(alignment: .top) {
                 LibraryFavoriteBadge(
                     isFavorite: isFavorite,
                     isEnabled: isOnline,
@@ -91,7 +91,9 @@ private struct AlbumBrowserGrid: View, Equatable {
                 ) {
                     toggleFavorite(album)
                 }
-                .padding(15)
+                .padding(5)
+                .frame(width: 128, alignment: .trailing)
+                .padding(.top, 10)
             }
             .contextMenu {
                 Button {

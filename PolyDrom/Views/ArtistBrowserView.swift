@@ -79,12 +79,12 @@ private struct ArtistBrowserGrid: View, Equatable {
                 coverArtResource: coverArtResource(artist),
                 isSelected: selectedArtistID == artist.id
             )
-            .onTapGesture {
+            .modifier(LibraryCardPressModifier {
                 openLibraryRoute(.artist(artist))
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityAddTraits(.isButton)
-            .overlay(alignment: .topTrailing) {
+            })
+            // Pinned to the cover's corner, which is centered in a card whose
+            // width follows the window.
+            .overlay(alignment: .top) {
                 LibraryFavoriteBadge(
                     isFavorite: isFavorite,
                     isEnabled: isOnline,
@@ -92,7 +92,9 @@ private struct ArtistBrowserGrid: View, Equatable {
                 ) {
                     toggleFavorite(artist)
                 }
-                .padding(15)
+                .padding(5)
+                .frame(width: 128, alignment: .trailing)
+                .padding(.top, 10)
             }
             .contextMenu {
                 Button {
