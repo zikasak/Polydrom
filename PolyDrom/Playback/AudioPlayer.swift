@@ -537,7 +537,9 @@ final class AudioPlayer: ObservableObject {
 
         switch player.timeControlStatus {
         case .paused:
-            guard isPlaying else { return }
+            // Resuming right after a pause makes AVPlayer report `.paused` once more while its
+            // rate is already non-zero; that is a pending play, not a pause.
+            guard isPlaying, player.rate == 0 else { return }
             removeStallCheckTimer()
             isPlaying = false
             statusMessage = "Paused"
