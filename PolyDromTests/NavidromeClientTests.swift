@@ -99,6 +99,7 @@ struct NavidromeClientTests {
                 #expect(queryValue("id", in: request) == "created")
                 return envelope(#"{"status":"ok"}"#)
             case "getLyricsBySongId":
+                #expect(queryValue("enhanced", in: request) == "true")
                 return envelope(#"{"status":"ok","lyricsList":{"structuredLyrics":{"lang":"en","synced":true,"line":{"value":"Line"}}}}"#)
             case "getStarred2":
                 return envelope(#"{"status":"ok","starred2":{"artist":{"id":"star-a","name":"Star Artist"},"album":{"id":"star-b","name":"Star Album"},"song":{"id":"star-s","title":"Star Song"}}}"#)

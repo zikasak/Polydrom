@@ -557,7 +557,7 @@ struct AppCoordinatorTests {
             case "getPlaylist":
                 return envelope(#"{"status":"ok","playlist":{"entry":[{"id":"playlist-song","title":"Playlist Song"}]}}"#)
             case "getLyricsBySongId":
-                return envelope(#"{"status":"ok","lyricsList":{"structuredLyrics":[{"lang":"en","synced":false,"line":{"value":"Plain"}},{"lang":"en","synced":true,"line":{"start":0,"value":"Timed"}}]}}"#)
+                return envelope(#"{"status":"ok","lyricsList":{"structuredLyrics":[{"lang":"de","kind":"translation","synced":true,"line":{"start":0,"value":"Translated"}},{"lang":"en","synced":false,"line":{"value":"Plain"}},{"lang":"en","synced":true,"line":{"start":0,"value":"Timed"}}]}}"#)
             case "getSong":
                 return envelope(#"{"status":"ok","song":{"id":"random","title":"Hydrated Random","duration":10}}"#)
             default:

@@ -685,7 +685,7 @@ struct PlayerLyricsView: View {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { index, line in
                         lyricRow(
-                            line,
+                            lyrics.lineSegments[index],
                             isHighlighted: index == highlightedLine,
                             playbackTime: lyrics.playbackTime(for: line)
                         )
@@ -711,7 +711,7 @@ struct PlayerLyricsView: View {
 
     @ViewBuilder
     private func lyricRow(
-        _ line: SongLyricsLine,
+        _ segments: [SongLyricsSegment],
         isHighlighted: Bool,
         playbackTime: Double?
     ) -> some View {
@@ -719,20 +719,31 @@ struct PlayerLyricsView: View {
             Button {
                 audioPlayer.seek(to: playbackTime)
             } label: {
-                lyricText(line, isHighlighted: isHighlighted)
+                lyricText(segments, isHighlighted: isHighlighted)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help("Jump to this lyric")
             .accessibilityHint("Jumps playback to this lyric in the song")
         } else {
-            lyricText(line, isHighlighted: isHighlighted)
+            lyricText(segments, isHighlighted: isHighlighted)
         }
     }
 
-    private func lyricText(_ line: SongLyricsLine, isHighlighted: Bool) -> some View {
-        Text(line.value.isEmpty ? " " : line.value)
-            .font(.title3.weight(isHighlighted ? .semibold : .regular))
+    private func lyricText(_ segments: [SongLyricsSegment], isHighlighted: Bool) -> some View {
+        let font = Font.title3.weight(isHighlighted ? .semibold : .regular)
+        var text = AttributedString(segments.isEmpty ? " " : "")
+        for segment in segments {
+            var run = AttributedString(segment.text)
+            if segment.isBackground {
+                run.font = font.italic()
+                run.foregroundColor = isHighlighted ? .secondary : .secondary.opacity(0.6)
+            }
+            text.append(run)
+        }
+
+        return Text(text)
+            .font(font)
             .foregroundStyle(isHighlighted ? .primary : .secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }

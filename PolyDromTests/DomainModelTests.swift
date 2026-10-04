@@ -143,6 +143,105 @@ struct DomainModelTests {
         #expect(plainLyrics.lineIndex(at: 1) == nil)
     }
 
+    @Test(arguments: [
+        ("Plain line", [SongLyricsSegment(text: "Plain line", isBackground: false)]),
+        ("(Ooh, ooh)", [SongLyricsSegment(text: "(Ooh, ooh)", isBackground: true)]),
+        ("I'm falling (falling) down", [
+            SongLyricsSegment(text: "I'm falling ", isBackground: false),
+            SongLyricsSegment(text: "(falling)", isBackground: true),
+            SongLyricsSegment(text: " down", isBackground: false)
+        ]),
+        ("Hold (on (and on))", [
+            SongLyricsSegment(text: "Hold ", isBackground: false),
+            SongLyricsSegment(text: "(on (and on))", isBackground: true)
+        ]),
+        ("Smile :) (never closed", [
+            SongLyricsSegment(text: "Smile :) ", isBackground: false),
+            SongLyricsSegment(text: "(never closed", isBackground: false)
+        ]),
+        ("", [])
+    ])
+    func parenthesizedLyricsAreBackgroundVocals(_ value: String, _ expected: [SongLyricsSegment]) throws {
+        let data = try JSONSerialization.data(withJSONObject: ["line": [["value": value]]])
+        #expect(try JSONDecoder().decode(SongLyrics.self, from: data).lineSegments == [expected])
+    }
+
+    @Test func attributedBackgroundVocalsKeepTheirPlaceInTheCombinedLine() throws {
+        let lyrics = try JSONDecoder().decode(
+            SongLyrics.self,
+            from: Data(#"""
+            {
+              "kind": "main",
+              "synced": true,
+              "agents": [{"id": "lead", "role": "main"}, {"id": "backing", "role": "bg"}],
+              "line": [
+                {"start": 0, "value": "I (echo) know"},
+                {"start": 1000, "value": "Hello echo  again"},
+                {"start": 2000, "value": "I know (know)"},
+                {"start": 3000, "value": "Lead only (aside)"},
+                {"start": 4000, "value": "Not in (the) line"},
+                {"start": 5000, "value": "No cues"},
+                {"start": 6000, "value": "tonight night"},
+                {"start": 7000, "value": "tonight tonight"},
+                {"start": 8000, "value": "今夜は眠れない"},
+                {"start": 9000, "value": "go go"},
+                {"start": 10000, "value": "la la"}
+              ],
+              "cueLine": [
+                {"index": 0, "agentId": "lead", "value": "I know", "cue": []},
+                {"index": 0, "agentId": "backing", "value": "(echo)", "cue": []},
+                {"index": 1, "agentId": "lead", "value": "Hello again", "cue": []},
+                {"index": 1, "agentId": "backing", "value": " echo ", "cue": []},
+                {"index": 2, "agentId": "lead", "value": "I know", "cue": []},
+                {"index": 2, "agentId": "backing", "value": "know", "cue": []},
+                {"index": 3, "agentId": "lead", "value": "Lead only (aside)", "cue": []},
+                {"index": 4, "agentId": "backing", "value": "missing", "cue": []},
+                {"index": 6, "agentId": "backing", "value": "night", "cue": []},
+                {"index": 7, "agentId": "backing", "value": "night", "cue": []},
+                {"index": 8, "agentId": "backing", "value": "眠れない", "cue": []},
+                {"index": 9, "agentId": "lead", "value": "go", "cue": []},
+                {"index": 9, "agentId": "backing", "value": "go", "cue": []},
+                {"index": 10, "agentId": "backing", "value": "la", "cue": []},
+                {"index": 10, "agentId": "backing", "value": "la", "cue": []}
+              ]
+            }
+            """#.utf8)
+        )
+        let translation = try JSONDecoder().decode(SongLyrics.self, from: Data(#"{"kind":"translation"}"#.utf8))
+
+        #expect(lyrics.lineSegments == [
+            [
+                SongLyricsSegment(text: "I ", isBackground: false),
+                SongLyricsSegment(text: "(echo)", isBackground: true),
+                SongLyricsSegment(text: " know", isBackground: false)
+            ],
+            [
+                SongLyricsSegment(text: "Hello ", isBackground: false),
+                SongLyricsSegment(text: "echo", isBackground: true),
+                SongLyricsSegment(text: "  again", isBackground: false)
+            ],
+            [SongLyricsSegment(text: "I know ", isBackground: false), SongLyricsSegment(text: "(know)", isBackground: true)],
+            [SongLyricsSegment(text: "Lead only ", isBackground: false), SongLyricsSegment(text: "(aside)", isBackground: true)],
+            [
+                SongLyricsSegment(text: "Not in ", isBackground: false),
+                SongLyricsSegment(text: "(the)", isBackground: true),
+                SongLyricsSegment(text: " line", isBackground: false)
+            ],
+            [SongLyricsSegment(text: "No cues", isBackground: false)],
+            [SongLyricsSegment(text: "tonight ", isBackground: false), SongLyricsSegment(text: "night", isBackground: true)],
+            [SongLyricsSegment(text: "tonight tonight", isBackground: false)],
+            [SongLyricsSegment(text: "今夜は", isBackground: false), SongLyricsSegment(text: "眠れない", isBackground: true)],
+            [SongLyricsSegment(text: "go go", isBackground: false)],
+            [
+                SongLyricsSegment(text: "la", isBackground: true),
+                SongLyricsSegment(text: " ", isBackground: false),
+                SongLyricsSegment(text: "la", isBackground: true)
+            ]
+        ])
+        #expect(lyrics.isMainLayer)
+        #expect(!translation.isMainLayer)
+    }
+
     @Test func missingRequiredFlexibleStringThrows() {
         #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(NavidromeArtist.self, from: Data(#"{"name":"Artist"}"#.utf8))

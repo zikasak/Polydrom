@@ -399,7 +399,10 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
     let language: String?
     let offset: Int?
     let synced: Bool
+    let kind: String?
     let lines: [SongLyricsLine]
+    /// Main and background vocal runs for each entry in `lines`, in display order.
+    let lineSegments: [[SongLyricsSegment]]
 
     var id: String {
         [language, displayArtist, displayTitle, synced ? "synced" : "plain"]
@@ -415,6 +418,12 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
             return nil
         }
         return language.uppercased()
+    }
+
+    /// Enhanced responses also carry translation and pronunciation layers.
+    var isMainLayer: Bool {
+        guard let kind, !kind.isEmpty else { return true }
+        return kind.caseInsensitiveCompare("main") == .orderedSame
     }
 
     func playbackTime(for line: SongLyricsLine) -> Double? {
@@ -436,7 +445,10 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
         case language = "lang"
         case offset
         case synced
+        case kind
         case lines = "line"
+        case agents
+        case cueLines = "cueLine"
     }
 
     init(from decoder: Decoder) throws {
@@ -446,8 +458,129 @@ struct SongLyrics: Decodable, Identifiable, Hashable, Sendable {
         language = try? container.decode(String.self, forKey: .language)
         offset = container.decodeFlexibleInt(forKey: .offset)
         synced = (try? container.decode(Bool.self, forKey: .synced)) ?? false
-        lines = ((try? container.decode(FlexibleArray<SongLyricsLine>.self, forKey: .lines)) ?? FlexibleArray(values: [])).values
+        kind = try? container.decode(String.self, forKey: .kind)
+        let lines = ((try? container.decode(FlexibleArray<SongLyricsLine>.self, forKey: .lines)) ?? FlexibleArray(values: [])).values
+        self.lines = lines
+
+        let agents = ((try? container.decode(FlexibleArray<SongLyricsAgent>.self, forKey: .agents)) ?? FlexibleArray(values: [])).values
+        let cueLines = ((try? container.decode(FlexibleArray<SongLyricsCueLine>.self, forKey: .cueLines)) ?? FlexibleArray(values: [])).values
+        let backgroundAgentIDs = Set(agents.filter { $0.role.caseInsensitiveCompare("bg") == .orderedSame }.map(\.id))
+        let backgroundValuesByIndex = Dictionary(
+            grouping: cueLines.filter { $0.agentId.map(backgroundAgentIDs.contains) ?? false },
+            by: \.index
+        ).mapValues { $0.map(\.value) }
+
+        lineSegments = lines.enumerated().map { index, line in
+            // Servers without vocal attribution only mark background vocals with parentheses.
+            SongLyricsSegment.marking(backgroundValues: backgroundValuesByIndex[index] ?? [], in: line.value)
+                ?? SongLyricsSegment.splittingParentheses(in: line.value)
+        }
     }
+}
+
+struct SongLyricsSegment: Hashable, Sendable {
+    let text: String
+    let isBackground: Bool
+
+    /// Marks where each background vocal sits inside the combined line, keeping the line's own
+    /// ordering and spacing. Returns nil when none of them can be located in `value`.
+    static func marking(backgroundValues: [String], in value: String) -> [SongLyricsSegment]? {
+        var backgroundRanges: [Range<String.Index>] = []
+        let needles = backgroundValues
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for (offset, needle) in needles.enumerated() where needles.firstIndex(of: needle) == offset {
+            // The lead can sing the same words, so an occurrence set off in parentheses is taken first.
+            // Otherwise the text is only attributed when the line has exactly as many occurrences as
+            // background cues, counting whole words before matches inside a longer word.
+            var parenthesizedMatches: [Range<String.Index>] = []
+            var wordMatches: [Range<String.Index>] = []
+            var partialMatches: [Range<String.Index>] = []
+            var searchStart = value.startIndex
+            while let match = value.range(of: needle, range: searchStart..<value.endIndex) {
+                searchStart = match.upperBound
+                guard !backgroundRanges.contains(where: { $0.overlaps(match) }) else { continue }
+
+                let preceding = match.lowerBound > value.startIndex ? value[value.index(before: match.lowerBound)] : nil
+                let following = match.upperBound < value.endIndex ? value[match.upperBound] : nil
+                if let preceding, let following, "(（".contains(preceding), ")）".contains(following),
+                   !backgroundRanges.contains(where: { $0.upperBound == match.lowerBound || $0.lowerBound == match.upperBound }) {
+                    parenthesizedMatches.append(value.index(before: match.lowerBound)..<value.index(after: match.upperBound))
+                } else if [preceding, following].contains(where: { $0?.isLetter == true || $0?.isNumber == true }) {
+                    partialMatches.append(match)
+                } else {
+                    wordMatches.append(match)
+                }
+            }
+
+            let cueCount = needles.count { $0 == needle }
+            backgroundRanges += parenthesizedMatches.prefix(cueCount)
+            let remaining = cueCount - min(cueCount, parenthesizedMatches.count)
+            if remaining > 0 {
+                let candidates = wordMatches.isEmpty ? partialMatches : wordMatches
+                if candidates.count == remaining {
+                    backgroundRanges += candidates
+                }
+            }
+        }
+
+        guard !backgroundRanges.isEmpty else { return nil }
+
+        var segments: [SongLyricsSegment] = []
+        var position = value.startIndex
+        for range in backgroundRanges.sorted(by: { $0.lowerBound < $1.lowerBound }) {
+            if position < range.lowerBound {
+                segments.append(SongLyricsSegment(text: String(value[position..<range.lowerBound]), isBackground: false))
+            }
+            segments.append(SongLyricsSegment(text: String(value[range]), isBackground: true))
+            position = range.upperBound
+        }
+        if position < value.endIndex {
+            segments.append(SongLyricsSegment(text: String(value[position...]), isBackground: false))
+        }
+        return segments
+    }
+
+    /// Treats parenthesized runs as background vocals; the segments concatenate back to `value`.
+    static func splittingParentheses(in value: String) -> [SongLyricsSegment] {
+        var segments: [SongLyricsSegment] = []
+        var current = ""
+        var depth = 0
+
+        func flush(isBackground: Bool) {
+            guard !current.isEmpty else { return }
+            segments.append(SongLyricsSegment(text: current, isBackground: isBackground))
+            current = ""
+        }
+
+        for character in value {
+            if character == "(" || character == "（" {
+                if depth == 0 { flush(isBackground: false) }
+                depth += 1
+                current.append(character)
+            } else if (character == ")" || character == "）"), depth > 0 {
+                current.append(character)
+                depth -= 1
+                if depth == 0 { flush(isBackground: true) }
+            } else {
+                current.append(character)
+            }
+        }
+        flush(isBackground: false)
+        return segments
+    }
+}
+
+private struct SongLyricsAgent: Decodable {
+    let id: String
+    let role: String
+}
+
+private struct SongLyricsCueLine: Decodable {
+    let index: Int
+    let value: String
+    let agentId: String?
 }
 
 struct SongLyricsLine: Decodable, Identifiable, Hashable, Sendable {

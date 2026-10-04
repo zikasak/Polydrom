@@ -891,7 +891,9 @@ final class AppCoordinator: ObservableObject {
         do {
             let availableLyrics = try await client.lyrics(for: song)
             guard lyricsSongID == song.id, isCurrentSession(generation, serverKey: serverKey) else { return }
-            currentLyrics = availableLyrics.first(where: \.synced) ?? availableLyrics.first
+            let mainLyrics = availableLyrics.filter(\.isMainLayer)
+            let candidates = mainLyrics.isEmpty ? availableLyrics : mainLyrics
+            currentLyrics = candidates.first(where: \.synced) ?? candidates.first
             lyricsMessage = currentLyrics == nil ? "No lyrics are available for this song." : ""
             AppLog.network.debug(
                 "Loaded \(availableLyrics.count, privacy: .public) lyric entries for song \(song.id, privacy: .private(mask: .hash))"
