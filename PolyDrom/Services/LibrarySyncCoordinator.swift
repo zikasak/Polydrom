@@ -4,6 +4,8 @@ import OSLog
 enum MetadataSyncOutcome: Equatable {
     case full
     case metadataOnly
+    /// The check completed and the cached library already matched the server.
+    case unchanged
     case deferredForScan
 }
 
@@ -22,13 +24,15 @@ enum LibrarySyncError: LocalizedError {
 final class LibrarySyncCoordinator {
     private let store: LibraryStore
     private let pageSize: Int
+    private let maxConcurrentRequests: Int
     private var inFlight: [
         String: (id: UUID, task: Task<MetadataSyncOutcome, Error>)
     ] = [:]
 
-    init(store: LibraryStore, pageSize: Int = 500) {
+    init(store: LibraryStore, pageSize: Int = 500, maxConcurrentRequests: Int = 4) {
         self.store = store
         self.pageSize = max(1, pageSize)
+        self.maxConcurrentRequests = max(1, maxConcurrentRequests)
     }
 
     func synchronize(client: NavidromeClient, serverKey: String) async throws -> MetadataSyncOutcome {
@@ -162,7 +166,7 @@ final class LibrarySyncCoordinator {
         )
         let refreshed = try await loadPlaylistSnapshots(changedPlaylists, client: client)
         try Task.checkCancellation()
-        try await store.applyUserMetadata(
+        let didChange = try await store.applyUserMetadata(
             playlists: playlists,
             refreshedPlaylists: refreshed,
             favorites: FavoriteMetadata(
@@ -173,7 +177,7 @@ final class LibrarySyncCoordinator {
             serverKey: serverKey,
             checkedAt: Date()
         )
-        return .metadataOnly
+        return didChange ? .metadataOnly : .unchanged
     }
 
     private func merging<Value: Identifiable>(_ primary: [Value], _ additions: [Value]) -> [Value] where Value.ID: Hashable {
@@ -184,47 +188,60 @@ final class LibrarySyncCoordinator {
     }
 
     private func loadAllArtists(client: NavidromeClient) async throws -> [NavidromeArtist] {
-        var values: [NavidromeArtist] = []
-        var seen = Set<String>()
-        var offset = 0
-        while true {
-            try Task.checkCancellation()
-            let page = try await client.artistPage(size: pageSize, offset: offset)
-            let additions = page.filter { seen.insert($0.id).inserted }
-            values.append(contentsOf: additions)
-            AppLog.sync.debug("Loaded artist page at offset \(offset, privacy: .public): \(additions.count, privacy: .public) new records")
-            guard page.count == pageSize, !additions.isEmpty else { return values }
-            offset += pageSize
+        try await loadAllPages("artist") { [pageSize] offset in
+            try await client.artistPage(size: pageSize, offset: offset)
         }
     }
 
     private func loadAllAlbums(client: NavidromeClient) async throws -> [NavidromeAlbum] {
-        var values: [NavidromeAlbum] = []
-        var seen = Set<String>()
-        var offset = 0
-        while true {
-            try Task.checkCancellation()
-            let page = try await client.albumMetadataPage(size: pageSize, offset: offset)
-            let additions = page.filter { seen.insert($0.id).inserted }
-            values.append(contentsOf: additions)
-            AppLog.sync.debug("Loaded album page at offset \(offset, privacy: .public): \(additions.count, privacy: .public) new records")
-            guard page.count == pageSize, !additions.isEmpty else { return values }
-            offset += pageSize
+        try await loadAllPages("album") { [pageSize] offset in
+            try await client.albumMetadataPage(size: pageSize, offset: offset)
         }
     }
 
     private func loadAllSongs(client: NavidromeClient) async throws -> [NavidromeSong] {
-        var values: [NavidromeSong] = []
+        try await loadAllPages("song") { [pageSize] offset in
+            try await client.songMetadataPage(size: pageSize, offset: offset)
+        }
+    }
+
+    /// Downloads every page of a catalog listing. The first page is requested on
+    /// its own so a small library costs one request; a full first page switches to
+    /// waves of concurrent requests, which is what keeps large libraries fast.
+    private func loadAllPages<Value: Identifiable & Sendable>(
+        _ kind: String,
+        fetchPage: @escaping @Sendable (_ offset: Int) async throws -> [Value]
+    ) async throws -> [Value] where Value.ID == String {
+        var values: [Value] = []
         var seen = Set<String>()
-        var offset = 0
+        var nextOffset = 0
+        var waveSize = 1
         while true {
             try Task.checkCancellation()
-            let page = try await client.songMetadataPage(size: pageSize, offset: offset)
-            let additions = page.filter { seen.insert($0.id).inserted }
-            values.append(contentsOf: additions)
-            AppLog.sync.debug("Loaded song page at offset \(offset, privacy: .public): \(additions.count, privacy: .public) new records")
-            guard page.count == pageSize, !additions.isEmpty else { return values }
-            offset += pageSize
+            let offsets = (0..<waveSize).map { nextOffset + $0 * pageSize }
+            let pages = try await withThrowingTaskGroup(
+                of: (offset: Int, page: [Value]).self,
+                returning: [(offset: Int, page: [Value])].self
+            ) { group in
+                for offset in offsets {
+                    group.addTask { (offset, try await fetchPage(offset)) }
+                }
+                var pages: [(offset: Int, page: [Value])] = []
+                for try await page in group {
+                    pages.append(page)
+                }
+                return pages.sorted { $0.offset < $1.offset }
+            }
+            for (offset, page) in pages {
+                let additions = page.filter { seen.insert($0.id).inserted }
+                values.append(contentsOf: additions)
+                AppLog.sync.debug(
+                    "Loaded \(kind, privacy: .public) page at offset \(offset, privacy: .public): \(additions.count, privacy: .public) new records"
+                )
+                guard page.count == pageSize, !additions.isEmpty else { return values }
+            }
+            nextOffset += waveSize * pageSize
+            waveSize = maxConcurrentRequests
         }
     }
 
@@ -232,17 +249,26 @@ final class LibrarySyncCoordinator {
         _ playlists: [NavidromePlaylist],
         client: NavidromeClient
     ) async throws -> [PlaylistMetadataSnapshot] {
-        var snapshots: [PlaylistMetadataSnapshot] = []
-        snapshots.reserveCapacity(playlists.count)
-        for playlist in playlists {
-            try Task.checkCancellation()
-            snapshots.append(
-                PlaylistMetadataSnapshot(
-                    playlist: playlist,
-                    songs: try await client.songs(for: playlist)
-                )
-            )
+        guard !playlists.isEmpty else { return [] }
+        try Task.checkCancellation()
+        let maxConcurrentRequests = self.maxConcurrentRequests
+        return try await withThrowingTaskGroup(
+            of: (index: Int, snapshot: PlaylistMetadataSnapshot).self,
+            returning: [PlaylistMetadataSnapshot].self
+        ) { group in
+            var snapshots = [PlaylistMetadataSnapshot?](repeating: nil, count: playlists.count)
+            for (index, playlist) in playlists.enumerated() {
+                if index >= maxConcurrentRequests, let loaded = try await group.next() {
+                    snapshots[loaded.index] = loaded.snapshot
+                }
+                group.addTask {
+                    (index, PlaylistMetadataSnapshot(playlist: playlist, songs: try await client.songs(for: playlist)))
+                }
+            }
+            for try await loaded in group {
+                snapshots[loaded.index] = loaded.snapshot
+            }
+            return snapshots.compactMap { $0 }
         }
-        return snapshots
     }
 }

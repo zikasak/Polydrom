@@ -1,5 +1,6 @@
 import CoreData
 import Foundation
+import Synchronization
 import Testing
 @testable import PolyDrom
 
@@ -662,6 +663,71 @@ struct PersistenceTests {
         #expect(try await store.albums(serverKey: "large-server").count == albumCount)
         #expect(try await store.songs(serverKey: "large-server", albumID: "album-0").count == 23)
         #expect(try await store.metadataSyncState(serverKey: "large-server").isComplete)
+    }
+
+    @Test func unchangedSnapshotIsNotRewrittenAndChangesAreAppliedIncrementally() async throws {
+        let serverKey = "incremental-server"
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: MemoryCredentialStore()
+        )
+        let first = makeSong(id: "first", title: "First", genres: ["Rock"])
+        let second = makeSong(id: "second", title: "Second", genres: ["Rock", "Jazz"])
+        let third = makeSong(id: "third", title: "Third", genres: ["Jazz"])
+        func snapshot(songs: [NavidromeSong], playlistSongs: [NavidromeSong], token: String) -> LibrarySnapshot {
+            LibrarySnapshot(
+                artists: [NavidromeArtist(id: "artist-1", name: "Artist", albumCount: 1)],
+                albums: [NavidromeAlbum(id: "album-1", name: "Album", artist: "Artist", artistId: "artist-1")],
+                songs: songs,
+                playlists: [
+                    PlaylistMetadataSnapshot(
+                        playlist: NavidromePlaylist(id: "mix", name: "Mix", songCount: playlistSongs.count),
+                        songs: playlistSongs
+                    )
+                ],
+                favorites: FavoriteMetadata(songIDs: ["first"]),
+                catalogToken: token,
+                checkedAt: Date()
+            )
+        }
+        try await store.apply(
+            snapshot(songs: [first, second, third], playlistSongs: [first, second, third], token: "scan-1"),
+            serverKey: serverKey
+        )
+
+        // Saves happen on a private context, so written rows are observed through its notification.
+        let writtenEntities = Mutex<[String]>([])
+        let observer = NotificationCenter.default.addObserver(
+            forName: .NSManagedObjectContextDidSave,
+            object: nil,
+            queue: nil
+        ) { notification in
+            let names = [NSInsertedObjectsKey, NSUpdatedObjectsKey]
+                .flatMap { (notification.userInfo?[$0] as? Set<NSManagedObject>) ?? [] }
+                .filter { $0.entity.attributesByName["serverKey"] != nil }
+                .filter { ($0.value(forKey: "serverKey") as? String) == serverKey }
+                .compactMap(\.entity.name)
+            writtenEntities.withLock { $0.append(contentsOf: names) }
+        }
+        try await store.apply(
+            snapshot(songs: [first, second, third], playlistSongs: [first, second, third], token: "scan-2"),
+            serverKey: serverKey
+        )
+        NotificationCenter.default.removeObserver(observer)
+        #expect(writtenEntities.withLock { $0 } == ["VDMetadataSyncState"])
+
+        let renamed = makeSong(id: "second", title: "Renamed", genres: ["Jazz"])
+        try await store.apply(
+            snapshot(songs: [first, renamed], playlistSongs: [renamed, first], token: "scan-3"),
+            serverKey: serverKey
+        )
+
+        #expect(try await store.songs(serverKey: serverKey, playlistID: "mix").map(\.title) == ["Renamed", "First"])
+        #expect(try await store.genres(serverKey: serverKey).map(\.songCount) == [1, 1])
+        #expect(try await store.songs(serverKey: serverKey, genreID: "rock").map(\.id) == ["first"])
+        #expect(try await store.songs(serverKey: serverKey, genreID: "jazz").map(\.id) == ["second"])
+        #expect(try await store.favoriteSongs(serverKey: serverKey).map(\.id) == ["first"])
+        #expect(try await store.randomSongs(serverKey: serverKey).count == 2)
     }
 
     @Test func legacyImportPreservesServerAndKeychainIdentityWhileCacheIsRebuilt() async throws {

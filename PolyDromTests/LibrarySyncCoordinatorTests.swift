@@ -63,7 +63,7 @@ struct LibrarySyncCoordinatorTests {
         #expect(state.withLock { $0.searchRequests } == 6)
         #expect(state.withLock { $0.playlistDetailRequests } == 2)
 
-        #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .metadataOnly)
+        #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .unchanged)
         #expect(state.withLock { $0.searchRequests } == 6)
         #expect(state.withLock { $0.playlistDetailRequests } == 2)
 
@@ -72,6 +72,48 @@ struct LibrarySyncCoordinatorTests {
         #expect(state.withLock { $0.searchRequests } == 9)
         #expect(state.withLock { $0.playlistDetailRequests } == 3)
         #expect(try await store.metadataSyncState(serverKey: "server").catalogToken == "scan-2")
+    }
+
+    @Test func largeCatalogPagesAreRequestedConcurrentlyAndKeptInOrder() async throws {
+        let songCount = 35
+        let requestedOffsets = Mutex<[Int]>([])
+        let handler: StubURLProtocol.Handler = { request in
+            switch apiMethod(in: request) {
+            case "getScanStatus":
+                return envelope(#"{"status":"ok","scanStatus":{"scanning":false,"lastScan":"scan"}}"#)
+            case "search3":
+                guard queryValue("songCount", in: request) == "10" else {
+                    return envelope(#"{"status":"ok","searchResult3":{}}"#)
+                }
+                let offset = Int(queryValue("songOffset", in: request) ?? "") ?? 0
+                requestedOffsets.withLock { $0.append(offset) }
+                let songs = (offset..<min(offset + 10, songCount)).map {
+                    #"{"id":"song-\#($0)","title":"Song \#($0)","albumId":"album"}"#
+                }
+                return envelope(#"{"status":"ok","searchResult3":{"song":[\#(songs.joined(separator: ","))]}}"#)
+            case "getPlaylists":
+                return envelope(#"{"status":"ok","playlists":{"playlist":[]}}"#)
+            case "getStarred2":
+                return envelope(#"{"status":"ok","starred2":{}}"#)
+            default:
+                return StubURLProtocol.Response(statusCode: 404, json: "{}")
+            }
+        }
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: MemoryCredentialStore()
+        )
+        let coordinator = LibrarySyncCoordinator(store: store, pageSize: 10, maxConcurrentRequests: 4)
+        let client = try #require(
+            NavidromeClient(profile: makeProfile(), session: StubURLProtocol.session(handler: handler))
+        )
+
+        #expect(try await coordinator.synchronize(client: client, serverKey: "server") == .full)
+        // One probe page, then a single wave of four that reaches the end of the catalog.
+        #expect(requestedOffsets.withLock { $0.sorted() } == [0, 10, 20, 30, 40])
+        let songIDs = try await store.songs(serverKey: "server", albumID: "album").map(\.id)
+        #expect(Set(songIDs) == Set((0..<songCount).map { "song-\($0)" }))
+        #expect(songIDs.count == songCount)
     }
 
     @Test func scanInProgressDefersWithoutMutatingTheExistingSnapshot() async throws {
@@ -233,8 +275,8 @@ struct LibrarySyncCoordinatorTests {
         async let second = coordinator.synchronize(client: client, serverKey: "server")
         let outcomes = try await (first, second)
 
-        #expect(outcomes.0 == .metadataOnly)
-        #expect(outcomes.1 == .metadataOnly)
+        #expect(outcomes.0 == .unchanged)
+        #expect(outcomes.1 == .unchanged)
         #expect(lock.withLock { scanRequests } == 1)
     }
 }

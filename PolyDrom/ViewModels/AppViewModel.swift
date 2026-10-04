@@ -97,6 +97,9 @@ final class AppCoordinator: ObservableObject {
     private let coverArtResourceLimit = 20_000
     private var metadataMonitorTask: Task<Void, Never>?
     private var metadataSyncTask: Task<MetadataSyncOutcome, Error>?
+    /// Set while a refresh may have written to the cache without the result being
+    /// loaded back, e.g. when it was canceled between the save and the reload.
+    private var hasUnloadedMetadataChanges = false
     private var metadataRefreshID: UUID?
     var scanRetryTask: Task<Void, Never>?
     private var isApplicationActive = false
@@ -1134,18 +1137,35 @@ final class AppCoordinator: ObservableObject {
                 try await syncCoordinator.synchronize(client: client, serverKey: serverKey)
             }
             metadataSyncTask = syncTask
+            let hadUnloadedChanges = hasUnloadedMetadataChanges
+            hasUnloadedMetadataChanges = true
             let outcome = try await syncTask.value
             guard isCurrentSession(generation, serverKey: serverKey) else { return }
             switch outcome {
             case .full:
                 AppLog.sync.info("Metadata refresh completed with a full catalog sync")
                 await reloadCachedLibrary(for: generation)
+                hasUnloadedMetadataChanges = false
                 statusMessage = metadataCompletionMessage(prefix: "Library metadata updated")
             case .metadataOnly:
                 AppLog.sync.info("Metadata refresh completed with a metadata-only sync")
                 await reloadCachedLibrary(for: generation)
+                hasUnloadedMetadataChanges = false
+                statusMessage = metadataCompletionMessage(prefix: "Library metadata is up to date")
+            case .unchanged:
+                AppLog.sync.info("Metadata refresh found no changes")
+                if hadUnloadedChanges {
+                    await reloadCachedLibrary(for: generation)
+                } else {
+                    // Nothing was written, so the loaded library is still current.
+                    let syncState = try await store.metadataSyncState(serverKey: serverKey)
+                    guard isCurrentSession(generation, serverKey: serverKey) else { return }
+                    lastMetadataCheckAt = syncState.lastCheckedAt
+                }
+                hasUnloadedMetadataChanges = false
                 statusMessage = metadataCompletionMessage(prefix: "Library metadata is up to date")
             case .deferredForScan:
+                hasUnloadedMetadataChanges = hadUnloadedChanges
                 AppLog.sync.info("Metadata refresh deferred because Navidrome is scanning")
                 statusMessage = "Navidrome is scanning. Refresh will retry shortly."
                 scheduleScanRetry(serverKey: serverKey, generation: generation)
