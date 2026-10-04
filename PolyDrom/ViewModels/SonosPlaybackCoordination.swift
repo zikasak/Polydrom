@@ -498,6 +498,15 @@ extension AppCoordinator {
             if let song = audioPlayer.currentSong,
                position.transportState != "STOPPED" {
                 let playing = position.transportState == "PLAYING" || position.transportState == "TRANSITIONING"
+                // Sonos rewinds to 0 when a track ends, and the transport state is fetched before
+                // the position, so a poll can still say PLAYING at 0. Keep the last real position
+                // so the following STOPPED poll recognises the track as finished.
+                let duration = max(audioPlayer.duration, position.duration)
+                let sinceProgress = current.lastProgressAt.map { Date().timeIntervalSince($0) } ?? 0
+                if playing, position.seconds < 1, duration > 0,
+                   audioPlayer.currentTime + sinceProgress >= duration - 2 {
+                    return
+                }
                 let event: AudioPlaybackEvent.Trigger = playing == audioPlayer.isPlaying
                     ? .progressed : (playing ? .resumed : .paused)
                 audioPlayer.updateSonosPlayback(
