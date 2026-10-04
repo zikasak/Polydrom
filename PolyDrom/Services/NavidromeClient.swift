@@ -231,6 +231,9 @@ struct NavidromeClient: Sendable {
         )
     }
 
+    /// Runs off the caller's actor so decoding large catalog pages never blocks
+    /// the main thread and concurrent page requests decode in parallel.
+    @concurrent
     private func request<Response: Decodable>(
         _ method: String,
         queryItems: [URLQueryItem] = [],
@@ -256,9 +259,6 @@ struct NavidromeClient: Sendable {
         }
     }
 
-    /// Runs off the caller's actor so decoding large catalog pages never blocks
-    /// the main thread and concurrent page requests decode in parallel.
-    @concurrent
     private func performRequest<Response: Decodable>(
         _ method: String,
         queryItems: [URLQueryItem],
