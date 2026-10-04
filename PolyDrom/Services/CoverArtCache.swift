@@ -200,12 +200,17 @@ struct CoverArtResource: Hashable {
 
 enum CoverArtError: LocalizedError, Equatable {
     case http(statusCode: Int)
+    /// The server answered with a Subsonic error document instead of artwork,
+    /// e.g. because it rejected the credentials.
+    case subsonic(code: Int?)
     case invalidImage
 
     var errorDescription: String? {
         switch self {
         case .http(let statusCode):
             "HTTP \(statusCode)"
+        case .subsonic:
+            "The server rejected the cover art request."
         case .invalidImage:
             "The cover art is not a valid image."
         }
@@ -217,6 +222,10 @@ enum CoverArtError: LocalizedError, Equatable {
         switch self {
         case .http(let statusCode):
             (400...499).contains(statusCode) && statusCode != 408 && statusCode != 429
+        case .subsonic(let code):
+            // Only "data not found" is about this cover; authentication and
+            // protocol errors affect every request until they are resolved.
+            code == 70
         case .invalidImage:
             true
         }
@@ -343,6 +352,16 @@ actor CoverArtCache {
         let destinationURL = fileURL(for: resource.cacheKey)
 
         if let cachedData = cachedData(for: resource) {
+            if isCrawl {
+                // The bytes may only be in memory, e.g. after a failed write or
+                // an eviction; the crawl's job is to have them on disk.
+                if !hasDiskData(forKey: resource.cacheKey) {
+                    guard try storeOnDisk(cachedData, at: destinationURL, evicting: false) else {
+                        throw DiskCacheFullError()
+                    }
+                }
+                return cachedData
+            }
             memoryCache.setObject(cachedData as NSData, forKey: key, cost: cachedData.count)
             return cachedData
         }
@@ -368,43 +387,7 @@ actor CoverArtCache {
             let session = session
             let requestPermits = requestPermits
             task = Task<Data, Error> {
-                // The crawl is already limited by its own concurrency and must
-                // not hold permits that on-screen loads are waiting for.
-                if !isCrawl {
-                    try await requestPermits.acquire()
-                }
-
-                let result: (Data, URLResponse)
-                do {
-                    try Task.checkCancellation()
-                    var request = URLRequest(url: resource.url)
-                    request.cachePolicy = .reloadIgnoringLocalCacheData
-                    request.timeoutInterval = 30
-                    if isCrawl {
-                        request.networkServiceType = .background
-                    }
-
-                    result = try await session.data(for: request)
-                    if !isCrawl {
-                        await requestPermits.release()
-                    }
-                } catch {
-                    if !isCrawl {
-                        await requestPermits.release()
-                    }
-                    throw error
-                }
-
-                let (data, response) = result
-                if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
-                    throw CoverArtError.http(statusCode: httpResponse.statusCode)
-                }
-
-                // Subsonic reports failures such as rejected credentials as an
-                // HTTP 200 error document, which must never be cached as art.
-                guard Self.isImageData(data) else { throw CoverArtError.invalidImage }
-
-                return data
+                try await Self.download(resource, session: session, requestPermits: requestPermits, isCrawl: isCrawl)
             }
             inFlightRequests[resource.cacheKey] = InFlightRequest(
                 task: task,
@@ -918,6 +901,64 @@ actor CoverArtCache {
     private static func isImageData(_ data: Data) -> Bool {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return false }
         return CGImageSourceGetType(source) != nil
+    }
+
+    private static func download(
+        _ resource: CoverArtResource,
+        session: URLSession,
+        requestPermits: AsyncPermitPool,
+        isCrawl: Bool
+    ) async throws -> Data {
+        // The crawl is already limited by its own concurrency and must
+        // not hold permits that on-screen loads are waiting for.
+        if !isCrawl {
+            try await requestPermits.acquire()
+        }
+
+        let result: (Data, URLResponse)
+        do {
+            try Task.checkCancellation()
+            var request = URLRequest(url: resource.url)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.timeoutInterval = 30
+            if isCrawl {
+                request.networkServiceType = .background
+            }
+
+            result = try await session.data(for: request)
+            if !isCrawl {
+                await requestPermits.release()
+            }
+        } catch {
+            if !isCrawl {
+                await requestPermits.release()
+            }
+            throw error
+        }
+
+        let (data, response) = result
+        if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
+            throw CoverArtError.http(statusCode: httpResponse.statusCode)
+        }
+
+        // Subsonic reports failures such as rejected credentials as an
+        // HTTP 200 error document, which must never be cached as art.
+        guard Self.isImageData(data) else {
+            throw Self.subsonicError(in: data) ?? CoverArtError.invalidImage
+        }
+
+        return data
+    }
+
+    /// Recognizes a Subsonic error document, which arrives as XML or JSON
+    /// depending on the request, without fully parsing either.
+    private static func subsonicError(in data: Data) -> CoverArtError? {
+        // Error documents are tiny, so anything larger is not worth inspecting.
+        guard data.count <= 4_096,
+              let text = String(bytes: data, encoding: .utf8),
+              text.contains("subsonic-response") else { return nil }
+        let code = text.firstMatch(of: /code"?\s*[=:]\s*"?(\d+)/).flatMap { Int($0.1) }
+        return .subsonic(code: code)
     }
 
     private func decode(_ data: Data) async throws -> CGImage {
