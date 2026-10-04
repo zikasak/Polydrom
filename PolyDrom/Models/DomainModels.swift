@@ -486,19 +486,19 @@ struct SongLyricsSegment: Hashable, Sendable {
     /// ordering and spacing. Returns nil when none of them can be located in `value`.
     static func marking(backgroundValues: [String], in value: String) -> [SongLyricsSegment]? {
         var backgroundRanges: [Range<String.Index>] = []
+        let needles = backgroundValues
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
 
-        for backgroundValue in backgroundValues {
-            let needle = backgroundValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !needle.isEmpty else { continue }
-
-            // The lead can sing the same words, so prefer an occurrence set off in parentheses, then
-            // one standing as its own word. A match inside a longer word is only trusted when unique.
-            var parenthesizedMatch: Range<String.Index>?
-            var wordMatch: Range<String.Index>?
+        for (offset, needle) in needles.enumerated() where needles.firstIndex(of: needle) == offset {
+            // The lead can sing the same words, so an occurrence set off in parentheses is taken first.
+            // Otherwise the text is only attributed when the line has exactly as many occurrences as
+            // background cues, counting whole words before matches inside a longer word.
+            var parenthesizedMatches: [Range<String.Index>] = []
+            var wordMatches: [Range<String.Index>] = []
             var partialMatches: [Range<String.Index>] = []
             var searchStart = value.startIndex
-            while parenthesizedMatch == nil,
-                  let match = value.range(of: needle, range: searchStart..<value.endIndex) {
+            while let match = value.range(of: needle, range: searchStart..<value.endIndex) {
                 searchStart = match.upperBound
                 guard !backgroundRanges.contains(where: { $0.overlaps(match) }) else { continue }
 
@@ -506,16 +506,22 @@ struct SongLyricsSegment: Hashable, Sendable {
                 let following = match.upperBound < value.endIndex ? value[match.upperBound] : nil
                 if let preceding, let following, "(（".contains(preceding), ")）".contains(following),
                    !backgroundRanges.contains(where: { $0.upperBound == match.lowerBound || $0.lowerBound == match.upperBound }) {
-                    parenthesizedMatch = value.index(before: match.lowerBound)..<value.index(after: match.upperBound)
+                    parenthesizedMatches.append(value.index(before: match.lowerBound)..<value.index(after: match.upperBound))
                 } else if [preceding, following].contains(where: { $0?.isLetter == true || $0?.isNumber == true }) {
                     partialMatches.append(match)
                 } else {
-                    wordMatch = wordMatch ?? match
+                    wordMatches.append(match)
                 }
             }
 
-            if let range = parenthesizedMatch ?? wordMatch ?? (partialMatches.count == 1 ? partialMatches.first : nil) {
-                backgroundRanges.append(range)
+            let cueCount = needles.count { $0 == needle }
+            backgroundRanges += parenthesizedMatches.prefix(cueCount)
+            let remaining = cueCount - min(cueCount, parenthesizedMatches.count)
+            if remaining > 0 {
+                let candidates = wordMatches.isEmpty ? partialMatches : wordMatches
+                if candidates.count == remaining {
+                    backgroundRanges += candidates
+                }
             }
         }
 

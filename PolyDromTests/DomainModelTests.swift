@@ -183,7 +183,9 @@ struct DomainModelTests {
                 {"start": 5000, "value": "No cues"},
                 {"start": 6000, "value": "tonight night"},
                 {"start": 7000, "value": "tonight tonight"},
-                {"start": 8000, "value": "今夜は眠れない"}
+                {"start": 8000, "value": "今夜は眠れない"},
+                {"start": 9000, "value": "go go"},
+                {"start": 10000, "value": "la la"}
               ],
               "cueLine": [
                 {"index": 0, "agentId": "lead", "value": "I know", "cue": []},
@@ -196,7 +198,11 @@ struct DomainModelTests {
                 {"index": 4, "agentId": "backing", "value": "missing", "cue": []},
                 {"index": 6, "agentId": "backing", "value": "night", "cue": []},
                 {"index": 7, "agentId": "backing", "value": "night", "cue": []},
-                {"index": 8, "agentId": "backing", "value": "眠れない", "cue": []}
+                {"index": 8, "agentId": "backing", "value": "眠れない", "cue": []},
+                {"index": 9, "agentId": "lead", "value": "go", "cue": []},
+                {"index": 9, "agentId": "backing", "value": "go", "cue": []},
+                {"index": 10, "agentId": "backing", "value": "la", "cue": []},
+                {"index": 10, "agentId": "backing", "value": "la", "cue": []}
               ]
             }
             """#.utf8)
@@ -224,7 +230,13 @@ struct DomainModelTests {
             [SongLyricsSegment(text: "No cues", isBackground: false)],
             [SongLyricsSegment(text: "tonight ", isBackground: false), SongLyricsSegment(text: "night", isBackground: true)],
             [SongLyricsSegment(text: "tonight tonight", isBackground: false)],
-            [SongLyricsSegment(text: "今夜は", isBackground: false), SongLyricsSegment(text: "眠れない", isBackground: true)]
+            [SongLyricsSegment(text: "今夜は", isBackground: false), SongLyricsSegment(text: "眠れない", isBackground: true)],
+            [SongLyricsSegment(text: "go go", isBackground: false)],
+            [
+                SongLyricsSegment(text: "la", isBackground: true),
+                SongLyricsSegment(text: " ", isBackground: false),
+                SongLyricsSegment(text: "la", isBackground: true)
+            ]
         ])
         #expect(lyrics.isMainLayer)
         #expect(!translation.isMainLayer)
