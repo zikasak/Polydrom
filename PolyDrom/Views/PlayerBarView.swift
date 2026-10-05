@@ -93,11 +93,6 @@ struct PlayerBarView: View {
                 }
                 .layoutPriority(1)
 
-                if viewModel.isBusy {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-
                 HStack(spacing: 8) {
                     detailButton(.lyrics)
                     detailButton(.queue)
