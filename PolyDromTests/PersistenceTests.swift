@@ -190,6 +190,40 @@ struct PersistenceTests {
         #expect(try await store.recentSongs(serverKey: "server-b").map(\.title) == ["Other Server"])
     }
 
+    @Test func searchMatchesEveryWordAcrossFieldsAndListsFullMatchesFirst() async throws {
+        let store = LibraryStore(
+            persistence: PersistenceController(inMemory: true),
+            keychain: MemoryCredentialStore()
+        )
+        try await store.apply(
+            LibrarySnapshot(
+                artists: [],
+                albums: [],
+                songs: [
+                    makeSong(id: "tribute", title: "A Tribute to Radiohead", artist: "Various", album: "Covers"),
+                    makeSong(id: "creep", title: "Creep", artist: "Radiohead", album: "Pablo Honey"),
+                    makeSong(id: "other-creep", title: "Creep", artist: "TLC", album: "CrazySexyCool"),
+                    makeSong(id: "karma", title: "Karma Police", artist: "Radiohead", album: "OK Computer"),
+                    makeSong(id: "titled", title: "Radiohead", artist: "Cover Band", album: "Covers")
+                ],
+                playlists: [],
+                favorites: FavoriteMetadata(),
+                catalogToken: "initial",
+                checkedAt: Date()
+            ),
+            serverKey: "server-a"
+        )
+
+        #expect(try await store.searchSongs("radiohead creep", serverKey: "server-a").map(\.id) == ["creep"])
+        #expect(try await store.searchSongs("Creep - Radiohead", serverKey: "server-a").map(\.id) == ["creep"])
+        #expect(try await store.searchSongs("honey creep radiohead", serverKey: "server-a").map(\.id) == ["creep"])
+        #expect(try await store.searchSongs("radiohead missing", serverKey: "server-a").isEmpty)
+
+        let ranked = try await store.searchSongs("radiohead", serverKey: "server-a").map(\.id)
+        #expect(ranked == ["titled", "creep", "karma", "tribute"])
+        #expect(try await store.searchSongs("radiohead", serverKey: "server-a", limit: 1).map(\.id) == ["titled"])
+    }
+
     @Test func albumShuffleKeepsAlbumsOrderedAndContiguous() async throws {
         let store = LibraryStore(
             persistence: PersistenceController(inMemory: true),

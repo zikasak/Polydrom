@@ -233,21 +233,51 @@ final class LibraryStore {
         }
     }
 
+    /// Every word of the query has to match the title, artist, or album, so "artist song" finds
+    /// the song. Songs matching the query as a whole are listed before those matching word by word.
     func searchSongs(_ query: String, serverKey: String, limit: Int = 100) async throws -> [NavidromeSong] {
         try await performBackground { context in
+            let fields = ["title", "artist", "album"]
+            var terms = query.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+            if terms.isEmpty {
+                terms = [query]
+            }
             let request = Self.request(
                 .song,
                 serverKey: serverKey,
-                matching: NSCompoundPredicate(orPredicateWithSubpredicates: [
-                    NSPredicate(format: "title CONTAINS[cd] %@", query),
-                    NSPredicate(format: "artist CONTAINS[cd] %@", query),
-                    NSPredicate(format: "album CONTAINS[cd] %@", query)
-                ]),
+                matching: NSCompoundPredicate(andPredicateWithSubpredicates: terms.map { term in
+                    NSCompoundPredicate(orPredicateWithSubpredicates: fields.map { field in
+                        NSPredicate(format: "%K CONTAINS[cd] %@", field, term)
+                    })
+                }),
                 sortedBy: [.caseInsensitive("title")]
             )
-            request.fetchLimit = limit
-            return try context.fetch(request).map(Self.song(from:))
+            let phrase = Self.searchFolded(query)
+            let ranked = try context.fetch(request).enumerated().map { offset, object in
+                let values = fields.map { Self.searchFolded(object.string($0) ?? "") }
+                let rank: Int
+                if values[0] == phrase {
+                    rank = 0
+                } else if values.contains(phrase) {
+                    rank = 1
+                } else if values.contains(where: { $0.contains(phrase) }) {
+                    rank = 2
+                } else {
+                    rank = 3
+                }
+                return (rank: rank, offset: offset, object: object)
+            }
+            return ranked
+                .sorted { ($0.rank, $0.offset) < ($1.rank, $1.offset) }
+                .prefix(max(0, limit))
+                .map { Self.song(from: $0.object) }
         }
+    }
+
+    private nonisolated static func searchFolded(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
     }
 
     func randomSongs(serverKey: String, count: Int? = nil) async throws -> [NavidromeSong] {
