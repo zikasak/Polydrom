@@ -60,6 +60,7 @@ struct FullPlayerView: View {
                         Divider()
                         PlayerDetailPanelView(panel: detailPanel, viewModel: viewModel)
                             .frame(width: min(360, max(300, proxy.size.width * 0.32)))
+                            .background(Color(nsColor: .windowBackgroundColor).opacity(0.28))
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
@@ -232,16 +233,15 @@ private struct PlayerArtworkBackground: View {
                         .opacity(transitionProgress)
                 }
 
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-
+                // A plain tint, not a material: the artwork is already blurred, and
+                // backdrop layers stacked over it flicker dark bands when rows redraw.
                 LinearGradient(
                     colors: [
                         Color(nsColor: .windowBackgroundColor).opacity(
-                            colorScheme == .dark ? 0.16 : 0.34
+                            colorScheme == .dark ? 0.30 : 0.50
                         ),
                         Color(nsColor: .windowBackgroundColor).opacity(
-                            colorScheme == .dark ? 0.52 : 0.68
+                            colorScheme == .dark ? 0.60 : 0.78
                         )
                     ],
                     startPoint: .top,
@@ -385,7 +385,6 @@ struct PlayerQueueView: View {
                 }
             }
         }
-        .background(.ultraThinMaterial)
         .onReceive(viewModel.audioPlayer.$currentSong.map { $0 != nil }.removeDuplicates()) { value in
             hasCurrentSong = value
         }
@@ -444,7 +443,6 @@ struct PlayerLyricsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(.ultraThinMaterial)
         .onReceive(audioPlayer.$currentSong.map { $0?.id }.removeDuplicates()) { songID = $0 }
         .onReceive(audioPlayer.$currentTime) { updateHighlightedLine(at: $0) }
         .onChange(of: viewModel.lyricsRevision, initial: true) { _, _ in
