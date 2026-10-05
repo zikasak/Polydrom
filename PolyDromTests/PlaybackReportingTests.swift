@@ -30,8 +30,10 @@ struct PlaybackReportingTests {
         reporter.handle(event(second, position: 0, isPlaying: true, trigger: .started, at: origin + 83))
         reporter.handle(event(second, position: 100, isPlaying: false, trigger: .finished, at: origin + 183))
 
-        #expect(await eventually { requests.withLock { $0.count == 10 } })
+        // Every session already ended, so this only drains the queued reports.
+        await reporter.finishForApplicationTermination()
         let captured = requests.withLock { $0 }
+        #expect(captured.count == 10)
         #expect(captured.allSatisfy { apiMethod(in: $0) == "reportPlayback" })
         #expect(captured.map { queryValue("state", in: $0) } == [
             "starting", "playing", "paused", "playing", "playing",
@@ -73,8 +75,10 @@ struct PlaybackReportingTests {
         reporter.handle(event(third, position: 0, isPlaying: true, trigger: .started, at: origin + 12))
         reporter.handle(event(third, position: 100, isPlaying: false, trigger: .finished, at: origin + 13))
 
-        #expect(await eventually { requests.withLock { $0.count == 5 } })
+        // Every session already ended, so this only drains the queued reports.
+        await reporter.finishForApplicationTermination()
         let captured = requests.withLock { $0 }
+        #expect(captured.count == 5)
         #expect(captured.allSatisfy { apiMethod(in: $0) == "scrobble" })
         #expect(captured.map { queryValue("id", in: $0) } == [
             "first", "first", "second", "third", "third"
