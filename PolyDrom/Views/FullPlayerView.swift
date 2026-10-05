@@ -193,10 +193,20 @@ struct FullPlayerView: View {
                 Task { await viewModel.loadLyrics(for: song) }
             }
         } label: {
+            // Tinted bordered buttons wash out over the artwork; use an opaque
+            // accent fill when selected and the shared material chip otherwise.
             Label(panel.title, systemImage: panel.systemImage)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(detailPanel == panel ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(
+                    detailPanel == panel ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.regularMaterial),
+                    in: Capsule()
+                )
+                .contentShape(Capsule())
         }
-        .buttonStyle(.bordered)
-        .tint(detailPanel == panel ? .accentColor : nil)
+        .buttonStyle(.plain)
         // Keep selection colors out of the panel's spring animation.
         .animation(nil, value: detailPanel)
         .help(panel.title)
