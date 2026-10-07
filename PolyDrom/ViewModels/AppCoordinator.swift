@@ -50,6 +50,11 @@ final class AppCoordinator: ObservableObject {
         willSet { objectWillChange.send() }
         didSet { refreshEditablePlaylists() }
     }
+    /// Whether the server can find songs that sound alike, which Navidrome
+    /// offers once a sonic analysis plugin such as AudioMuse-AI is enabled.
+    @Published var supportsSonicSimilarity = false {
+        willSet { objectWillChange.send() }
+    }
     @Published var hasCachedLibrary = false {
         willSet { objectWillChange.send() }
     }
@@ -261,6 +266,7 @@ final class AppCoordinator: ObservableObject {
         didSet {
             coverArtResources.removeAll()
             cancelCoverArtCrawl()
+            supportsSonicSimilarity = false
         }
     }
     var sessionGeneration: UInt = 0
@@ -308,6 +314,9 @@ final class AppCoordinator: ObservableObject {
     private(set) var playbackQueueIndices: [UUID: Int] = [:]
 
     var lyricsSongID: String?
+    /// The latest request for a mix of similar songs; an earlier one that
+    /// answers late is ignored.
+    var similarSongsRequestID: UUID?
     var pendingPlaybackRestore: PersistedPlaybackState?
     var didRestorePlayback = false
 

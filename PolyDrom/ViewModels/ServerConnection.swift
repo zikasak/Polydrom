@@ -134,9 +134,14 @@ extension AppCoordinator {
         do {
             try await nextClient.ping()
             guard isCurrentSession(session) else { return }
-            let reportingMode = await playbackReportingMode(using: nextClient)
+            let extensions = await openSubsonicExtensions(using: nextClient)
             guard isCurrentSession(session) else { return }
-            playbackReporter.connect(client: nextClient, serverKey: profile.serverKey, mode: reportingMode)
+            playbackReporter.connect(
+                client: nextClient,
+                serverKey: profile.serverKey,
+                mode: extensions.supports("playbackReport") ? .modern : .legacy
+            )
+            supportsSonicSimilarity = extensions.supports("sonicSimilarity")
             isOnline = true
             AppLog.app.info("Connected to server (session \(session.generation, privacy: .public))")
             try serverRegistry.touch(profile)
@@ -155,19 +160,14 @@ extension AppCoordinator {
         }
     }
 
-    private func playbackReportingMode(using client: NavidromeClient) async -> PlaybackReportingMode {
+    private func openSubsonicExtensions(using client: NavidromeClient) async -> [OpenSubsonicExtension] {
         do {
-            let extensions = try await client.openSubsonicExtensions()
-            let supportsPlaybackReport = extensions.contains {
-                $0.name.caseInsensitiveCompare("playbackReport") == .orderedSame
-                    && $0.supports(version: 1)
-            }
-            return supportsPlaybackReport ? .modern : .legacy
+            return try await client.openSubsonicExtensions()
         } catch {
-            AppLog.playback.debug(
-                "Playback-report capability discovery failed; using legacy reporting: \(error.localizedDescription, privacy: .private)"
+            AppLog.app.debug(
+                "Capability discovery failed; assuming no OpenSubsonic extensions: \(error.localizedDescription, privacy: .private)"
             )
-            return .legacy
+            return []
         }
     }
 }

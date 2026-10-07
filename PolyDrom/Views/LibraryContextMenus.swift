@@ -63,6 +63,19 @@ struct QueueMenuButtons: View {
     }
 }
 
+/// Shown only where the server offers sonic analysis.
+struct SimilarSongsMenuButton: View {
+    let isOnline: Bool
+    let play: () -> Void
+
+    var body: some View {
+        Button(action: play) {
+            Label("Play Similar Songs", systemImage: "waveform")
+        }
+        .disabled(!isOnline)
+    }
+}
+
 struct FavoriteMenuButton: View {
     let isFavorite: Bool
     let isOnline: Bool
@@ -196,6 +209,12 @@ struct PlayerSongContextMenu: View {
             playNext: { viewModel.playNext([song]) },
             addToQueue: { viewModel.addToQueue([song]) }
         )
+
+        if viewModel.supportsSonicSimilarity {
+            SimilarSongsMenuButton(isOnline: viewModel.isOnline) {
+                Task { await viewModel.playSimilarSongs(to: song) }
+            }
+        }
 
         Divider()
 

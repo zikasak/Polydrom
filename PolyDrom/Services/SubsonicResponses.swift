@@ -24,6 +24,7 @@ typealias LyricsEnvelope = SubsonicEnvelope<LyricsResponse>
 typealias StarredEnvelope = SubsonicEnvelope<StarredResponse>
 typealias ScanStatusEnvelope = SubsonicEnvelope<ScanStatusResponse>
 typealias OpenSubsonicExtensionsEnvelope = SubsonicEnvelope<OpenSubsonicExtensionsResponse>
+typealias SonicMatchesEnvelope = SubsonicEnvelope<SonicMatchesResponse>
 
 protocol SubsonicResponse: Decodable {
     var status: String { get }
@@ -97,6 +98,41 @@ struct OpenSubsonicExtension: Decodable, Equatable, Sendable {
 
     func supports(version: Int) -> Bool {
         versions.contains(version)
+    }
+}
+
+extension [OpenSubsonicExtension] {
+    func supports(_ name: String, version: Int = 1) -> Bool {
+        contains { $0.name.caseInsensitiveCompare(name) == .orderedSame && $0.supports(version: version) }
+    }
+}
+
+struct SonicMatchesResponse: SubsonicResponse {
+    let status: String
+    let error: SubsonicServerError?
+    let matches: FlexibleArray<SonicMatch>
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case error
+        case matches = "sonicMatch"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(String.self, forKey: .status)
+        error = try container.decodeIfPresent(SubsonicServerError.self, forKey: .error)
+        matches = container.decodeFlexibleArray(of: SonicMatch.self, forKey: .matches)
+    }
+}
+
+/// A song that sounds like the one asked about, as ranked by the server's
+/// sonic analysis plugin.
+struct SonicMatch: Decodable {
+    let song: NavidromeSong
+
+    enum CodingKeys: String, CodingKey {
+        case song = "entry"
     }
 }
 

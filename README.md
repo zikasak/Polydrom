@@ -67,6 +67,7 @@ Home combines featured albums, recent additions, listening history, random album
 Most songs, albums, and artists expose the same actions from their context menus:
 
 - Play, play next, or add to the end of the queue.
+- Play similar songs: on a Navidrome server with a sonic analysis plugin such as AudioMuse-AI, start a mix of the tracks that sound most like a song.
 - Add to or remove from favorites.
 - Add songs to an editable playlist or create a new playlist from the selection.
 - Open the related album or artist.

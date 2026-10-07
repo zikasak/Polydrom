@@ -542,6 +542,58 @@ struct AppCoordinatorTests {
         #expect(viewModel.statusMessage == "Navidrome is scanning. Refresh will retry shortly.")
     }
 
+    @Test(arguments: [true, false])
+    func similarSongsMixIsOfferedOnlyWhenTheServerAdvertisesSonicSimilarity(advertised: Bool) async throws {
+        let handler: StubURLProtocol.Handler = { request in
+            switch apiMethod(in: request) {
+            case "getOpenSubsonicExtensions":
+                let extensions = advertised ? #"{"name":"sonicSimilarity","versions":[1]}"# : ""
+                return envelope(#"{"status":"ok","openSubsonicExtensions":[\#(extensions)]}"#)
+            case "getSonicSimilarTracks":
+                return envelope(#"{"status":"ok","sonicMatch":[{"entry":{"id":"seed","title":"Seed"},"similarity":1},{"entry":{"id":"close","title":"Close"},"similarity":0.9},{"entry":{"id":"far","title":"Far"},"similarity":0.4}]}"#)
+            default:
+                return envelope(#"{"status":"ok"}"#)
+            }
+        }
+        let (viewModel, _, _) = makeViewModel(session: StubURLProtocol.session(handler: handler))
+        await viewModel.connect(makeProfile())
+
+        #expect(viewModel.supportsSonicSimilarity == advertised)
+        await viewModel.playSimilarSongs(to: makeSong(id: "seed", title: "Seed"))
+
+        if advertised {
+            #expect(await eventually { viewModel.playbackQueue.map(\.song.id) == ["seed", "close", "far"] })
+            #expect(await eventually { viewModel.audioPlayer.currentSong?.id == "seed" })
+        } else {
+            #expect(viewModel.playbackQueue.isEmpty)
+            #expect(viewModel.statusMessage == "Similar songs are not available on this server.")
+        }
+    }
+
+    @Test func lateSimilarSongsCannotReplacePlaybackChosenWhileTheyLoaded() async throws {
+        let session = StubURLProtocol.session { request in
+            guard apiMethod(in: request) == "getSonicSimilarTracks" else { return envelope(#"{"status":"ok"}"#) }
+            Thread.sleep(forTimeInterval: 0.1)
+            return envelope(#"{"status":"ok","sonicMatch":[{"entry":{"id":"close","title":"Close"}}]}"#)
+        }
+        let (viewModel, _, _) = makeViewModel(session: session)
+        let profile = makeProfile()
+        viewModel.activeServer = profile
+        viewModel.client = NavidromeClient(profile: profile, session: session)
+        viewModel.isOnline = true
+        viewModel.supportsSonicSimilarity = true
+
+        async let mix: Void = viewModel.playSimilarSongs(to: makeSong(id: "seed"))
+        try await Task.sleep(for: .milliseconds(10))
+        let chosen = PlaybackQueueEntry(song: makeSong(id: "chosen"))
+        viewModel.playbackQueue = [chosen]
+        viewModel.currentPlaybackQueueEntryID = chosen.id
+        await mix
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(viewModel.playbackQueue.map(\.song.id) == ["chosen"])
+    }
+
     @Test func lateConnectionResponseCannotReplaceNewerServerSession() async throws {
         let handler: StubURLProtocol.Handler = { request in
             if apiMethod(in: request) == "ping", queryValue("u", in: request) == "first" {

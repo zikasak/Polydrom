@@ -160,6 +160,7 @@ struct SongRowView: View, Equatable {
     let isCurrentSong: Bool
     let isFavorite: Bool
     let isOnline: Bool
+    let supportsSonicSimilarity: Bool
     let isPlaylistMutating: Bool
     let coverArtResource: CoverArtResource?
     let openRoute: (LibraryRoute) -> Void
@@ -185,6 +186,7 @@ struct SongRowView: View, Equatable {
         self.isCurrentSong = isCurrentSong
         self.isFavorite = viewModel.isFavorite(song)
         self.isOnline = viewModel.isOnline
+        self.supportsSonicSimilarity = viewModel.supportsSonicSimilarity
         self.isPlaylistMutating = viewModel.isPlaylistMutating
         self.coverArtResource = viewModel.coverArtResource(for: song, size: 96)
         self.openRoute = openRoute
@@ -201,6 +203,7 @@ struct SongRowView: View, Equatable {
             && lhs.isCurrentSong == rhs.isCurrentSong
             && lhs.isFavorite == rhs.isFavorite
             && lhs.isOnline == rhs.isOnline
+            && lhs.supportsSonicSimilarity == rhs.supportsSonicSimilarity
             && lhs.isPlaylistMutating == rhs.isPlaylistMutating
             && lhs.coverArtResource == rhs.coverArtResource
             && lhs.currentAlbumID == rhs.currentAlbumID
@@ -290,6 +293,12 @@ struct SongRowView: View, Equatable {
                     playNext: { viewModel.playNext([song]) },
                     addToQueue: { viewModel.addToQueue([song]) }
                 )
+
+                if supportsSonicSimilarity {
+                    SimilarSongsMenuButton(isOnline: isOnline) {
+                        Task { await viewModel.playSimilarSongs(to: song) }
+                    }
+                }
 
                 Divider()
 
