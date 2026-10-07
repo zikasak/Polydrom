@@ -23,7 +23,7 @@ PolyDrom brings a full desktop listening experience to a self-hosted Navidrome l
 - **Native macOS experience** — a responsive SwiftUI interface with compact and expanded players, system Now Playing integration, keyboard-friendly controls, and AirPlay and Sonos output controls.
 - **A library built for discovery** — featured, recently added, recently played, and random albums; quick mixes of 10, 25, or 50 tracks; song- and album-grouped full-library shuffle; and search across titles, artists, and albums.
 - **Complete library navigation** — browse albums, artists, genres, playlists, favorites, recent history, and detailed album, artist, or genre pages with cached artwork.
-- **Real queue management** — play immediately, play next, append to the queue, jump between tracks, seek, change volume, and resume the current queue and position after relaunching.
+- **Real queue management** — play immediately, play next, append to the queue, reorder it, jump between tracks, seek, change volume, and resume the current queue and position after relaunching.
 - **Synced listening state** — report Now Playing and completed listens to Navidrome; star songs, albums, and artists; create, rename, update, and delete editable playlists; and display plain or time-synced lyrics.
 - **Multi-server support** — save multiple accounts, switch from the sidebar, reconnect automatically to the most recently used server, and maintain isolated caches for every server and user.
 - **Offline library browsing** — cached metadata, favorites, playlists, play history, and artwork remain available without a server connection. Streaming and server mutations still require connectivity.
@@ -75,7 +75,7 @@ Most songs, albums, and artists expose the same actions from their context menus
 
 ### Playback
 
-The compact player stays available while browsing. Open it to see the expanded Now Playing experience with large artwork, elapsed time, seeking, volume, favorite and stop controls, AirPlay, Sonos output, the current queue, and lyrics.
+The compact player stays available while browsing. Open it to see the expanded Now Playing experience with large artwork, elapsed time, seeking, volume, favorite and stop controls, AirPlay, Sonos output, the current queue, and lyrics. Drag songs in the queue to reorder them, or right-click one to play it next or move it up or down.
 
 Choose a Sonos room from the speaker menu in either player. PolyDrom uses the room's existing Sonos group and places only the current song in its Sonos queue so the Sonos app can show its album, artist, and duration. The Sonos speakers must be on a network where they can reach the configured Navidrome address directly; `localhost`, Mac-only VPN addresses, and inaccessible HTTPS certificates will not work. PolyDrom keeps the rest of the queue locally and starts the next song when the current one ends. Use PolyDrom's next/previous controls to move through that queue. If another app changes Sonos playback, select the group again to resume PolyDrom playback. Switching back to Mac/AirPlay or quitting PolyDrom stops the song it started on Sonos and removes it from the Sonos queue.
 

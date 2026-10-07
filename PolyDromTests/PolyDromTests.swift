@@ -179,6 +179,44 @@ struct PolyDromTests {
         #expect(viewModel.playbackQueue.map(\.song.id) == ["current", "next", "later", "end"])
     }
 
+    @Test func movingQueueEntriesKeepsTheCurrentSong() {
+        let (viewModel, _, _) = makeViewModel()
+        let entries = ["a", "b", "c", "d"].map { PlaybackQueueEntry(song: makeSong(id: $0)) }
+        var order: [String] { viewModel.playbackQueue.map(\.song.id) }
+
+        viewModel.playbackQueue = entries
+        viewModel.currentPlaybackQueueEntryID = entries[1].id
+        viewModel.isOnline = true
+        viewModel.audioPlayer.currentSong = entries[1].song
+
+        viewModel.moveQueueEntry(entries[0].id, to: 2)
+        #expect(order == ["b", "c", "a", "d"])
+        #expect(viewModel.currentPlaybackQueueEntryID == entries[1].id)
+        #expect(!viewModel.canPlayPreviousTrack())
+
+        viewModel.moveQueueEntry(entries[3].id, to: 0)
+        #expect(order == ["d", "b", "c", "a"])
+        #expect(viewModel.canPlayPreviousTrack())
+
+        viewModel.moveQueueEntry(entries[1].id, to: 99)
+        #expect(order == ["d", "c", "a", "b"])
+        #expect(!viewModel.canPlayNextTrack())
+
+        viewModel.moveQueueEntry(UUID(), to: 0)
+        viewModel.moveQueueEntry(entries[3].id, to: -5)
+        #expect(order == ["d", "c", "a", "b"])
+
+        // From before the current song, then from after it.
+        viewModel.moveQueueEntry(entries[1].id, to: 1)
+        #expect(order == ["d", "b", "c", "a"])
+        viewModel.moveQueueEntryToPlayNext(entries[3].id)
+        #expect(order == ["b", "d", "c", "a"])
+        viewModel.moveQueueEntryToPlayNext(entries[0].id)
+        #expect(order == ["b", "a", "d", "c"])
+        viewModel.moveQueueEntryToPlayNext(entries[1].id)
+        #expect(order == ["b", "a", "d", "c"])
+    }
+
     @Test func duplicateQueueEntriesKeepIndependentIdentity() {
         let (viewModel, _, _) = makeViewModel()
         let audioPlayer = viewModel.audioPlayer
