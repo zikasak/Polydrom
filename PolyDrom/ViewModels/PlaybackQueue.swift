@@ -58,20 +58,31 @@ extension AppCoordinator {
             return
         }
 
+        // The controls stay usable while the server answers, so the mix is
+        // dropped if another one was asked for or playback moved on meanwhile.
+        let requestID = UUID()
+        similarSongsRequestID = requestID
+        let entryIDAtRequest = currentPlaybackQueueEntryID
+        var isStillWanted: Bool {
+            isCurrentSession(session)
+                && similarSongsRequestID == requestID
+                && currentPlaybackQueueEntryID == entryIDAtRequest
+        }
+
         isBusy = true
         defer { isBusy = false }
 
         do {
             let songs = try await client.sonicallySimilarSongs(to: song.id, count: count)
                 .filter { $0.id != song.id }
-            guard isCurrentSession(session) else { return }
+            guard isStillWanted else { return }
             guard !songs.isEmpty else {
                 statusMessage = "No similar songs found."
                 return
             }
 
             await warmCachedSongCovers(songs)
-            guard isCurrentSession(session) else { return }
+            guard isStillWanted else { return }
             prefetchSongCovers(songs)
             if audioPlayer.currentSong?.id == song.id, currentPlaybackQueueIndex != nil {
                 playNext(songs)
@@ -79,7 +90,7 @@ extension AppCoordinator {
                 play([song] + songs, startingAt: 0, expectedSession: session)
             }
         } catch {
-            guard isCurrentSession(session) else { return }
+            guard isStillWanted else { return }
             AppLog.playback.error("Could not load similar songs: \(error.localizedDescription, privacy: .private)")
             statusMessage = error.localizedDescription
         }

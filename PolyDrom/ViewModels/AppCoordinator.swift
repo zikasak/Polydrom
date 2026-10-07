@@ -314,6 +314,9 @@ final class AppCoordinator: ObservableObject {
     private(set) var playbackQueueIndices: [UUID: Int] = [:]
 
     var lyricsSongID: String?
+    /// The latest request for a mix of similar songs; an earlier one that
+    /// answers late is ignored.
+    var similarSongsRequestID: UUID?
     var pendingPlaybackRestore: PersistedPlaybackState?
     var didRestorePlayback = false
 

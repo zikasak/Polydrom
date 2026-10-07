@@ -570,6 +570,30 @@ struct AppCoordinatorTests {
         }
     }
 
+    @Test func lateSimilarSongsCannotReplacePlaybackChosenWhileTheyLoaded() async throws {
+        let session = StubURLProtocol.session { request in
+            guard apiMethod(in: request) == "getSonicSimilarTracks" else { return envelope(#"{"status":"ok"}"#) }
+            Thread.sleep(forTimeInterval: 0.1)
+            return envelope(#"{"status":"ok","sonicMatch":[{"entry":{"id":"close","title":"Close"}}]}"#)
+        }
+        let (viewModel, _, _) = makeViewModel(session: session)
+        let profile = makeProfile()
+        viewModel.activeServer = profile
+        viewModel.client = NavidromeClient(profile: profile, session: session)
+        viewModel.isOnline = true
+        viewModel.supportsSonicSimilarity = true
+
+        async let mix: Void = viewModel.playSimilarSongs(to: makeSong(id: "seed"))
+        try await Task.sleep(for: .milliseconds(10))
+        let chosen = PlaybackQueueEntry(song: makeSong(id: "chosen"))
+        viewModel.playbackQueue = [chosen]
+        viewModel.currentPlaybackQueueEntryID = chosen.id
+        await mix
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(viewModel.playbackQueue.map(\.song.id) == ["chosen"])
+    }
+
     @Test func lateConnectionResponseCannotReplaceNewerServerSession() async throws {
         let handler: StubURLProtocol.Handler = { request in
             if apiMethod(in: request) == "ping", queryValue("u", in: request) == "first" {
