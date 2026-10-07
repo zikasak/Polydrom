@@ -36,6 +36,20 @@ struct NavidromeClient: Sendable {
         return response.subsonicResponse.openSubsonicExtensions ?? []
     }
 
+    /// The songs that sound most like `songID`, closest first. Only servers that
+    /// advertise the `sonicSimilarity` extension answer this.
+    func sonicallySimilarSongs(to songID: String, count: Int) async throws -> [NavidromeSong] {
+        let response: SonicMatchesEnvelope = try await request(
+            "getSonicSimilarTracks",
+            queryItems: [
+                URLQueryItem(name: "id", value: songID),
+                URLQueryItem(name: "count", value: String(count))
+            ]
+        )
+        try response.subsonicResponse.throwIfNeeded()
+        return response.subsonicResponse.matches.values.map(\.song)
+    }
+
     func songMetadata(for songID: String) async throws -> NavidromeSong? {
         let response: SongEnvelope = try await request(
             "getSong",

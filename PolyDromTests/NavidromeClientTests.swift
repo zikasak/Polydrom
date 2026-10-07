@@ -101,6 +101,10 @@ struct NavidromeClientTests {
             case "getLyricsBySongId":
                 #expect(queryValue("enhanced", in: request) == "true")
                 return envelope(#"{"status":"ok","lyricsList":{"structuredLyrics":{"lang":"en","synced":true,"line":{"value":"Line"}}}}"#)
+            case "getSonicSimilarTracks":
+                #expect(queryValue("id", in: request) == "seed")
+                #expect(queryValue("count", in: request) == "2")
+                return envelope(#"{"status":"ok","sonicMatch":[{"entry":{"id":"close","title":"Close"},"similarity":0.97},{"similarity":0.5},{"entry":{"id":"far","title":"Far"},"similarity":-1}]}"#)
             case "getStarred2":
                 return envelope(#"{"status":"ok","starred2":{"artist":{"id":"star-a","name":"Star Artist"},"album":{"id":"star-b","name":"Star Album"},"song":{"id":"star-s","title":"Star Song"}}}"#)
             case "star", "unstar":
@@ -155,6 +159,8 @@ struct NavidromeClientTests {
         try await client.deletePlaylist(id: created.id)
         #expect(try await client.lyrics(for: makeSong()).first?.lines.first?.value == "Line")
 
+        #expect(try await client.sonicallySimilarSongs(to: "seed", count: 2).map(\.id) == ["close", "far"])
+
         let starred = try await client.starredItems()
         #expect(starred.artists.map(\.id) == ["star-a"])
         #expect(starred.albums.map(\.id) == ["star-b"])
@@ -201,6 +207,7 @@ struct NavidromeClientTests {
         #expect(try await client.playlists().isEmpty)
         #expect(try await client.songs(for: JSONDecoder().decode(NavidromePlaylist.self, from: Data(#"{"id":"p","name":"P"}"#.utf8))).isEmpty)
         #expect(try await client.lyrics(for: makeSong()).isEmpty)
+        #expect(try await client.sonicallySimilarSongs(to: "seed", count: 1).isEmpty)
         let starred = try await client.starredItems()
         #expect(starred.artists.isEmpty && starred.albums.isEmpty && starred.songs.isEmpty)
     }

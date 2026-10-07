@@ -50,6 +50,41 @@ extension AppCoordinator {
         }
     }
 
+    /// Starts a mix of `song` and the songs that sound most like it. A song that
+    /// is already playing keeps playing, with the mix queued right after it.
+    func playSimilarSongs(to song: NavidromeSong, count: Int = 50) async {
+        guard let session = currentSession, isOnline, supportsSonicSimilarity, let client else {
+            statusMessage = "Similar songs are not available on this server."
+            return
+        }
+
+        isBusy = true
+        defer { isBusy = false }
+
+        do {
+            let songs = try await client.sonicallySimilarSongs(to: song.id, count: count)
+                .filter { $0.id != song.id }
+            guard isCurrentSession(session) else { return }
+            guard !songs.isEmpty else {
+                statusMessage = "No similar songs found."
+                return
+            }
+
+            await warmCachedSongCovers(songs)
+            guard isCurrentSession(session) else { return }
+            prefetchSongCovers(songs)
+            if audioPlayer.currentSong?.id == song.id, currentPlaybackQueueIndex != nil {
+                playNext(songs)
+            } else {
+                play([song] + songs, startingAt: 0, expectedSession: session)
+            }
+        } catch {
+            guard isCurrentSession(session) else { return }
+            AppLog.playback.error("Could not load similar songs: \(error.localizedDescription, privacy: .private)")
+            statusMessage = error.localizedDescription
+        }
+    }
+
     /// Starts `entry`, replacing the queue when one is given. `expectedSession`
     /// drops a request that was prepared for an earlier connection.
     func startPlayback(
