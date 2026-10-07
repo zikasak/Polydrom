@@ -3,4 +3,4 @@ schemes:
   - PolyDrom
 format: xcode
 strict: true
-
+retain_encodable_properties: true

@@ -159,7 +159,9 @@ extension AppCoordinator {
     ) async throws {
         guard queue.indices.contains(currentIndex) else { throw SonosError.invalidResponse }
         let device = group.coordinator
-        let track = try Self.track(queue[currentIndex], client: client)
+        let track = try await Self.track(
+            queue[currentIndex], client: client, negotiatesFormat: supportsTranscodeDecisions
+        )
         try checkSonosGeneration(generation)
         _ = try? await sonosUPnP.transport("Stop", on: device)
         var step = "RemoveAllTracksFromQueue"
@@ -229,7 +231,12 @@ extension AppCoordinator {
     /// Formats Sonos plays natively are streamed as the original file, which keeps
     /// byte-range seeking available; transcoded streams lack it.
     nonisolated static func sonosStreamFormat(for song: NavidromeSong) -> (format: String, mimeType: String) {
-        let mimeType: String? = switch song.suffix?.lowercased() {
+        sonosMimeType(forContainer: song.suffix).map { ("raw", $0) } ?? ("mp3", "audio/mpeg")
+    }
+
+    /// The content type Sonos expects for a file of this kind, or nil when it cannot play it.
+    nonisolated private static func sonosMimeType(forContainer container: String?) -> String? {
+        switch container?.lowercased() {
         case "mp3": "audio/mpeg"
         case "flac": "audio/flac"
         case "m4a", "mp4": "audio/mp4"
@@ -240,12 +247,63 @@ extension AppCoordinator {
         case "aif", "aiff": "audio/aiff"
         default: nil
         }
-        return mimeType.map { ("raw", $0) } ?? ("mp3", "audio/mpeg")
     }
 
-    private static func track(_ entry: PlaybackQueueEntry, client: NavidromeClient) throws -> SonosTrack {
-        let (format, mimeType) = sonosStreamFormat(for: entry.song)
-        let stream = try client.streamURL(for: entry.song, format: format)
+    /// What a Sonos speaker decodes. It stops without an error on anything above 48 kHz, so a
+    /// high-resolution file has to reach it resampled, as FLAC where the server can produce it.
+    nonisolated static let sonosClientInfo: TranscodeClientInfo = {
+        let limitations = [
+            TranscodeClientInfo.Limitation(name: "audioSamplerate", values: ["48000"]),
+            TranscodeClientInfo.Limitation(name: "audioBitdepth", values: ["24"]),
+            TranscodeClientInfo.Limitation(name: "audioChannels", values: ["2"])
+        ]
+        let playable: [(container: String, codecs: [String])] = [
+            ("mp3", ["mp3"]), ("flac", ["flac"]), ("m4a", ["aac", "alac"]), ("ogg", ["vorbis"]),
+            ("wma", []), ("wav", []), ("aiff", [])
+        ]
+        return TranscodeClientInfo(
+            name: "PolyDrom",
+            platform: "Sonos",
+            directPlayProfiles: playable.map {
+                .init(containers: [$0.container], audioCodecs: $0.codecs, maxAudioChannels: 2)
+            },
+            transcodingProfiles: ["flac", "mp3"].map {
+                .init(container: $0, audioCodec: $0, maxAudioChannels: 2)
+            },
+            codecProfiles: ["flac", "alac", "pcm", "aac", "vorbis", "mp3"].map {
+                .init(name: $0, limitations: limitations)
+            }
+        )
+    }()
+
+    /// The stream Sonos should fetch for `song`. A server that negotiates formats is told what the
+    /// speaker decodes and picks the stream; otherwise the file extension decides.
+    nonisolated static func sonosStream(
+        for song: NavidromeSong, client: NavidromeClient, negotiatesFormat: Bool
+    ) async throws -> (url: URL, mimeType: String) {
+        if negotiatesFormat,
+           let decision = try? await client.transcodeDecision(
+               for: song, clientInfo: sonosClientInfo, timeoutInterval: 4
+           ) {
+            if decision.canDirectPlay,
+               let mimeType = sonosMimeType(forContainer: decision.sourceStream?.container ?? song.suffix) {
+                return (try client.streamURL(for: song), mimeType)
+            }
+            if decision.canTranscode, let transcodeParams = decision.transcodeParams,
+               let mimeType = sonosMimeType(forContainer: decision.transcodeStream?.container) {
+                return (try client.transcodeStreamURL(for: song, transcodeParams: transcodeParams), mimeType)
+            }
+        }
+        let (format, mimeType) = sonosStreamFormat(for: song)
+        return (try client.streamURL(for: song, format: format), mimeType)
+    }
+
+    private static func track(
+        _ entry: PlaybackQueueEntry, client: NavidromeClient, negotiatesFormat: Bool
+    ) async throws -> SonosTrack {
+        let (stream, mimeType) = try await sonosStream(
+            for: entry.song, client: client, negotiatesFormat: negotiatesFormat
+        )
         try checkSpeakerReachability(of: stream)
         let artworkID = entry.song.coverArt ?? entry.song.albumId
         let artwork = artworkID.flatMap { try? client.coverArtURL(id: $0, size: 512) }

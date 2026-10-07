@@ -142,6 +142,7 @@ extension AppCoordinator {
                 mode: extensions.supports("playbackReport") ? .modern : .legacy
             )
             supportsSonicSimilarity = extensions.supports("sonicSimilarity")
+            supportsTranscodeDecisions = extensions.supports("transcoding")
             isOnline = true
             AppLog.app.info("Connected to server (session \(session.generation, privacy: .public))")
             try serverRegistry.touch(profile)
