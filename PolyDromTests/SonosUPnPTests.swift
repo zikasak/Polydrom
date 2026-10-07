@@ -107,6 +107,67 @@ struct SonosUPnPTests {
         #expect(SonosUPnP.didl(for: track).contains("protocolInfo=\"http-get:*:audio/flac:*\""))
     }
 
+    @Test func sonosStreamFollowsTheServerDecisionWhenFormatsAreNegotiated() async throws {
+        let limits = Mutex<[[String: [String]]]>([])
+        let session = StubURLProtocol.session { request in
+            guard apiMethod(in: request) == "getTranscodeDecision", request.httpMethod == "POST" else {
+                return StubURLProtocol.Response(statusCode: 404, json: "{}")
+            }
+            if let body = Self.bodyData(request),
+               let info = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+               let profiles = info["codecProfiles"] as? [[String: Any]],
+               let flac = profiles.first(where: { $0["name"] as? String == "flac" }),
+               let limitations = flac["limitations"] as? [[String: Any]] {
+                let sent = limitations.reduce(into: [String: [String]]()) { result, limitation in
+                    guard let name = limitation["name"] as? String else { return }
+                    result[name] = limitation["values"] as? [String]
+                }
+                limits.withLock { $0.append(sent) }
+            }
+            switch queryValue("mediaId", in: request) {
+            case "hires":
+                return envelope(#"{"status":"ok","transcodeDecision":{"canDirectPlay":false,"canTranscode":true,"transcodeParams":"token","sourceStream":{"container":"flac","codec":"flac","audioSamplerate":192000},"transcodeStream":{"container":"flac","codec":"flac","audioSamplerate":48000}}}"#)
+            case "plain":
+                return envelope(#"{"status":"ok","transcodeDecision":{"canDirectPlay":true,"canTranscode":false,"sourceStream":{"container":"flac","codec":"flac"}}}"#)
+            default:
+                return envelope(#"{"status":"failed","error":{"code":0,"message":"no decision"}}"#)
+            }
+        }
+        let client = try #require(NavidromeClient(profile: makeProfile(), session: session))
+
+        // A cached song has no suffix, so only the server knows it is a high-resolution FLAC.
+        let hires = try await AppCoordinator.sonosStream(
+            for: NavidromeSong(id: "hires", title: "Hi-Res"), client: client, negotiatesFormat: true
+        )
+        #expect(apiMethod(in: URLRequest(url: hires.url)) == "getTranscodeStream")
+        #expect(queryValue("mediaId", in: URLRequest(url: hires.url)) == "hires")
+        #expect(queryValue("transcodeParams", in: URLRequest(url: hires.url)) == "token")
+        #expect(hires.mimeType == "audio/flac")
+        #expect(limits.withLock { $0.first } == [
+            "audioSamplerate": ["48000"], "audioBitdepth": ["24"], "audioChannels": ["2"]
+        ])
+
+        let plain = try await AppCoordinator.sonosStream(
+            for: NavidromeSong(id: "plain", title: "Plain"), client: client, negotiatesFormat: true
+        )
+        #expect(apiMethod(in: URLRequest(url: plain.url)) == "stream")
+        #expect(queryValue("format", in: URLRequest(url: plain.url)) == "raw")
+        #expect(plain.mimeType == "audio/flac")
+
+        let undecided = try await AppCoordinator.sonosStream(
+            for: NavidromeSong(id: "undecided", title: "Undecided"), client: client, negotiatesFormat: true
+        )
+        #expect(queryValue("format", in: URLRequest(url: undecided.url)) == "mp3")
+        #expect(undecided.mimeType == "audio/mpeg")
+
+        let requests = limits.withLock { $0.count }
+        let legacy = try await AppCoordinator.sonosStream(
+            for: NavidromeSong(id: "hires", title: "Hi-Res", suffix: "flac"), client: client, negotiatesFormat: false
+        )
+        #expect(queryValue("format", in: URLRequest(url: legacy.url)) == "raw")
+        #expect(limits.withLock { $0.count } == requests)
+    }
+
     @Test func positionAndGroupVolumeReadSoapFields() async throws {
         let requests = Mutex<[URLRequest]>([])
         let upnp = SonosUPnP(session: StubURLProtocol.session { request in

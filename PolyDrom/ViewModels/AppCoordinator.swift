@@ -55,6 +55,8 @@ final class AppCoordinator: ObservableObject {
     @Published var supportsSonicSimilarity = false {
         willSet { objectWillChange.send() }
     }
+    /// Whether the server picks the stream for a player from the formats that player can decode.
+    var supportsTranscodeDecisions = false
     @Published var hasCachedLibrary = false {
         willSet { objectWillChange.send() }
     }
@@ -267,6 +269,7 @@ final class AppCoordinator: ObservableObject {
             coverArtResources.removeAll()
             cancelCoverArtCrawl()
             supportsSonicSimilarity = false
+            supportsTranscodeDecisions = false
         }
     }
     var sessionGeneration: UInt = 0

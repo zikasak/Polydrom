@@ -225,6 +225,42 @@ struct NavidromeClient: Sendable {
         (try streamURL(for: song), try streamURL(for: song, format: "mp3"))
     }
 
+    /// Asks the server whether a player limited to `clientInfo` can take the song as it is or
+    /// needs a transcode. Only servers that advertise the `transcoding` extension answer this.
+    func transcodeDecision(
+        for song: NavidromeSong,
+        clientInfo: TranscodeClientInfo,
+        timeoutInterval: TimeInterval? = nil
+    ) async throws -> TranscodeDecision {
+        let response: TranscodeDecisionEnvelope = try await request(
+            "getTranscodeDecision",
+            queryItems: [
+                URLQueryItem(name: "mediaId", value: song.id),
+                URLQueryItem(name: "mediaType", value: "song")
+            ],
+            timeoutInterval: timeoutInterval,
+            body: try JSONEncoder().encode(clientInfo)
+        )
+        try response.subsonicResponse.throwIfNeeded()
+        guard let decision = response.subsonicResponse.transcodeDecision else {
+            throw NavidromeError.server(message: "Navidrome did not return a transcode decision.")
+        }
+        return decision
+    }
+
+    /// The transcode agreed in a `transcodeDecision`, selected by its `transcodeParams`.
+    func transcodeStreamURL(for song: NavidromeSong, transcodeParams: String) throws -> URL {
+        try apiURL(
+            "getTranscodeStream",
+            includeResponseFormat: false,
+            queryItems: [
+                URLQueryItem(name: "mediaId", value: song.id),
+                URLQueryItem(name: "mediaType", value: "song"),
+                URLQueryItem(name: "transcodeParams", value: transcodeParams)
+            ]
+        )
+    }
+
     func coverArtURL(id: String, size: Int = 160) throws -> URL {
         try apiURL(
             "getCoverArt",
@@ -242,7 +278,8 @@ struct NavidromeClient: Sendable {
     private func request<Response: Decodable>(
         _ method: String,
         queryItems: [URLQueryItem] = [],
-        timeoutInterval: TimeInterval? = nil
+        timeoutInterval: TimeInterval? = nil,
+        body: Data? = nil
     ) async throws -> Response {
         let startedAt = Date()
         AppLog.network.debug("Request started: \(method, privacy: .public)")
@@ -252,6 +289,7 @@ struct NavidromeClient: Sendable {
                 method,
                 queryItems: queryItems,
                 timeoutInterval: timeoutInterval,
+                body: body,
                 startedAt: startedAt
             )
         } catch {
@@ -268,19 +306,19 @@ struct NavidromeClient: Sendable {
         _ method: String,
         queryItems: [URLQueryItem],
         timeoutInterval: TimeInterval?,
+        body: Data?,
         startedAt: Date
     ) async throws -> Response {
-        let url = try apiURL(method, queryItems: queryItems)
-        let data: Data
-        let response: URLResponse
-
+        var request = URLRequest(url: try apiURL(method, queryItems: queryItems))
         if let timeoutInterval {
-            var request = URLRequest(url: url)
             request.timeoutInterval = timeoutInterval
-            (data, response) = try await session.data(for: request)
-        } else {
-            (data, response) = try await session.data(from: url)
         }
+        if let body {
+            request.httpMethod = "POST"
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        let (data, response) = try await session.data(for: request)
 
         if let httpResponse = response as? HTTPURLResponse, !(200...299).contains(httpResponse.statusCode) {
             AppLog.network.warning(

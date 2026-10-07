@@ -25,6 +25,7 @@ typealias StarredEnvelope = SubsonicEnvelope<StarredResponse>
 typealias ScanStatusEnvelope = SubsonicEnvelope<ScanStatusResponse>
 typealias OpenSubsonicExtensionsEnvelope = SubsonicEnvelope<OpenSubsonicExtensionsResponse>
 typealias SonicMatchesEnvelope = SubsonicEnvelope<SonicMatchesResponse>
+typealias TranscodeDecisionEnvelope = SubsonicEnvelope<TranscodeDecisionResponse>
 
 protocol SubsonicResponse: Decodable {
     var status: String { get }
@@ -105,6 +106,64 @@ extension [OpenSubsonicExtension] {
     func supports(_ name: String, version: Int = 1) -> Bool {
         contains { $0.name.caseInsensitiveCompare(name) == .orderedSame && $0.supports(version: version) }
     }
+}
+
+struct TranscodeDecisionResponse: SubsonicResponse {
+    let status: String
+    let error: SubsonicServerError?
+    let transcodeDecision: TranscodeDecision?
+}
+
+/// How the server would deliver a song to a player with the capabilities it was told about.
+struct TranscodeDecision: Decodable, Sendable {
+    struct Stream: Decodable, Sendable {
+        let container: String?
+    }
+
+    let canDirectPlay: Bool
+    let canTranscode: Bool
+    /// Opaque token that selects the agreed transcode in `getTranscodeStream`.
+    let transcodeParams: String?
+    let sourceStream: Stream?
+    let transcodeStream: Stream?
+}
+
+/// What a player can decode, as the `transcoding` extension expects it.
+struct TranscodeClientInfo: Encodable, Sendable {
+    struct DirectPlayProfile: Encodable, Sendable {
+        let containers: [String]
+        /// Empty accepts whatever codec the container holds.
+        let audioCodecs: [String]
+        var protocols = ["http"]
+        let maxAudioChannels: Int
+    }
+
+    struct TranscodingProfile: Encodable, Sendable {
+        let container: String
+        let audioCodec: String
+        var `protocol` = "http"
+        let maxAudioChannels: Int
+    }
+
+    struct CodecProfile: Encodable, Sendable {
+        var type = "AudioCodec"
+        let name: String
+        let limitations: [Limitation]
+    }
+
+    struct Limitation: Encodable, Sendable {
+        let name: String
+        var comparison = "LessThanEqual"
+        let values: [String]
+        var required = true
+    }
+
+    let name: String
+    let platform: String
+    let directPlayProfiles: [DirectPlayProfile]
+    /// Tried in order when the original cannot be played as it is.
+    let transcodingProfiles: [TranscodingProfile]
+    let codecProfiles: [CodecProfile]
 }
 
 struct SonicMatchesResponse: SubsonicResponse {
