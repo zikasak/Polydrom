@@ -162,12 +162,8 @@ struct PolyDromTests {
     }
 
     @Test func playNextInsertsAfterCurrentSongAndQueueAppends() {
-        let store = LibraryStore(
-            persistence: PersistenceController(inMemory: true),
-            keychain: MemoryCredentialStore()
-        )
-        let audioPlayer = AudioPlayer()
-        let viewModel = AppCoordinator(store: store, audioPlayer: audioPlayer)
+        let (viewModel, _, _) = makeViewModel()
+        let audioPlayer = viewModel.audioPlayer
         let current = makeSong(id: "current", title: "Current")
         let later = makeSong(id: "later", title: "Later")
         let next = makeSong(id: "next", title: "Next")
@@ -184,12 +180,8 @@ struct PolyDromTests {
     }
 
     @Test func duplicateQueueEntriesKeepIndependentIdentity() {
-        let store = LibraryStore(
-            persistence: PersistenceController(inMemory: true),
-            keychain: MemoryCredentialStore()
-        )
-        let audioPlayer = AudioPlayer()
-        let viewModel = AppCoordinator(store: store, audioPlayer: audioPlayer)
+        let (viewModel, _, _) = makeViewModel()
+        let audioPlayer = viewModel.audioPlayer
         let duplicate = makeSong(id: "duplicate", title: "Duplicate")
         let later = makeSong(id: "later", title: "Later")
         let first = PlaybackQueueEntry(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, song: duplicate)
@@ -239,11 +231,7 @@ struct PolyDromTests {
     }
 
     @Test func songNavigationReusesLoadedAlbumAndArtistMetadata() throws {
-        let store = LibraryStore(
-            persistence: PersistenceController(inMemory: true),
-            keychain: MemoryCredentialStore()
-        )
-        let viewModel = AppCoordinator(store: store, audioPlayer: AudioPlayer())
+        let (viewModel, _, _) = makeViewModel()
         let song = makeSong(
             artist: "Artist",
             album: "Album",

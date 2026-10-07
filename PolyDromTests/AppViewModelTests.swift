@@ -506,7 +506,11 @@ struct AppCoordinatorTests {
 
     @Test func invalidClientFactoryAndFailedPingCoverConnectionFailures() async throws {
         let store = LibraryStore(persistence: PersistenceController(inMemory: true), keychain: MemoryCredentialStore())
-        let invalid = AppCoordinator(store: store, audioPlayer: AudioPlayer(), clientFactory: { _ in nil })
+        let invalid = AppCoordinator(
+            store: store, audioPlayer: AudioPlayer(), clientFactory: { _ in nil },
+            serverRegistry: ServerRegistry(fileURL: nil, keychain: MemoryCredentialStore()),
+            userDefaults: temporaryUserDefaults(), playbackFileURL: temporaryPlaybackFileURL()
+        )
         await invalid.connect(makeProfile())
         #expect(invalid.statusMessage == "Enter a valid server address.")
 
