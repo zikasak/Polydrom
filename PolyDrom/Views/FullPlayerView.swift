@@ -322,6 +322,8 @@ struct PlayerQueueView: View {
     // would rebuild every visible queue row on each playback-time tick.
     @State private var hasCurrentSong: Bool
     @State private var isPlaying: Bool
+    @State private var draggedEntryID: UUID?
+    @State private var dropTargetEntryID: UUID?
 
     init(viewModel: AppCoordinator) {
         self.viewModel = viewModel
@@ -341,46 +343,7 @@ struct PlayerQueueView: View {
                     ScrollView {
                         LazyVStack(spacing: 4) {
                             ForEach(viewModel.playbackQueue) { entry in
-                                let song = entry.song
-                                let isCurrent = hasCurrentSong
-                                    && viewModel.currentPlaybackQueueEntryID == entry.id
-                                Button {
-                                    viewModel.play(entry)
-                                } label: {
-                                    HStack(spacing: 10) {
-                                        CoverArtView(resource: viewModel.coverArtResource(for: song, size: 96), size: 42)
-
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(song.title)
-                                                .fontWeight(isCurrent ? .semibold : .regular)
-                                                .lineLimit(1)
-                                            Text(song.artist ?? song.album ?? "Unknown artist")
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                                .lineLimit(1)
-                                        }
-
-                                        Spacer()
-
-                                        if isCurrent {
-                                            Image(systemName: isPlaying ? "speaker.wave.2.fill" : "pause.fill")
-                                                .foregroundStyle(.tint)
-                                        } else {
-                                            Text(song.durationText)
-                                                .font(.caption.monospacedDigit())
-                                                .foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    .padding(8)
-                                    .background(
-                                        isCurrent ? Color.accentColor.opacity(0.13) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 8)
-                                    )
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(!viewModel.isOnline)
-                                .id(entry.id)
+                                queueRow(entry)
                             }
                         }
                         .padding(.horizontal, 12)
@@ -402,6 +365,126 @@ struct PlayerQueueView: View {
         .onReceive(viewModel.audioPlayer.$isPlaying.removeDuplicates()) { value in
             isPlaying = value
         }
+    }
+
+    private func queueRow(_ entry: PlaybackQueueEntry) -> some View {
+        let song = entry.song
+        let isCurrent = hasCurrentSong
+            && viewModel.currentPlaybackQueueEntryID == entry.id
+        let insertsBelow = insertsDraggedEntry(below: entry)
+        return HStack(spacing: 10) {
+            CoverArtView(resource: viewModel.coverArtResource(for: song, size: 96), size: 42)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(song.title)
+                    .fontWeight(isCurrent ? .semibold : .regular)
+                    .lineLimit(1)
+                Text(song.artist ?? song.album ?? "Unknown artist")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if isCurrent {
+                Image(systemName: isPlaying ? "speaker.wave.2.fill" : "pause.fill")
+                    .foregroundStyle(.tint)
+            } else {
+                Text(song.durationText)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .background(
+            isCurrent ? Color.accentColor.opacity(0.13) : .clear,
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .opacity(viewModel.isOnline ? 1 : 0.5)
+        .contentShape(Rectangle())
+        // A button would swallow the mouse-down that starts a drag, so the row
+        // takes the tap itself.
+        .onTapGesture {
+            guard viewModel.isOnline else { return }
+            viewModel.play(entry)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .onDrag {
+            draggedEntryID = entry.id
+            return NSItemProvider(object: entry.id.uuidString as NSString)
+        }
+        .dropDestination(for: String.self) { items, _ in
+            dropTargetEntryID = nil
+            draggedEntryID = nil
+            guard let movedID = items.first.flatMap({ UUID(uuidString: $0) }),
+                  viewModel.playbackQueueIndices[movedID] != nil,
+                  let destination = viewModel.playbackQueueIndices[entry.id] else {
+                return false
+            }
+            withAnimation(.easeOut(duration: 0.2)) {
+                viewModel.moveQueueEntry(movedID, to: destination)
+            }
+            return true
+        } isTargeted: { isTargeted in
+            if isTargeted {
+                dropTargetEntryID = entry.id
+            } else if dropTargetEntryID == entry.id {
+                dropTargetEntryID = nil
+            }
+        }
+        .overlay(alignment: insertsBelow ? .bottom : .top) {
+            if dropTargetEntryID == entry.id, draggedEntryID != entry.id {
+                // Sits in the middle of the gap between two rows.
+                Capsule()
+                    .fill(Color.accentColor)
+                    .frame(height: 2)
+                    .offset(y: insertsBelow ? 3 : -3)
+            }
+        }
+        .contextMenu {
+            queueRowMenu(for: entry, isCurrent: isCurrent)
+        }
+        .id(entry.id)
+    }
+
+    @ViewBuilder
+    private func queueRowMenu(for entry: PlaybackQueueEntry, isCurrent: Bool) -> some View {
+        let index = viewModel.playbackQueueIndices[entry.id] ?? 0
+
+        if hasCurrentSong, !isCurrent {
+            Button {
+                viewModel.moveQueueEntryToPlayNext(entry.id)
+            } label: {
+                Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
+
+            Divider()
+        }
+
+        Button {
+            viewModel.moveQueueEntry(entry.id, to: index - 1)
+        } label: {
+            Label("Move Up", systemImage: "arrow.up")
+        }
+        .disabled(index == 0)
+
+        Button {
+            viewModel.moveQueueEntry(entry.id, to: index + 1)
+        } label: {
+            Label("Move Down", systemImage: "arrow.down")
+        }
+        .disabled(index == viewModel.playbackQueue.count - 1)
+    }
+
+    /// A dropped entry takes the place of the row it lands on, so one dragged
+    /// from above ends up below that row and one from below ends up above it.
+    private func insertsDraggedEntry(below entry: PlaybackQueueEntry) -> Bool {
+        guard let draggedEntryID,
+              let source = viewModel.playbackQueueIndices[draggedEntryID],
+              let target = viewModel.playbackQueueIndices[entry.id] else { return false }
+        return source < target
     }
 
     private func scrollToCurrentEntry(with proxy: ScrollViewProxy, animated: Bool) {

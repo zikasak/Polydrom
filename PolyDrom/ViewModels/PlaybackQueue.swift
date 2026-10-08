@@ -196,6 +196,31 @@ extension AppCoordinator {
         performQueueAction(.end) { try await self.cachedSongs(for: artist) }
     }
 
+    // MARK: - Reordering the queue
+
+    /// Moves the entry to `destination`, its index once the move is done. The
+    /// song that is playing keeps playing wherever it or its neighbours land.
+    func moveQueueEntry(_ entryID: UUID, to destination: Int) {
+        guard let source = playbackQueueIndices[entryID] else { return }
+        let destination = min(max(destination, 0), playbackQueue.count - 1)
+        guard source != destination else { return }
+
+        var queue = playbackQueue
+        queue.insert(queue.remove(at: source), at: destination)
+        playbackQueue = queue
+        persistPlaybackState()
+        updateNowPlayingQueueState()
+    }
+
+    /// Moves an entry that is already queued right after the current song.
+    func moveQueueEntryToPlayNext(_ entryID: UUID) {
+        guard let source = playbackQueueIndices[entryID],
+              let currentIndex = currentPlaybackQueueIndex,
+              source != currentIndex else { return }
+        // Taking out an earlier entry shifts the current song up by one.
+        moveQueueEntry(entryID, to: source < currentIndex ? currentIndex : currentIndex + 1)
+    }
+
     // MARK: - Moving through the queue
 
     func playPreviousTrack() {
