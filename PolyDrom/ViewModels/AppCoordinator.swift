@@ -334,6 +334,8 @@ final class AppCoordinator: ObservableObject {
     var sonosVolumeTaskGeneration = -1
     var pendingSonosVolume: Int?
     var sonosVolumeErrorMessage: String?
+    var sonosSeekTask: Task<Void, Never>?
+    var pendingSonosSeek: Double?
 
     private static let metadataRefreshIntervalKey = "metadataRefreshInterval"
     private static let coverArtCrawlEnabledKey = "coverArtCrawlEnabled"
