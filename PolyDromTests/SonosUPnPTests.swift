@@ -498,7 +498,8 @@ struct SonosUPnPTests {
         model.isOnline = true
         model.supportsTranscodeDecisions = true
         let entry = PlaybackQueueEntry(song: makeSong(duration: 185))
-        model.playbackQueue = [entry]
+        let next = PlaybackQueueEntry(song: makeSong(id: "next"))
+        model.playbackQueue = [entry, next]
         model.currentPlaybackQueueEntryID = entry.id
         model.audioPlayer.restore(song: entry.song, at: 44)
         model.selectSonosGroup(Self.group())
@@ -523,6 +524,16 @@ struct SonosUPnPTests {
         #expect(await eventually(timeout: .seconds(3)) { model.audioPlayer.currentTime == 120 })
         #expect(speaker.withLock { $0.timeSeeks } == 0)
         #expect(model.audioPlayer.route == .sonos("group-1"))
+
+        // A seek still waiting when another song starts must not be applied to that song.
+        model.audioPlayer.seek(to: 60)
+        model.playNextTrack()
+        #expect(await eventually(timeout: .seconds(3)) { model.currentPlaybackQueueEntryID == next.id })
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(model.currentPlaybackQueueEntryID == next.id)
+        #expect(speaker.withLock { $0.trackURI }.contains("mediaId=next"))
+        #expect(!speaker.withLock { $0.trackURI }.contains("offset="))
+        #expect(model.audioPlayer.currentTime == 0)
     }
 
     @Test func finishedTrackStartsNextLocalQueueEntry() async throws {

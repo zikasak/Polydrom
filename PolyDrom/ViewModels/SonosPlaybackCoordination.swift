@@ -401,7 +401,7 @@ extension AppCoordinator {
             return
         }
         if case .seek(let seconds) = command, !session.isSeekable {
-            pendingSonosSeek = seconds
+            pendingSonosSeek = (seconds, sonosGeneration)
             if sonosSeekTask == nil {
                 sonosSeekTask = Task { await restartSonosTrackAtPendingSeek(on: session.group) }
             }
@@ -448,9 +448,10 @@ extension AppCoordinator {
         while true {
             // Dragging the slider asks for many positions; only the last one is worth a reload.
             try? await Task.sleep(for: .milliseconds(200))
-            guard let seconds = pendingSonosSeek else { return }
+            guard let (seconds, requestGeneration) = pendingSonosSeek else { return }
             pendingSonosSeek = nil
-            guard sonosSession?.group.id == group.id, let client,
+            // Anything that replaced or ended the track meanwhile makes the position meaningless.
+            guard requestGeneration == sonosGeneration, sonosSession != nil, let client,
                   let entryID = currentPlaybackQueueEntryID,
                   let index = playbackQueue.firstIndex(where: { $0.id == entryID }) else { return }
             sonosGeneration += 1
