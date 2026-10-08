@@ -125,6 +125,10 @@ struct SonosUPnPTests {
                 limits.withLock { $0.append(sent) }
             }
             switch queryValue("mediaId", in: request) {
+            case "vorbis" where Self.bodyData(request).map { String(decoding: $0, as: UTF8.self) }?.contains("ogg") == true:
+                return envelope(#"{"status":"ok","transcodeDecision":{"canDirectPlay":true,"canTranscode":false,"sourceStream":{"container":"ogg"}}}"#)
+            case "vorbis":
+                return envelope(#"{"status":"ok","transcodeDecision":{"canDirectPlay":false,"canTranscode":true,"transcodeParams":"token","transcodeStream":{"container":"flac"}}}"#)
             case "hires":
                 return envelope(#"{"status":"ok","transcodeDecision":{"canDirectPlay":false,"canTranscode":true,"transcodeParams":"token","sourceStream":{"container":"flac","codec":"flac","audioSamplerate":192000},"transcodeStream":{"container":"flac","codec":"flac","audioSamplerate":48000}}}"#)
             case "plain":
@@ -153,6 +157,35 @@ struct SonosUPnPTests {
         #expect(apiMethod(in: URLRequest(url: plain.url)) == "stream")
         #expect(queryValue("format", in: URLRequest(url: plain.url)) == "raw")
         #expect(plain.mimeType == "audio/flac")
+
+        // The speaker cannot seek in a transcode, so the server is asked to start it there.
+        let resumedHires = try await AppCoordinator.sonosStream(
+            for: NavidromeSong(id: "hires", title: "Hi-Res"), client: client, negotiatesFormat: true,
+            startingAt: 44.6
+        )
+        #expect(queryValue("offset", in: URLRequest(url: resumedHires.url)) == "44")
+        #expect(resumedHires.startOffset == 44)
+        #expect(queryValue("offset", in: URLRequest(url: hires.url)) == nil)
+        let resumedPlain = try await AppCoordinator.sonosStream(
+            for: NavidromeSong(id: "plain", title: "Plain"), client: client, negotiatesFormat: true,
+            startingAt: 44.6
+        )
+        #expect(apiMethod(in: URLRequest(url: resumedPlain.url)) == "stream")
+        #expect(resumedPlain.startOffset == 0)
+
+        // The speaker plays Ogg from the start but cannot seek in it, so a later position needs a transcode.
+        let vorbis = try await AppCoordinator.sonosStream(
+            for: NavidromeSong(id: "vorbis", title: "Vorbis"), client: client, negotiatesFormat: true
+        )
+        #expect(apiMethod(in: URLRequest(url: vorbis.url)) == "stream")
+        #expect(!vorbis.isSeekable)
+        let resumedVorbis = try await AppCoordinator.sonosStream(
+            for: NavidromeSong(id: "vorbis", title: "Vorbis"), client: client, negotiatesFormat: true,
+            startingAt: 35
+        )
+        #expect(apiMethod(in: URLRequest(url: resumedVorbis.url)) == "getTranscodeStream")
+        #expect(queryValue("offset", in: URLRequest(url: resumedVorbis.url)) == "35")
+        #expect(resumedVorbis.startOffset == 35)
 
         let undecided = try await AppCoordinator.sonosStream(
             for: NavidromeSong(id: "undecided", title: "Undecided"), client: client, negotiatesFormat: true
@@ -431,6 +464,76 @@ struct SonosUPnPTests {
         #expect(model.audioPlayer.currentSong == song)
         #expect(model.audioPlayer.isPlaying)
         #expect(await eventually(timeout: .seconds(3)) { model.audioPlayer.player.rate > 0 })
+    }
+
+    @Test func transcodedSongStartsAtItsPositionInsteadOfSeekingTheSpeaker() async throws {
+        let speaker = Mutex((sourceURI: "", trackURI: "", seconds: 0, timeSeeks: 0, metadata: ""))
+        let session = StubURLProtocol.session { request in
+            if apiMethod(in: request) == "getTranscodeDecision" {
+                return envelope(#"{"status":"ok","transcodeDecision":{"canDirectPlay":false,"canTranscode":true,"transcodeParams":"token","transcodeStream":{"container":"flac"}}}"#)
+            }
+            let state = speaker.withLock { speaker in
+                switch Self.actionName(request) {
+                case "SetAVTransportURI":
+                    speaker.sourceURI = Self.requestField("CurrentURI", in: request) ?? ""
+                case "AddURIToQueue":
+                    speaker.trackURI = Self.requestField("EnqueuedURI", in: request) ?? ""
+                    speaker.metadata = Self.requestField("EnqueuedURIMetaData", in: request) ?? ""
+                    speaker.seconds = 0
+                case "Seek" where Self.requestField("Unit", in: request) == "REL_TIME":
+                    speaker.timeSeeks += 1
+                default:
+                    break
+                }
+                return speaker
+            }
+            return Self.response(
+                for: request, sourceURI: state.sourceURI, trackURI: state.trackURI, seconds: state.seconds
+            )
+        }
+        let (model, _, _) = makeViewModel(sonosUPnP: SonosUPnP(session: session))
+        let profile = makeProfile()
+        model.activeServer = profile
+        model.client = NavidromeClient(profile: profile, session: session)
+        model.isOnline = true
+        model.supportsTranscodeDecisions = true
+        let entry = PlaybackQueueEntry(song: makeSong(duration: 185))
+        let next = PlaybackQueueEntry(song: makeSong(id: "next"))
+        model.playbackQueue = [entry, next]
+        model.currentPlaybackQueueEntryID = entry.id
+        model.audioPlayer.restore(song: entry.song, at: 44)
+        model.selectSonosGroup(Self.group())
+        #expect(await eventually(timeout: .seconds(3)) { model.sonosSession?.trackURI != nil })
+
+        let handoffURL = try #require(URL(string: speaker.withLock { $0.trackURI }))
+        #expect(queryValue("offset", in: URLRequest(url: handoffURL)) == "44")
+        #expect(speaker.withLock { $0.timeSeeks } == 0)
+        // The speaker is told how much of the song is left, and counts from the handoff position.
+        #expect(speaker.withLock { $0.metadata }.contains("duration=\"00:02:21\""))
+        speaker.withLock { $0.seconds = 10 }
+        await model.pollSonosOnce(generation: model.sonosGeneration, tick: 1)
+        #expect(model.audioPlayer.currentTime == 54)
+        #expect(model.audioPlayer.duration == 185)
+
+        // Dragging the slider reloads the track once, at the position the drag ended on.
+        model.audioPlayer.seek(to: 90)
+        model.audioPlayer.seek(to: 120)
+        #expect(await eventually(timeout: .seconds(3)) {
+            speaker.withLock { $0.trackURI }.contains("offset=120")
+        })
+        #expect(await eventually(timeout: .seconds(3)) { model.audioPlayer.currentTime == 120 })
+        #expect(speaker.withLock { $0.timeSeeks } == 0)
+        #expect(model.audioPlayer.route == .sonos("group-1"))
+
+        // A seek still waiting when another song starts must not be applied to that song.
+        model.audioPlayer.seek(to: 60)
+        model.playNextTrack()
+        #expect(await eventually(timeout: .seconds(3)) { model.currentPlaybackQueueEntryID == next.id })
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(model.currentPlaybackQueueEntryID == next.id)
+        #expect(speaker.withLock { $0.trackURI }.contains("mediaId=next"))
+        #expect(!speaker.withLock { $0.trackURI }.contains("offset="))
+        #expect(model.audioPlayer.currentTime == 0)
     }
 
     @Test func finishedTrackStartsNextLocalQueueEntry() async throws {

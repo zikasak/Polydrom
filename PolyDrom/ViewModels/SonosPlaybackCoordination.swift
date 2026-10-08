@@ -28,6 +28,21 @@ struct SonosActiveSession {
     let trackURI: String?
     let startedAt: Date
     var lastProgressAt: Date?
+    /// Seconds of the song that precede the stream, which the speaker's own position leaves out.
+    var streamOffset: Double = 0
+    /// False when moving within the track means loading it again from the new position.
+    var isSeekable = true
+}
+
+/// A stream the speaker can fetch for a song.
+struct SonosStream {
+    let url: URL
+    let mimeType: String
+    /// Seconds of the song the stream leaves out at its start.
+    var startOffset: Double = 0
+    /// False for a transcode, which is produced as it is sent, and for files the speaker
+    /// only plays from the start.
+    var isSeekable = true
 }
 
 @MainActor
@@ -160,7 +175,21 @@ extension AppCoordinator {
         guard queue.indices.contains(currentIndex) else { throw SonosError.invalidResponse }
         let device = group.coordinator
         let track = try await Self.track(
-            queue[currentIndex], client: client, negotiatesFormat: supportsTranscodeDecisions
+            queue[currentIndex], client: client, negotiatesFormat: supportsTranscodeDecisions,
+            startingAt: start.seconds
+        )
+        // A stream that already begins at the start position leaves nothing to seek.
+        let seekSeconds = start.seconds - track.startOffset
+        let streamKind = track.streamURL.deletingPathExtension().lastPathComponent
+        let streamFormat = URLComponents(url: track.streamURL, resolvingAgainstBaseURL: false)?
+            .queryItems?.first { $0.name == "format" }?.value ?? "-"
+        AppLog.sonos.notice(
+            """
+            Sonos track load: stream=\(streamKind, privacy: .public) format=\(streamFormat, privacy: .public) \
+            mime=\(track.mimeType, privacy: .public) seekable=\(track.isSeekable, privacy: .public) \
+            start=\(start.seconds, privacy: .public) streamOffset=\(track.startOffset, privacy: .public) \
+            speakerSeek=\(seekSeconds, privacy: .public) autoplay=\(start.autoplay, privacy: .public)
+            """
         )
         try checkSonosGeneration(generation)
         _ = try? await sonosUPnP.transport("Stop", on: device)
@@ -177,8 +206,8 @@ extension AppCoordinator {
             try checkSonosGeneration(generation)
             step = "Seek TRACK_NR"
             try await sonosUPnP.seekFirstTrack(on: device)
-            step = "Seek REL_TIME \(Int(start.seconds))s"
-            if start.seconds >= 1 { try await sonosUPnP.seekTime(start.seconds, on: device) }
+            step = "Seek REL_TIME \(Int(seekSeconds))s"
+            if seekSeconds >= 1 { try await sonosUPnP.seekTime(seekSeconds, on: device) }
             try checkSonosGeneration(generation)
             if audioPlayer.route == .local { audioPlayer.pauseForSonosHandoff() }
             step = "Play"
@@ -205,7 +234,8 @@ extension AppCoordinator {
         }
         sonosSession = SonosActiveSession(
             group: group, sourceURI: SonosUPnP.queueURI(for: device),
-            trackURI: track.streamURL.absoluteString, startedAt: Date()
+            trackURI: track.streamURL.absoluteString, startedAt: Date(),
+            streamOffset: track.startOffset, isSeekable: track.isSeekable
         )
         playbackQueue = queue
         currentPlaybackQueueEntryID = queue[currentIndex].id
@@ -249,9 +279,20 @@ extension AppCoordinator {
         }
     }
 
+    /// Whether the speaker can jump to another position in a file of this kind. It plays Ogg
+    /// from the start only, and stops without an error when told to seek in it.
+    nonisolated private static func sonosSeeks(inContainer container: String?) -> Bool {
+        !["ogg", "oga"].contains(container?.lowercased() ?? "")
+    }
+
+    nonisolated static let sonosClientInfo = sonosClientInfo(seekableOnly: false)
+    /// Leaves out the files the speaker cannot seek in, so the server offers a transcode of
+    /// them that can start partway through the song.
+    nonisolated private static let sonosSeekableClientInfo = sonosClientInfo(seekableOnly: true)
+
     /// What a Sonos speaker decodes. It stops without an error on anything above 48 kHz, so a
     /// high-resolution file has to reach it resampled, as FLAC where the server can produce it.
-    nonisolated static let sonosClientInfo: TranscodeClientInfo = {
+    nonisolated private static func sonosClientInfo(seekableOnly: Bool) -> TranscodeClientInfo {
         let limitations = [
             TranscodeClientInfo.Limitation(name: "audioSamplerate", values: ["48000"]),
             TranscodeClientInfo.Limitation(name: "audioBitdepth", values: ["24"]),
@@ -260,7 +301,7 @@ extension AppCoordinator {
         let playable: [(container: String, codecs: [String])] = [
             ("mp3", ["mp3"]), ("flac", ["flac"]), ("m4a", ["aac", "alac"]), ("ogg", ["vorbis"]),
             ("wma", []), ("wav", []), ("aiff", [])
-        ]
+        ].filter { !seekableOnly || sonosSeeks(inContainer: $0.container) }
         return TranscodeClientInfo(
             name: "PolyDrom",
             platform: "Sonos",
@@ -274,42 +315,62 @@ extension AppCoordinator {
                 .init(name: $0, limitations: limitations)
             }
         )
-    }()
+    }
 
     /// The stream Sonos should fetch for `song`. A server that negotiates formats is told what the
-    /// speaker decodes and picks the stream; otherwise the file extension decides.
+    /// speaker decodes and picks the stream; otherwise the file extension decides. Where the
+    /// speaker could not seek to `seconds`, a transcode that starts there is negotiated instead.
     nonisolated static func sonosStream(
-        for song: NavidromeSong, client: NavidromeClient, negotiatesFormat: Bool
-    ) async throws -> (url: URL, mimeType: String) {
+        for song: NavidromeSong, client: NavidromeClient, negotiatesFormat: Bool,
+        startingAt seconds: Double = 0
+    ) async throws -> SonosStream {
         if negotiatesFormat,
            let decision = try? await client.transcodeDecision(
-               for: song, clientInfo: sonosClientInfo, timeoutInterval: 4
+               for: song, clientInfo: seconds >= 1 ? sonosSeekableClientInfo : sonosClientInfo,
+               timeoutInterval: 4
            ) {
-            if decision.canDirectPlay,
-               let mimeType = sonosMimeType(forContainer: decision.sourceStream?.container ?? song.suffix) {
-                return (try client.streamURL(for: song), mimeType)
+            let source = decision.sourceStream?.container ?? "-"
+            let target = decision.transcodeStream?.container ?? "-"
+            AppLog.sonos.notice(
+                """
+                Sonos stream decision: directPlay=\(decision.canDirectPlay, privacy: .public) \
+                transcode=\(decision.canTranscode, privacy: .public) source=\(source, privacy: .public) \
+                target=\(target, privacy: .public) suffix=\(song.suffix ?? "-", privacy: .public)
+                """
+            )
+            let container = decision.sourceStream?.container ?? song.suffix
+            if decision.canDirectPlay, let mimeType = sonosMimeType(forContainer: container) {
+                return SonosStream(
+                    url: try client.streamURL(for: song), mimeType: mimeType,
+                    isSeekable: sonosSeeks(inContainer: container)
+                )
             }
             if decision.canTranscode, let transcodeParams = decision.transcodeParams,
                let mimeType = sonosMimeType(forContainer: decision.transcodeStream?.container) {
-                return (try client.transcodeStreamURL(for: song, transcodeParams: transcodeParams), mimeType)
+                let offset = seconds >= 1 ? seconds.rounded(.down) : 0
+                let url = try client.transcodeStreamURL(
+                    for: song, transcodeParams: transcodeParams, offset: Int(offset)
+                )
+                return SonosStream(url: url, mimeType: mimeType, startOffset: offset, isSeekable: false)
             }
         }
         let (format, mimeType) = sonosStreamFormat(for: song)
-        return (try client.streamURL(for: song, format: format), mimeType)
+        return SonosStream(url: try client.streamURL(for: song, format: format), mimeType: mimeType)
     }
 
     private static func track(
-        _ entry: PlaybackQueueEntry, client: NavidromeClient, negotiatesFormat: Bool
+        _ entry: PlaybackQueueEntry, client: NavidromeClient, negotiatesFormat: Bool,
+        startingAt seconds: Double
     ) async throws -> SonosTrack {
-        let (stream, mimeType) = try await sonosStream(
-            for: entry.song, client: client, negotiatesFormat: negotiatesFormat
+        let stream = try await sonosStream(
+            for: entry.song, client: client, negotiatesFormat: negotiatesFormat, startingAt: seconds
         )
-        try checkSpeakerReachability(of: stream)
+        try checkSpeakerReachability(of: stream.url)
         let artworkID = entry.song.coverArt ?? entry.song.albumId
         let artwork = artworkID.flatMap { try? client.coverArtURL(id: $0, size: 512) }
         return SonosTrack(
-            entryID: entry.id, song: entry.song, streamURL: stream, artworkURL: artwork,
-            mimeType: mimeType
+            entryID: entry.id, song: entry.song, streamURL: stream.url, artworkURL: artwork,
+            mimeType: stream.mimeType, startOffset: stream.startOffset, isSeekable: stream.isSeekable
         )
     }
 
@@ -336,6 +397,13 @@ extension AppCoordinator {
             sonosCleanupTask = Task {
                 guard generation == sonosGeneration else { return }
                 await leaveSonosOutput(clearPlayback: true)
+            }
+            return
+        }
+        if case .seek(let seconds) = command, !session.isSeekable {
+            pendingSonosSeek = (seconds, sonosGeneration)
+            if sonosSeekTask == nil {
+                sonosSeekTask = Task { await restartSonosTrackAtPendingSeek(on: session.group) }
             }
             return
         }
@@ -368,6 +436,40 @@ extension AppCoordinator {
                     statusMessage = error.localizedDescription
                 }
             }
+        }
+    }
+
+    /// Moves within a track the speaker cannot seek by loading it again from the wanted position.
+    private func restartSonosTrackAtPendingSeek(on group: SonosGroup) async {
+        defer {
+            sonosSeekTask = nil
+            pendingSonosSeek = nil
+        }
+        while true {
+            // Dragging the slider asks for many positions; only the last one is worth a reload.
+            try? await Task.sleep(for: .milliseconds(200))
+            guard let (seconds, requestGeneration) = pendingSonosSeek else { return }
+            pendingSonosSeek = nil
+            // Anything that replaced or ended the track meanwhile makes the position meaningless.
+            guard requestGeneration == sonosGeneration, sonosSession != nil, let client,
+                  let entryID = currentPlaybackQueueEntryID,
+                  let index = playbackQueue.firstIndex(where: { $0.id == entryID }) else { return }
+            sonosGeneration += 1
+            let generation = sonosGeneration
+            sonosPollTask?.cancel()
+            let restart = SonosTrackStart(seconds: seconds, autoplay: audioPlayer.isPlaying, reportStart: false)
+            do {
+                try await loadSonosTrack(
+                    playbackQueue, currentIndex: index, start: restart,
+                    group: group, groupVolume: SonosVolume.percent(from: audioPlayer.volume),
+                    client: client, generation: generation
+                )
+            } catch {
+                // `loadSonosTrack` has already reported the failure and left Sonos.
+                return
+            }
+            guard generation == sonosGeneration else { return }
+            showSonosPlayback(at: seconds, isPlaying: audioPlayer.isPlaying, event: .seeked)
         }
     }
 
@@ -537,13 +639,16 @@ extension AppCoordinator {
                 await detachSonos(with: SonosError.sourceChanged.localizedDescription)
                 return
             }
+            // The speaker counts from where the stream begins, not from the start of the song.
+            let songSeconds = position.seconds + current.streamOffset
+            let songDuration = current.streamOffset > 0 ? audioPlayer.duration : position.duration
             if position.transportState == "STOPPED", audioPlayer.isPlaying {
-                let duration = max(audioPlayer.duration, position.duration)
+                let duration = max(audioPlayer.duration, songDuration)
                 let lastKnownSeconds = audioPlayer.currentTime
                 let sinceProgress = current.lastProgressAt.map { Date().timeIntervalSince($0) } ?? 0
                 let projectedSeconds = lastKnownSeconds + sinceProgress
                 let finished = duration > 0
-                    && max(projectedSeconds, position.seconds) >= duration - 2
+                    && max(projectedSeconds, songSeconds) >= duration - 2
                 let elapsed = Date().timeIntervalSince(current.startedAt)
                 let playerDuration = audioPlayer.duration
                 let status = position.transportStatus
@@ -586,7 +691,7 @@ extension AppCoordinator {
                 // Sonos rewinds to 0 when a track ends, and the transport state is fetched before
                 // the position, so a poll can still say PLAYING at 0. Keep the last real position
                 // so the following STOPPED poll recognises the track as finished.
-                let duration = max(audioPlayer.duration, position.duration)
+                let duration = max(audioPlayer.duration, songDuration)
                 let sinceProgress = current.lastProgressAt.map { Date().timeIntervalSince($0) } ?? 0
                 if playing, position.seconds < 1, duration > 0,
                    audioPlayer.currentTime + sinceProgress >= duration - 2 {
@@ -595,7 +700,7 @@ extension AppCoordinator {
                 let event: AudioPlaybackEvent.Trigger = playing == audioPlayer.isPlaying
                     ? .progressed : (playing ? .resumed : .paused)
                 audioPlayer.updateSonosPlayback(
-                    song: song, at: position.seconds, duration: position.duration,
+                    song: song, at: songSeconds, duration: songDuration,
                     isPlaying: playing, event: event
                 )
                 sonosSession?.lastProgressAt = playing ? Date() : nil

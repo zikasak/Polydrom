@@ -249,16 +249,15 @@ struct NavidromeClient: Sendable {
     }
 
     /// The transcode agreed in a `transcodeDecision`, selected by its `transcodeParams`.
-    func transcodeStreamURL(for song: NavidromeSong, transcodeParams: String) throws -> URL {
-        try apiURL(
-            "getTranscodeStream",
-            includeResponseFormat: false,
-            queryItems: [
-                URLQueryItem(name: "mediaId", value: song.id),
-                URLQueryItem(name: "mediaType", value: "song"),
-                URLQueryItem(name: "transcodeParams", value: transcodeParams)
-            ]
-        )
+    /// `offset` is the number of seconds of the song to leave out at the start.
+    func transcodeStreamURL(for song: NavidromeSong, transcodeParams: String, offset: Int = 0) throws -> URL {
+        var queryItems = [
+            URLQueryItem(name: "mediaId", value: song.id),
+            URLQueryItem(name: "mediaType", value: "song"),
+            URLQueryItem(name: "transcodeParams", value: transcodeParams)
+        ]
+        if offset > 0 { queryItems.append(URLQueryItem(name: "offset", value: String(offset))) }
+        return try apiURL("getTranscodeStream", includeResponseFormat: false, queryItems: queryItems)
     }
 
     func coverArtURL(id: String, size: Int = 160) throws -> URL {

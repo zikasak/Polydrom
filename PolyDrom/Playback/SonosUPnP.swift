@@ -28,6 +28,10 @@ struct SonosTrack: Sendable {
     let streamURL: URL
     let artworkURL: URL?
     var mimeType = "audio/mpeg"
+    /// Seconds of the song the stream leaves out at its start.
+    var startOffset: Double = 0
+    /// False when the speaker cannot jump to another position within the stream.
+    var isSeekable = true
 }
 
 struct SonosPosition: Sendable {
@@ -277,7 +281,7 @@ struct SonosUPnP: Sendable {
 
     static func didl(for item: SonosTrack) -> String {
         let song = item.song
-        let time = timeText(song.duration ?? 0)
+        let time = timeText((song.duration ?? 0) - Int(item.startOffset))
         let artist = song.artist.map { "<dc:creator>\(SonosXML.escape($0))</dc:creator>" } ?? ""
         let album = song.album.map { "<upnp:album>\(SonosXML.escape($0))</upnp:album>" } ?? ""
         let artwork = item.artworkURL.map {

@@ -334,6 +334,9 @@ final class AppCoordinator: ObservableObject {
     var sonosVolumeTaskGeneration = -1
     var pendingSonosVolume: Int?
     var sonosVolumeErrorMessage: String?
+    var sonosSeekTask: Task<Void, Never>?
+    /// The position to reload a track at, and the Sonos request it was asked during.
+    var pendingSonosSeek: (seconds: Double, generation: Int)?
 
     private static let metadataRefreshIntervalKey = "metadataRefreshInterval"
     private static let coverArtCrawlEnabledKey = "coverArtCrawlEnabled"
